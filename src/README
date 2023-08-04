@@ -14,11 +14,7 @@ main/        		The main directory, where the executable is done.
 
 python/     		Python interface.
 
-rndr_appleseed/		Appleseed renderer integrated and modified for Blackdot. (v. 2.1.0)
-
 rndr_cycles/		Cycles renderer integrated and modified for Blackdot. (v. 3.6.0)
-
-rndr_luxcorerender/	Luxcorerender renderer integrated and modified for Blackdot. (v. 2.6)
 
 rndr_swan/			My own open source PBR Engine. (v. 0.0.1)
 
