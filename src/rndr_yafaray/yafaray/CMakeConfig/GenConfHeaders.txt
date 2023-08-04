@@ -1,0 +1,10 @@
+# WARNING: Please don't change this file
+if(NOT YAF_REVISION)
+	set(YAF_REVISION "None")
+endif(NOT YAF_REVISION)
+
+
+include(CheckIncludeFiles)
+check_include_files(unistd.h HAVE_UNISTD_H)
+configure_file(CMakeConfig/templates/yafray_config.h.cmake ${CMAKE_BINARY_DIR}/yafray_config.h)
+configure_file(CMakeConfig/templates/yaf_revision.h.cmake ${CMAKE_BINARY_DIR}/yaf_revision.h)

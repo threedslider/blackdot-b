@@ -1,0 +1,58 @@
+#scene.camera.lookat = 7.481132 -6.50764 5.343665 0.932513 -0.400984 0.891212
+##
+scene.camera.lookat.orig = 2.8718164 -5.47710514 4.63370657
+scene.camera.lookat.target = -0.600622892 1.50124407 -1.6308527
+################################################################################
+scene.textures.backgroundtex.file = scenes/randomizedtiling/pattern-7.jpg
+scene.textures.backgroundtex.gamma = 1.0
+scene.textures.backgroundtex.randomizedtiling.enable = 1
+scene.textures.backgroundtex.mapping.uvscale = 2 2
+##
+#scene.textures.bullettex.file = autumn-leaf.jpg
+scene.textures.bullettex.file = multi-autumn-leaf.jpg
+scene.textures.bullettex.gamma = 1.0
+##
+#scene.textures.bulletmasktex.file = autumn-leaf.jpg
+scene.textures.bulletmasktex.file = multi-autumn-leaf.jpg
+scene.textures.bulletmasktex.gamma = 1.0
+scene.textures.bulletmasktex.channel = alpha
+##
+scene.textures.bombtex1.type = bombing
+scene.textures.bombtex1.background = backgroundtex
+scene.textures.bombtex1.bullet = bullettex
+scene.textures.bombtex1.bullet.mask = bulletmasktex
+scene.textures.bombtex1.bullet.count = 4
+scene.textures.bombtex1.bullet.randomscale.range = 0.75
+scene.textures.bombtex1.bullet.randomrotation.enable = 1
+scene.textures.bombtex1.mapping.uvscale = 12 12
+##
+scene.textures.bombtex2.type = bombing
+scene.textures.bombtex2.background = bombtex1
+scene.textures.bombtex2.bullet = bullettex
+scene.textures.bombtex2.bullet.mask = bulletmasktex
+scene.textures.bombtex2.bullet.count = 4
+scene.textures.bombtex2.bullet.randomscale.range = 0.75
+scene.textures.bombtex2.bullet.randomrotation.enable = 1
+scene.textures.bombtex2.mapping.uvscale = 9 9
+##
+scene.textures.bombtex3.type = bombing
+scene.textures.bombtex3.background = bombtex2
+scene.textures.bombtex3.bullet = bullettex
+scene.textures.bombtex3.bulletmask = bulletmasktex
+scene.textures.bombtex3.bulletcount = 4
+scene.textures.bombtex3.mapping.uvscale = 15 15
+################################################################################
+scene.materials.mat_light.type = matte
+scene.materials.mat_light.emission = 20. 20. 20.
+scene.materials.mat_light.kd = 0.0 0.0 0.0
+##
+scene.materials.mat_white.type = matte
+scene.materials.mat_white.kd = bombtex2
+################################################################################
+scene.objects.obj_light.ply = scenes/bump/mat_light.ply
+scene.objects.obj_light.material = mat_light
+scene.objects.obj_white.ply = scenes/bump/mat_white_multi_uv.ply
+scene.objects.obj_white.material = mat_white
+################################################################################
+scene.lights.infinitelight.type = constantinfinite
+scene.lights.infinitelight.gain = 0.2 0.2 0.2

@@ -1,0 +1,58 @@
+#line 2 "hitpoint_types.cl"
+
+/***************************************************************************
+ * Copyright 1998-2020 by authors (see AUTHORS.txt)                        *
+ *                                                                         *
+ *   This file is part of LuxCoreRender.                                   *
+ *                                                                         *
+ * Licensed under the Apache License, Version 2.0 (the "License");         *
+ * you may not use this file except in compliance with the License.        *
+ * You may obtain a copy of the License at                                 *
+ *                                                                         *
+ *     http://www.apache.org/licenses/LICENSE-2.0                          *
+ *                                                                         *
+ * Unless required by applicable law or agreed to in writing, software     *
+ * distributed under the License is distributed on an "AS IS" BASIS,       *
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.*
+ * See the License for the specific language governing permissions and     *
+ * limitations under the License.                                          *
+ ***************************************************************************/
+
+typedef struct {
+	// The incoming direction. It is the eyeDir when fromLight = false and
+	// lightDir when fromLight = true
+	Vector fixedDir;
+	Point p;
+	Normal geometryN;
+	Normal interpolatedN;
+	Normal shadeN;
+
+	UV defaultUV;
+
+	// Note: dpdu and dpdv are orthogonal to shading normal (i.e not geometry normal)
+	Vector dpdu, dpdv;
+	Normal dndu, dndv;
+
+	// Mesh information
+	unsigned int meshIndex;
+	unsigned int triangleIndex;
+	float triangleBariCoord1, triangleBariCoord2;
+
+	// passThroughEvent can be stored here in a path state even before of
+	// BSDF initialization (while tracing the next path vertex ray)
+	float passThroughEvent;
+
+	// Transformation from local object to world reference frame
+	Transform localToWorld;
+
+	// Interior and exterior volume (this includes volume priority system
+	// computation and scene default world volume)
+	unsigned int interiorVolumeIndex, exteriorVolumeIndex;
+	// Material code (i.e. glass, etc.) doesn't have access to materials list
+	// so I use HitPoint to carry texture index information
+	unsigned int interiorIorTexIndex, exteriorIorTexIndex;
+
+	unsigned int objectID;
+
+	int intoObject, throughShadowTransparency;
+} HitPoint;
