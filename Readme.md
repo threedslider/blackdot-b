@@ -16,11 +16,13 @@ So from now it's wip. I will work on Vulkan, 3D modelling, rendering and later I
 Features
 ============
 
-Protoype is here (WIP)
+Prototype is here (WIP)
 - Adding to Kernel system (prototype)
 - Adding to XSI Gui system (prototype)
 - Adding to Vulkan viewport system
 - Adding to Tool system (library)
+- Adding basic 3d tool for geometry
+- Writing my own PBR Engine (codename: Swan)
  
 
 Development
