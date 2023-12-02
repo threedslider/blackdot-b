@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDAnimationMotionPath.h
 
-  Bounding Class
+	Animation Motion Path Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDAnimationMotionPath_H_
+#define __BDAnimationMotionPath_H_
 
 
 #endif

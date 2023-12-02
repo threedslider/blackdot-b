@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDCamera.cc
 
-  Box Class
+	Camera 
   
 */

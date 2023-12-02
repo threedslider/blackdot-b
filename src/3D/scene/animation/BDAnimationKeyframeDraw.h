@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDAnimationKeyframeDraw.h
 
-  Bounding Class
+	Animation Keyframe Drawing Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDAnimationKeyframeDraw_H_
+#define __BDAnimationKeyframeDraw_H_
 
 
 #endif

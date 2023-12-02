@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDLight.h
 
-  Bounding Class
+	Light Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDLight_H_
+#define __BDLight_H_
 
 
 #endif

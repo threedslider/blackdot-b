@@ -18,14 +18,8 @@
 
 /*
 
-  Bounding.h
+	BDArmatureName.cc
 
-  Bounding Class
+	Armature Name system
   
 */
-
-#ifndef __Bounding_H_
-#define __Bounding_H_
-
-
-#endif

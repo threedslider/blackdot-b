@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDAnimationFCurve.h
 
-  Bounding Class
+	Animation FCurve Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDAnimationFCurve_H_
+#define __BDAnimationFCurve_H_
 
 
 #endif

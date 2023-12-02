@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDArmatureBones.h
 
-  Bounding Class
+	Armature Bone Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDArmatureBones_H_
+#define __BDArmatureBones_H_
 
 
 #endif

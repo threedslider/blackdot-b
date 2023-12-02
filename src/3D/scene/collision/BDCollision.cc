@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDCollision.cc
 
-  Box Class
+	Collision simulation
   
 */

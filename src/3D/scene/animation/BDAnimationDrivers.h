@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDAnimationDrivers.h
 
-  Bounding Class
+	Animation Driver Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDAnimationDrivers_H_
+#define __BDAnimationDrivers_H_
 
 
 #endif

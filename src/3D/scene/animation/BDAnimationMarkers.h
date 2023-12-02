@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDAnimationMarkers.h
 
-  Bounding Class
+	Animation Marker Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDAnimationMarkers_H_
+#define __BDAnimationMarkers_H_
 
 
 #endif

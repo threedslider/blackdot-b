@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDCloth.cc
 
-  Box Class
+	Cloth simulation
   
 */

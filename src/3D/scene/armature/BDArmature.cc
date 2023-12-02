@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDArmature.cc
 
-  Box Class
+	Armature system
   
 */

@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDCamera.h
 
-  Bounding Class
+	Camera Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDCamera_H_
+#define __BDCamera_H_
 
 
 #endif

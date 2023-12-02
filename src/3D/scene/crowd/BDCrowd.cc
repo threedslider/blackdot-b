@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDCrowd.cc
 
-  Box Class
+	Crowd simulation
   
 */

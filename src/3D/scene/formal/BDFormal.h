@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDFormal.h
 
-  Bounding Class
+	Bounding Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDFormal_H_
+#define __BDFormal_H_
 
 
 #endif

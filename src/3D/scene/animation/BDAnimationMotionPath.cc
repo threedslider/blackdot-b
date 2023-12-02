@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDAnimationMotionPath.cc
 
-  Box Class
+	Animation Motion Path
   
 */

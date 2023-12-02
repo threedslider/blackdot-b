@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDArmatureBones.cc
 
-  Box Class
+	Armature Bone 
   
 */

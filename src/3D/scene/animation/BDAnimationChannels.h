@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDAnimationChannels.h
 
-  Bounding Class
+	Animation Channel Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDAnimationChannels_H_
+#define __BDAnimationChannels_H_
 
 
 #endif

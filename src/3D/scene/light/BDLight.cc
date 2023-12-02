@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDLight.cc
 
-  Box Class
+	Light system
   
 */

@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDFormal.cc
 
-  Box Class
+	Formal
   
 */

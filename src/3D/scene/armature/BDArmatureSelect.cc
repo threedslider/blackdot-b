@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDAramtureSelect.cc
 
-  Box Class
+	Armature Select
   
 */

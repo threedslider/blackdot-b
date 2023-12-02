@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDArmaturePose.h
 
-  Bounding Class
+	Bounding Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDArmaturePose_H_
+#define __BDArmaturePose_H_
 
 
 #endif

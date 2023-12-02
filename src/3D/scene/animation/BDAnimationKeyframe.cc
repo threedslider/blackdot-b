@@ -18,14 +18,8 @@
 
 /*
 
-  Bounding.h
+	BDAnimationKeyframe.cc
 
-  Bounding Class
+	Animation Keyframe system
   
 */
-
-#ifndef __Bounding_H_
-#define __Bounding_H_
-
-
-#endif

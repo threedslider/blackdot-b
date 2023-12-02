@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDArmatureSelect.h
 
-  Bounding Class
+	Armature Select Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDArmatureSelect_H_
+#define __BDArmatureSelect_H_
 
 
 #endif

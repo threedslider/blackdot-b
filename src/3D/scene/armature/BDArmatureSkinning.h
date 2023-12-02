@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDArmatureSkinning.h
 
-  Bounding Class
+	Armature Skinning Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDArmatureSkinning_H_
+#define __BDArmatureSkinning_H_
 
 
 #endif

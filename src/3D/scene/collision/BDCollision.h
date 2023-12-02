@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDCollision.h
 
-  Bounding Class
+	Collision Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDCollision_H_
+#define __BDCollision_H_
 
 
 #endif

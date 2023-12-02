@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDAnimationChannels.cc
 
-  Box Class
+	Animation Channel 
   
 */

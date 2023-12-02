@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+  BDCrowd.h
 
-  Bounding Class
+  Crowd Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __Crowd_H_
+#define __Crowd_H_
 
 
 #endif

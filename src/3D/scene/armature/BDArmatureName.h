@@ -18,8 +18,14 @@
 
 /*
 
-  Box.cc
+	BDArmatureName.h
 
-  Box Class
+	Armature Name Class
   
 */
+
+#ifndef __BDArmatureName_H_
+#define __BDArmatureName_H_
+
+
+#endif

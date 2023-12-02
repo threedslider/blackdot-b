@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDAnimation.cc
 
-  Box Class
+	Animation system
   
 */

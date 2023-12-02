@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDCloth.h
 
-  Bounding Class
+	Cloth Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDCloth_H_
+#define __BDCloth_H_
 
 
 #endif

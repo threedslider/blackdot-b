@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDCurve.h
 
-  Bounding Class
+	Curve Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDCurve_H_
+#define __BDCurve_H_
 
 
 #endif

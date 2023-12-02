@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDArmatureOps.cc
 
-  Box Class
+	Armature Operation
   
 */

@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDArmatureOps.h
 
-  Bounding Class
+	Armature Operation Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDArmatureOps_H_
+#define __BDArmatureOps_H_
 
 
 #endif

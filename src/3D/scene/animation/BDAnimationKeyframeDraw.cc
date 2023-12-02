@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDAnimationKeyframeDraw.cc
 
-  Box Class
+	Animation Keyframe Drawing system
   
 */

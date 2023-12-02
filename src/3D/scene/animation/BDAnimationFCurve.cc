@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDAnimationFCurve.cc
 
-  Box Class
+	Animation FCurve system
   
 */

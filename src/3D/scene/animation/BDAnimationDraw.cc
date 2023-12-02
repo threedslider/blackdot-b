@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDAnimationDraw.cc
 
-  Box Class
+	Animation Drawing
   
 */

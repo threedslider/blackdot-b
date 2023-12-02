@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDCurve.cc
 
-  Box Class
+	Curve
   
 */

@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDArmatureSkinning.cc
 
-  Box Class
+	Armature Skinning system
   
 */

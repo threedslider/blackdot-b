@@ -18,8 +18,14 @@
 
 /*
 
-  Box.cc
+	BDAnimationKeyframe.h
 
-  Box Class
+	Animation Keyframe Class
   
 */
+
+#ifndef __BDAnimationKeyframe_H_
+#define __BDAnimationKeyframe_H_
+
+
+#endif

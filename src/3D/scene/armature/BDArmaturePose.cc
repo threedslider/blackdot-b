@@ -18,8 +18,8 @@
 
 /*
 
-  Box.cc
+	BDArmaturePose.cc
 
-  Box Class
+	Armature Pose system
   
 */

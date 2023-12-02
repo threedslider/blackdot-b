@@ -18,14 +18,14 @@
 
 /*
 
-  Bounding.h
+	BDAnimationKeyframeList.h
 
-  Bounding Class
+  	Animation Keyframe List Class
   
 */
 
-#ifndef __Bounding_H_
-#define __Bounding_H_
+#ifndef __BDAnimationKeyframeList_H_
+#define __BDAnimationKeyframeList_H_
 
 
 #endif
