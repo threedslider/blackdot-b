@@ -1,4 +1,13 @@
 Change log :
 
-:: Blackdot 0.0.0 pre-starting ::
+:: Blackdot 0.0.0 ::
 - Create directories and files in C++ for starting to code :)
+- All file extensions (.hpp and .cc) are in pure C++
+- Working protoypes :
+	- Tool system (library)
+	- XSI Gui
+	- Wrapping to Vulkan
+	- Working to add with basic 3d tool for geometry
+	- Kernel system
+	- Writing my own PBR Engine from scratch that codename is Swan
+- Third party is separated and users need to download externally

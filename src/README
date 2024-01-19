@@ -2,6 +2,8 @@ Subdirectories are:
 
 3D/           		Blackdot module: 3D kernel tool (Scene), UI (Model), ICE, OOM (Object Oriented Modeling) and Tracker (The 2D/3D tracking). 
 
+angelscript			AngelScript interface.
+
 avi/		  		The video core.
 
 image/        		Image library.
@@ -14,11 +16,7 @@ main/        		The main directory, where the executable is done.
 
 python/     		Python interface.
 
-rndr_cycles/		Cycles renderer integrated and modified for Blackdot. (v. 3.6.0)
-
-rndr_swan/			My own open source PBR Engine. (v. 0.0.1)
-
-rndr_yafaray/	 	Yafaray renderer integrated and modified for Blackdot. (v. 0.1.2)
+swan/				My own open source PBR Engine. (v. 0.0.1)
 
 third_party/  		Third party used for Blackdot.
 
