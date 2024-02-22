@@ -1,6 +1,6 @@
 /* 
 	This file is part of Blackdot
-    Copyright (C) 2015-2023  Laurent Le Flem
+    Copyright (C) 2015-2024  Laurent Le Flem
 	  
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,14 +18,14 @@
 
 /*
 
-  Box.h
+  BDBox.hpp
 
   Box Class
   
 */
 
-#ifndef __Box_H_
-#define __Box_H_
+#ifndef __BDBox_HPP_
+#define __BDBox_HPP_
 
 
 #endif

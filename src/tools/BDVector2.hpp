@@ -1,6 +1,6 @@
 /* 
 	This file is part of Blackdot
-    Copyright (C) 2015-2023  Laurent Le Flem
+    Copyright (C) 2015-2024  Laurent Le Flem
 	  
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,14 +18,14 @@
 
 /*
 
-  Vector2.h
+  Vector2.hpp
 
   2D Vector Class
   
 */
 
-#ifndef __Vector2_H_
-#define __Vector2_H_
+#ifndef __BDVector2_HPP_
+#define __BDVector2_HPP_
 
 
 #endif

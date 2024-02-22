@@ -1,6 +1,6 @@
 /* 
 	This file is part of Blackdot
-    Copyright (C) 2015-2023  Laurent Le Flem
+    Copyright (C) 2015-2024  Laurent Le Flem
 	  
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,14 +18,14 @@
 
 /*
 
-  Matrix.h
+  BDMatrix.hpp
 
   Matrix 3x3 and Matrix 4x4 Class
   
 */
 
-#ifndef __Matrix_H_
-#define __Matrix_H_
+#ifndef __BDMatrix_HPP_
+#define __BDMatrix_HPP_
 
 
 #endif

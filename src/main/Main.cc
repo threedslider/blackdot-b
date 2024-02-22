@@ -1,6 +1,6 @@
 /* 
 	This file is part of Blackdot
-    Copyright (C) 2015-2023  Laurent Le Flem
+    Copyright (C) 2015-2024  Laurent Le Flem
 	  
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
   January 16 2020
   
 */
+
 
 int main( int argc, char* argv[] )
 {

@@ -2,7 +2,7 @@ Subdirectories are:
 
 3D/           		Blackdot module: 3D kernel tool (Scene), UI (Model), ICE, OOM (Object Oriented Modeling) and Tracker (The 2D/3D tracking). 
 
-angelscript			AngelScript interface.
+angelscript/		AngelScript interface.
 
 avi/		  		The video core.
 
