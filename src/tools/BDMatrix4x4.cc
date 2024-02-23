@@ -18,22 +18,10 @@
 
 /*
 
-  Main.cc
+  BDMatrix4x4.cc
 
-  January 16 2020
+  Matrix 4x4 Class
   
 */
 
-#include <iostream>
-
-#include "tools/BDMatrix3x3.hpp"
-#include "tools/BDVector.hpp"
-
-
-int main( int argc, char* argv[] )
-{
-
-  	
-	return 0;
-	
-}
+#include "BDMatrix4x4.hpp"

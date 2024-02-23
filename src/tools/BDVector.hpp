@@ -216,8 +216,8 @@ namespace BD3D
 		const T Z() const { return z; }
 		
 		void setx(const T xx) { x = xx; }
-		void setx(const T yy) { y = yy; }
-		void setx(const T zz) { z = zz; }
+		void sety(const T yy) { y = yy; }
+		void setz(const T zz) { z = zz; }
 
 		BDPoint& operator= (const BDPoint& p)
 		{

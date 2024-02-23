@@ -18,14 +18,14 @@
 
 /*
 
-  BDMatrix.hpp
+  BDMatrix4x4.hpp
 
-  Matrix 3x3 and Matrix 4x4 Class
+  Matrix 4x4 Class
   
 */
 
-#ifndef __BDMatrix_HPP_
-#define __BDMatrix_HPP_
+#ifndef __BDMatrix4x4_HPP_
+#define __BDMatrix4x4_HPP_
 
 
 #endif

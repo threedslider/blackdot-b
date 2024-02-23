@@ -18,10 +18,10 @@
 
 /*
 
-  BDMatrix.cc
+  BDMatrix3x3.cc
 
-  Matrix 3x3 and Matrix 4x4 Class
+  Matrix 3x3 Class
   
 */
 
-#include "BDMatrix.hpp"
+#include "BDMatrix3x3.hpp"
