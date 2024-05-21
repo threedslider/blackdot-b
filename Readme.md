@@ -1,57 +1,60 @@
-**Warning**
+<!--
+Keep this document short & concise,
+linking to external resources instead of including content in-line.
+See 'release/text/readme.html' for the end user read-me.
+-->
 
-This repo is in wip, so I am completing to all source code step by step and soon or later will be avaible in the github, so stay tuned for more coming stuffs.
+** Info **
+Not easy to make my own 3D Modeling and take a lot to make this one so I will make a fork from Blender as base for all 3D,
+all included here so I want to improve and adding some nice features in futur. Hope it will motivate me as well :D
 
 
-Introduction
+Blackdot
+=======
+
+Blackdot is the free and open source 3D creation suite based from Blender and it is inspired from Softimage XSI.
+It supports the entirety of the 3D pipeline-modeling, rigging, animation, simulation, rendering, compositing,
+motion tracking and video editing.
+
+
+Plan for adding/improving to Blackdot
 ============
 
-Blackdot 3D is a free, modern and open source for 3D creation, it's inspired and making as from Softimage XSI and Moonlight Creator between, 
-it gets more modern on UI, it brights great tool on 3D, NURBS tool, VFX tool, BRDF material and powerful rendering with a new pathtracing.
-So from now it's heavily in development. I still am working on Vulkan, 3D modelling, rendering and later I will integrate animation and ICE system
-similar for later...
+- [] UI from Softimage XSI
+- [] Tools in 3D modeling
+- [] ICE system
+	- [] Particles
+	- [] Deform
+	- [] Kinematic
+	- [] CrowdFX
+- [] Hair system
 
-
-Features
-============
-
-Prototype is here but not working yet nor commit too (WIP)
-- Tool system (library)
-  - [] Adding some prototype working
-- XSI Gui
-  - [] Working on UI and thinking how to make good one
-- Wrapping to Vulkan
-  - [] Adding the folder gfx_vulkan (prototype working now)
-- Working to add with basic 3d tool for geometry
-- Kernel system
-- Writing my own PBR Engine from scratch that codename is Swan.
- 
 
 Development
 ============
 
-Blackdot 3D will be developed under Windows, Linux and later Mac.
+It will support to Vulkan from current coming to Blender.
 
-It will be making a support with Vulkan and later Metal or MoltenVK.
-
-It is writing in C++ first (WIP) and until then as futur planned for wrapping with Python and AngelScript.
-
-
-License
-============
-
-Blackdot 3D is distributed under the terms of the GNU General Public License (Version 3).
+It will support to AngelScript (WIP).
 
 
 Author
 ============
 
-Laurent Le Flem (Main author)
+Laurent Le Flem (Main contributor)
+
+
+License
+-------
+
+Blackdot as a whole is licensed under the GNU General Public License, Version 3.
+Individual files may have a different, but compatible license.
 
 
 Thanks
 =============
 
 Blackdot give to tribute at Daniel Langlois and I thank much him the creator of Softimage XSI, a 3d software loved by a lot of 3d Artists around the world. 
-I thank as well to the french man and developer named Stephane Rehel for first 3D software and open source from Softimage 3D classic with his software as Moonlight Creator and later Moonlight Atelier.
+I thank as well to the french man and developer named Stephane Rehel for first 3D software and open source from Softimage 3D classic with his software as Moonlight Creator and later Moonlight Atelier. 
 I am inspired by two peoples and hope I will bright to you for enjoy this Blackdot too 3D and to be inspired by me for you as well :)
+Thanks to Ton Roosendaal for the awesome Blender and his team are super amazing too.
