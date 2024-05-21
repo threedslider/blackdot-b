@@ -4,7 +4,8 @@ linking to external resources instead of including content in-line.
 See 'release/text/readme.html' for the end user read-me.
 -->
 
-** Info **
+*** Info ***
+============
 Not easy to make my own 3D Modeling and take a lot to make this one so I will make a fork from Blender as base for all 3D,
 all included here so I want to improve and adding some nice features in futur. Hope it will motivate me as well :D
 
