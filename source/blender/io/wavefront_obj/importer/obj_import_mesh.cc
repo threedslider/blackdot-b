@@ -8,13 +8,13 @@
 
 #include <iostream>
 
+#include "DNA_customdata_types.h"
 #include "DNA_material_types.h"
 #include "DNA_meshdata_types.h"
-#include "DNA_scene_types.h"
 
 #include "BKE_attribute.hh"
-#include "BKE_customdata.hh"
 #include "BKE_deform.hh"
+#include "BKE_lib_id.hh"
 #include "BKE_material.h"
 #include "BKE_mesh.hh"
 #include "BKE_node_tree_update.hh"
@@ -31,38 +31,28 @@
 
 namespace blender::io::obj {
 
-Object *MeshFromGeometry::create_mesh(Main *bmain,
-                                      Map<std::string, std::unique_ptr<MTLMaterial>> &materials,
-                                      Map<std::string, Material *> &created_materials,
-                                      const OBJImportParams &import_params)
+Mesh *MeshFromGeometry::create_mesh(const OBJImportParams &import_params)
 {
   const int64_t tot_verts_object{mesh_geometry_.get_vertex_count()};
   if (tot_verts_object <= 0) {
     /* Empty mesh */
     return nullptr;
   }
-  std::string ob_name = get_geometry_name(mesh_geometry_.geometry_name_,
-                                          import_params.collection_separator);
-  if (ob_name.empty()) {
-    ob_name = "Untitled";
-  }
-  fixup_invalid_faces();
+
+  this->fixup_invalid_faces();
 
   /* Includes explicitly imported edges, not the ones belonging the faces to be created. */
   Mesh *mesh = BKE_mesh_new_nomain(tot_verts_object,
                                    mesh_geometry_.edges_.size(),
                                    mesh_geometry_.face_elements_.size(),
                                    mesh_geometry_.total_corner_);
-  Object *obj = BKE_object_add_only_object(bmain, OB_MESH, ob_name.c_str());
-  obj->data = BKE_object_obdata_add_from_type(bmain, OB_MESH, ob_name.c_str());
 
-  create_vertices(mesh);
-  create_faces(mesh, import_params.import_vertex_groups && !import_params.use_split_groups);
-  create_edges(mesh);
-  create_uv_verts(mesh);
-  create_normals(mesh);
-  create_colors(mesh);
-  create_materials(bmain, materials, created_materials, obj, import_params.relative_paths);
+  this->create_vertices(mesh);
+  this->create_faces(mesh, import_params.import_vertex_groups && !import_params.use_split_groups);
+  this->create_edges(mesh);
+  this->create_uv_verts(mesh);
+  this->create_normals(mesh);
+  this->create_colors(mesh);
 
   if (import_params.validate_meshes || mesh_geometry_.has_invalid_faces_) {
     bool verbose_validate = false;
@@ -71,12 +61,39 @@ Object *MeshFromGeometry::create_mesh(Main *bmain,
 #endif
     BKE_mesh_validate(mesh, verbose_validate, false);
   }
+
+  return mesh;
+}
+
+Object *MeshFromGeometry::create_mesh_object(
+    Main *bmain,
+    Map<std::string, std::unique_ptr<MTLMaterial>> &materials,
+    Map<std::string, Material *> &created_materials,
+    const OBJImportParams &import_params)
+{
+  Mesh *mesh = this->create_mesh(import_params);
+
+  if (mesh == nullptr) {
+    return nullptr;
+  }
+
+  std::string ob_name = get_geometry_name(mesh_geometry_.geometry_name_,
+                                          import_params.collection_separator);
+  if (ob_name.empty()) {
+    ob_name = "Untitled";
+  }
+
+  Object *obj = BKE_object_add_only_object(bmain, OB_MESH, ob_name.c_str());
+  obj->data = BKE_object_obdata_add_from_type(bmain, OB_MESH, ob_name.c_str());
+
+  this->create_materials(bmain, materials, created_materials, obj, import_params.relative_paths);
+
   transform_object(obj, import_params);
 
   BKE_mesh_nomain_to_mesh(mesh, static_cast<Mesh *>(obj->data), obj);
 
   /* NOTE: vertex groups have to be created after final mesh is assigned to the object. */
-  create_vertex_groups(obj);
+  this->create_vertex_groups(obj);
 
   return obj;
 }
@@ -192,8 +209,13 @@ void MeshFromGeometry::create_faces(Mesh *mesh, bool use_vertex_groups)
   bke::MutableAttributeAccessor attributes = mesh->attributes_for_write();
   bke::SpanAttributeWriter<int> material_indices =
       attributes.lookup_or_add_for_write_only_span<int>("material_index", bke::AttrDomain::Face);
-  bke::SpanAttributeWriter<bool> sharp_faces = attributes.lookup_or_add_for_write_span<bool>(
-      "sharp_face", bke::AttrDomain::Face);
+
+  const bool do_sharp = !has_normals();
+  bke::SpanAttributeWriter<bool> sharp_faces;
+  if (do_sharp) {
+    sharp_faces = attributes.lookup_or_add_for_write_span<bool>("sharp_face",
+                                                                bke::AttrDomain::Face);
+  }
 
   int corner_index = 0;
 
@@ -206,7 +228,9 @@ void MeshFromGeometry::create_faces(Mesh *mesh, bool use_vertex_groups)
     }
 
     face_offsets[face_idx] = corner_index;
-    sharp_faces.span[face_idx] = !curr_face.shaded_smooth;
+    if (do_sharp) {
+      sharp_faces.span[face_idx] = !curr_face.shaded_smooth;
+    }
     material_indices.span[face_idx] = curr_face.material_index;
     /* Importing obj files without any materials would result in negative indices, which is not
      * supported. */
@@ -235,7 +259,9 @@ void MeshFromGeometry::create_faces(Mesh *mesh, bool use_vertex_groups)
   }
 
   material_indices.finish();
-  sharp_faces.finish();
+  if (do_sharp) {
+    sharp_faces.finish();
+  }
 }
 
 void MeshFromGeometry::create_vertex_groups(Object *obj)
@@ -261,7 +287,7 @@ void MeshFromGeometry::create_edges(Mesh *mesh)
     int2 &dst_edge = edges[i];
     dst_edge[0] = mesh_geometry_.global_to_local_vertices_.lookup_default(src_edge[0], 0);
     dst_edge[1] = mesh_geometry_.global_to_local_vertices_.lookup_default(src_edge[1], 0);
-    BLI_assert(dst_edge[0] < total_verts && dst_edge[0] < total_verts);
+    BLI_assert(dst_edge[0] < total_verts && dst_edge[1] < total_verts);
   }
 
   /* Set argument `update` to true so that existing, explicitly imported edges can be merged
@@ -300,7 +326,7 @@ void MeshFromGeometry::create_uv_verts(Mesh *mesh)
 
   uv_map.finish();
 
-  /* If we have an object without UVs which resides in the same .obj file
+  /* If we have an object without UVs which resides in the same `.obj` file
    * as an object which *does* have UVs we can end up adding a UV layer
    * filled with zeroes.
    * We could maybe check before creating this layer but that would need
@@ -359,14 +385,14 @@ void MeshFromGeometry::create_materials(Main *bmain,
   }
 }
 
+bool MeshFromGeometry::has_normals() const
+{
+  return !global_vertices_.vert_normals.is_empty() && mesh_geometry_.total_corner_ != 0;
+}
+
 void MeshFromGeometry::create_normals(Mesh *mesh)
 {
-  /* No normal data: nothing to do. */
-  if (global_vertices_.vert_normals.is_empty()) {
-    return;
-  }
-  /* Custom normals can only be stored on face corners. */
-  if (mesh_geometry_.total_corner_ == 0) {
+  if (!has_normals()) {
     return;
   }
 
@@ -400,8 +426,9 @@ void MeshFromGeometry::create_colors(Mesh *mesh)
         mesh_geometry_.vertex_index_max_ < block.start_vertex_index + block.colors.size())
     {
       /* This block is suitable, use colors from it. */
-      CustomDataLayer *color_layer = BKE_id_attribute_new(
-          &mesh->id, "Color", CD_PROP_COLOR, bke::AttrDomain::Point, nullptr);
+      AttributeOwner owner = AttributeOwner::from_id(&mesh->id);
+      CustomDataLayer *color_layer = BKE_attribute_new(
+          owner, "Color", CD_PROP_COLOR, bke::AttrDomain::Point, nullptr);
       BKE_id_attributes_active_color_set(&mesh->id, color_layer->name);
       BKE_id_attributes_default_color_set(&mesh->id, color_layer->name);
       float4 *colors = (float4 *)color_layer->data;

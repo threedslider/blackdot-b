@@ -30,11 +30,11 @@
 
 #include "BKE_blendfile.hh"
 #include "BKE_context.hh"
-#include "BKE_report.h"
+#include "BKE_report.hh"
 
-#include "BLO_readfile.h"
+#include "BLO_readfile.hh"
 
-#include "BLT_translation.h"
+#include "BLT_translation.hh"
 
 #include "BLF_api.hh"
 
@@ -60,9 +60,9 @@
 #include "WM_api.hh"
 #include "WM_types.hh"
 
-#include "GPU_immediate.h"
-#include "GPU_immediate_util.h"
-#include "GPU_state.h"
+#include "GPU_immediate.hh"
+#include "GPU_immediate_util.hh"
+#include "GPU_state.hh"
 
 #include "filelist.hh"
 
@@ -309,11 +309,18 @@ static void file_draw_tooltip_custom_func(bContext * /*C*/, uiTooltipData *tip, 
   }
 
   if (thumb && params->display != FILE_IMGDISPLAY) {
+    UI_tooltip_text_field_add(tip, {}, {}, UI_TIP_STYLE_SPACER, UI_TIP_LC_NORMAL);
+    UI_tooltip_text_field_add(tip, {}, {}, UI_TIP_STYLE_SPACER, UI_TIP_LC_NORMAL);
+
+    uiTooltipImage image_data;
     float scale = (96.0f * UI_SCALE_FAC) / float(std::max(thumb->x, thumb->y));
-    short size[2] = {short(float(thumb->x) * scale), short(float(thumb->y) * scale)};
-    UI_tooltip_text_field_add(tip, {}, {}, UI_TIP_STYLE_SPACER, UI_TIP_LC_NORMAL);
-    UI_tooltip_text_field_add(tip, {}, {}, UI_TIP_STYLE_SPACER, UI_TIP_LC_NORMAL);
-    UI_tooltip_image_field_add(tip, thumb, size);
+    image_data.ibuf = thumb;
+    image_data.width = short(float(thumb->x) * scale);
+    image_data.height = short(float(thumb->y) * scale);
+    image_data.border = true;
+    image_data.background = uiTooltipImageBackground::Checkerboard_Themed;
+    image_data.premultiplied = true;
+    UI_tooltip_image_field_add(tip, image_data);
   }
 
   if (thumb && free_imbuf) {
@@ -392,12 +399,9 @@ static uiBut *file_add_icon_but(const SpaceFile *sfile,
   const int x = tile_draw_rect->xmin;
   const int y = tile_draw_rect->ymax - sfile->layout->tile_border_y - height;
 
-  /* For #uiDefIconBut(): if `a1==1.0` then a2 is alpha `0.0 - 1.0`. */
-  const float a1 = dimmed ? 1.0f : 0.0f;
-  const float a2 = dimmed ? 0.3f : 0.0f;
   but = uiDefIconBut(
-      block, UI_BTYPE_LABEL, 0, icon, x, y, width, height, nullptr, 0.0f, 0.0f, a1, a2, nullptr);
-
+      block, UI_BTYPE_LABEL, 0, icon, x, y, width, height, nullptr, 0.0f, 0.0f, nullptr);
+  UI_but_label_alpha_factor_set(but, dimmed ? 0.3f : 1.0f);
   if (file->asset) {
     UI_but_func_tooltip_set(but, file_draw_asset_tooltip_func, file->asset, nullptr);
   }
@@ -534,8 +538,6 @@ static void file_add_preview_drag_but(const SpaceFile *sfile,
                         nullptr,
                         0.0,
                         0.0,
-                        0,
-                        0,
                         nullptr);
   file_but_enable_drag(but, sfile, file, path, preview_image, icon, scale);
 
@@ -639,29 +641,46 @@ static void file_draw_preview(const FileList *files,
 
   if (!is_loading) {
     /* Don't show outer document image if loading - too flashy. */
-    IMMDrawPixelsTexState state = immDrawPixelsTexSetup(GPU_SHADER_3D_IMAGE_COLOR);
-    immDrawPixelsTexTiled_scaling(&state,
-                                  float(xco),
-                                  float(yco),
-                                  imb->x,
-                                  imb->y,
-                                  GPU_RGBA8,
-                                  true,
-                                  imb->byte_buffer.data,
-                                  scale,
-                                  scale,
-                                  1.0f,
-                                  1.0f,
-                                  document_img_col);
+    if (is_icon) {
+      /* Draw large folder or document icon. */
+      const int icon_large = (file->typeflag & FILE_TYPE_DIR) ? ICON_FILE_FOLDER_LARGE :
+                                                                ICON_FILE_LARGE;
+      uchar icon_col[4];
+      rgba_float_to_uchar(icon_col, document_img_col);
+      float icon_x = float(xco) + (file->typeflag & FILE_TYPE_DIR ? 0.0f : ex * -0.142f);
+      float icon_y = float(yco) + (file->typeflag & FILE_TYPE_DIR ? ex * -0.11f : 0.0f);
+      UI_icon_draw_ex(icon_x,
+                      icon_y,
+                      icon_large,
+                      icon_aspect / 4.0f / UI_SCALE_FAC,
+                      document_img_col[3],
+                      0.0f,
+                      icon_col,
+                      false,
+                      UI_NO_ICON_OVERLAY_TEXT);
+    }
+    else {
+      IMMDrawPixelsTexState state = immDrawPixelsTexSetup(GPU_SHADER_3D_IMAGE_COLOR);
+      immDrawPixelsTexTiled_scaling(&state,
+                                    float(xco),
+                                    float(yco),
+                                    imb->x,
+                                    imb->y,
+                                    GPU_RGBA8,
+                                    true,
+                                    imb->byte_buffer.data,
+                                    scale,
+                                    scale,
+                                    1.0f,
+                                    1.0f,
+                                    document_img_col);
+    }
   }
-
-  GPU_blend(GPU_BLEND_ALPHA);
 
   if (icon && is_icon) {
     /* Small icon in the middle of large image, scaled to fit container and UI scale */
     float icon_x, icon_y;
-    const float icon_size = 16.0f / icon_aspect * UI_SCALE_FAC;
-    float icon_opacity = 0.3f;
+    float icon_opacity = 0.4f;
     uchar icon_color[4] = {0, 0, 0, 255};
     if (rgb_to_grayscale(document_img_col) < 0.5f) {
       icon_color[0] = 255;
@@ -674,12 +693,12 @@ static void file_draw_preview(const FileList *files,
       UI_GetThemeColor4ubv(TH_TEXT, icon_color);
     }
 
-    icon_x = xco + (ex / 2.0f) - (icon_size / 2.0f);
-    icon_y = yco + (ey / 2.0f) - (icon_size * ((file->typeflag & FILE_TYPE_DIR) ? 0.78f : 0.75f));
+    icon_x = xco + (file->typeflag & FILE_TYPE_DIR ? ex * 0.31f : ex * 0.178f);
+    icon_y = yco + (file->typeflag & FILE_TYPE_DIR ? ex * 0.11f : ex * 0.15f);
     UI_icon_draw_ex(icon_x,
                     icon_y,
                     is_loading ? ICON_TEMP : icon,
-                    icon_aspect / UI_SCALE_FAC,
+                    icon_aspect / UI_SCALE_FAC / (file->typeflag & FILE_TYPE_DIR ? 1.5f : 2.0f),
                     icon_opacity,
                     0.0f,
                     icon_color,
@@ -689,23 +708,12 @@ static void file_draw_preview(const FileList *files,
 
   if (is_link || is_offline) {
     /* Icon at bottom to indicate it is a shortcut, link, alias, or offline. */
-    float icon_x, icon_y;
-    icon_x = xco + (2.0f * UI_SCALE_FAC);
-    icon_y = yco + (2.0f * UI_SCALE_FAC);
-    const int arrow = is_link ? ICON_LOOP_FORWARDS : ICON_URL;
+    const int arrow = is_link ? ICON_LOOP_FORWARDS : ICON_INTERNET;
     if (!is_icon) {
       /* At very bottom-left if preview style. */
-      const uchar dark[4] = {0, 0, 0, 255};
       const uchar light[4] = {255, 255, 255, 255};
-      UI_icon_draw_ex(icon_x + 1,
-                      icon_y - 1,
-                      arrow,
-                      1.0f / UI_SCALE_FAC,
-                      0.2f,
-                      0.0f,
-                      dark,
-                      false,
-                      UI_NO_ICON_OVERLAY_TEXT);
+      const float icon_x = float(xco) + (2.0f * UI_SCALE_FAC);
+      const float icon_y = float(yco) + (2.0f * UI_SCALE_FAC);
       UI_icon_draw_ex(icon_x,
                       icon_y,
                       arrow,
@@ -713,15 +721,15 @@ static void file_draw_preview(const FileList *files,
                       0.6f,
                       0.0f,
                       light,
-                      false,
+                      true,
                       UI_NO_ICON_OVERLAY_TEXT);
     }
     else {
       /* Link to folder or non-previewed file. */
       uchar icon_color[4];
       UI_GetThemeColor4ubv(TH_BACK, icon_color);
-      icon_x = xco + ((file->typeflag & FILE_TYPE_DIR) ? 0.14f : 0.23f) * scaledx;
-      icon_y = yco + ((file->typeflag & FILE_TYPE_DIR) ? 0.24f : 0.14f) * scaledy;
+      const float icon_x = xco + ((file->typeflag & FILE_TYPE_DIR) ? 0.14f : 0.23f) * scaledx;
+      const float icon_y = yco + ((file->typeflag & FILE_TYPE_DIR) ? 0.24f : 0.14f) * scaledy;
       UI_icon_draw_ex(icon_x,
                       icon_y,
                       arrow,
@@ -733,22 +741,13 @@ static void file_draw_preview(const FileList *files,
                       UI_NO_ICON_OVERLAY_TEXT);
     }
   }
-  else if (icon && ((!is_icon && !(file->typeflag & FILE_TYPE_FTFONT)) || is_loading)) {
+  else if (icon && icon_aspect < 2.0f &&
+           ((!is_icon && !(file->typeflag & FILE_TYPE_FTFONT)) || is_loading))
+  {
     /* Smaller, fainter icon at bottom-left for preview image thumbnail, but not for fonts. */
-    float icon_x, icon_y;
-    const uchar dark[4] = {0, 0, 0, 255};
     const uchar light[4] = {255, 255, 255, 255};
-    icon_x = xco + (2.0f * UI_SCALE_FAC);
-    icon_y = yco + (2.0f * UI_SCALE_FAC);
-    UI_icon_draw_ex(icon_x + 1,
-                    icon_y - 1,
-                    icon,
-                    1.0f / UI_SCALE_FAC,
-                    0.2f,
-                    0.0f,
-                    dark,
-                    false,
-                    UI_NO_ICON_OVERLAY_TEXT);
+    const float icon_x = float(xco) + (2.0f * UI_SCALE_FAC);
+    const float icon_y = float(yco) + (2.0f * UI_SCALE_FAC);
     UI_icon_draw_ex(icon_x,
                     icon_y,
                     icon,
@@ -756,7 +755,7 @@ static void file_draw_preview(const FileList *files,
                     0.6f,
                     0.0f,
                     light,
-                    false,
+                    true,
                     UI_NO_ICON_OVERLAY_TEXT);
   }
 
@@ -781,6 +780,8 @@ static void file_draw_preview(const FileList *files,
 
   /* Contrasting outline around some preview types. */
   if (show_outline) {
+    GPU_blend(GPU_BLEND_ALPHA);
+
     GPUVertFormat *format = immVertexFormat();
     uint pos = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
     immBindBuiltinProgram(GPU_SHADER_3D_UNIFORM_COLOR);
@@ -1143,7 +1144,7 @@ void file_draw_list(const bContext *C, ARegion *region)
   bool do_drag;
   uchar text_col[4];
   const bool draw_columnheader = (params->display == FILE_VERTICALDISPLAY);
-  const float thumb_icon_aspect = std::min(64.0f / float(params->thumbnail_size), 1.0f);
+  const float thumb_icon_aspect = std::min(64.0f / float(params->thumbnail_size), 4.0f);
 
   numfiles = filelist_files_ensure(files);
 
@@ -1295,11 +1296,13 @@ void file_draw_list(const bContext *C, ARegion *region)
                                      nullptr,
                                      0,
                                      0,
-                                     0,
-                                     0,
                                      nullptr);
           UI_but_dragflag_enable(drag_but, UI_BUT_DRAG_FULL_BUT);
           file_but_enable_drag(drag_but, sfile, file, path, nullptr, icon, UI_SCALE_FAC);
+          UI_but_func_tooltip_custom_set(drag_but,
+                                         file_draw_tooltip_custom_func,
+                                         file_tooltip_data_create(sfile, file),
+                                         MEM_freeN);
         }
       }
 
@@ -1337,8 +1340,6 @@ void file_draw_list(const bContext *C, ARegion *region)
                             params->renamefile,
                             1.0f,
                             float(sizeof(params->renamefile)),
-                            0,
-                            0,
                             "");
       UI_but_func_rename_set(but, renamebutton_cb, file);
       UI_but_flag_enable(but, UI_BUT_NO_UTF8); /* allow non utf8 names */
@@ -1391,8 +1392,15 @@ void file_draw_list(const bContext *C, ARegion *region)
       text_col[3] /= 2;
     }
 
-    const char *message = is_filtered ? IFACE_("No results match the search filter") :
-                                        IFACE_("No items");
+    const char *message = [&]() {
+      if (!filelist_is_ready(files)) {
+        return IFACE_("Loading...");
+      }
+      if (is_filtered) {
+        return IFACE_("No results match the search filter");
+      }
+      return IFACE_("No items");
+    }();
 
     UI_fontstyle_draw_simple(&style->widget,
                              tile_draw_rect.xmin + UI_UNIT_X,
@@ -1423,7 +1431,7 @@ static void file_draw_invalid_asset_library_hint(const bContext *C,
                                                  ARegion *region,
                                                  FileAssetSelectParams *asset_params)
 {
-  char library_ui_path[PATH_MAX];
+  char library_ui_path[FILE_MAX_LIBEXTRA];
   file_path_to_ui_path(asset_params->base_params.dir, library_ui_path, sizeof(library_ui_path));
 
   uchar text_col[4];

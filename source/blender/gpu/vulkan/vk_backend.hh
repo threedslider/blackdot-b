@@ -31,10 +31,11 @@ class VKBackend : public GPUBackend {
 #ifdef WITH_RENDERDOC
   renderdoc::api::Renderdoc renderdoc_api_;
 #endif
-  /* Global instance to device handles. */
-  VKDevice device_;
 
  public:
+  /* Global instance to device handles. */
+  VKDevice device;
+
   VKBackend()
   {
     platform_init();
@@ -58,12 +59,12 @@ class VKBackend : public GPUBackend {
   Fence *fence_alloc() override;
   FrameBuffer *framebuffer_alloc(const char *name) override;
   IndexBuf *indexbuf_alloc() override;
-  PixelBuffer *pixelbuf_alloc(uint size) override;
+  PixelBuffer *pixelbuf_alloc(size_t size) override;
   QueryPool *querypool_alloc() override;
   Shader *shader_alloc(const char *name) override;
   Texture *texture_alloc(const char *name) override;
-  UniformBuf *uniformbuf_alloc(int size, const char *name) override;
-  StorageBuf *storagebuf_alloc(int size, GPUUsageType usage, const char *name) override;
+  UniformBuf *uniformbuf_alloc(size_t size, const char *name) override;
+  StorageBuf *storagebuf_alloc(size_t size, GPUUsageType usage, const char *name) override;
   VertBuf *vertbuf_alloc() override;
 
   /* Render Frame Coordination --
@@ -72,7 +73,7 @@ class VKBackend : public GPUBackend {
   void render_end() override;
   void render_step() override;
 
-  bool debug_capture_begin();
+  bool debug_capture_begin(const char *title);
   void debug_capture_end();
 
   shaderc::Compiler &get_shaderc_compiler();
@@ -80,16 +81,6 @@ class VKBackend : public GPUBackend {
   static VKBackend &get()
   {
     return *static_cast<VKBackend *>(GPUBackend::get());
-  }
-
-  const VKDevice &device_get() const
-  {
-    return device_;
-  }
-
-  VKDevice &device_get()
-  {
-    return device_;
   }
 
   static void platform_init(const VKDevice &device);

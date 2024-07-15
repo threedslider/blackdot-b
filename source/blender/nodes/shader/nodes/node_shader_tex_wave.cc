@@ -23,16 +23,33 @@ static void sh_node_tex_wave_declare(NodeDeclarationBuilder &b)
 {
   b.is_function_node();
   b.add_input<decl::Vector>("Vector").implicit_field(implicit_field_inputs::position);
-  b.add_input<decl::Float>("Scale").min(-1000.0f).max(1000.0f).default_value(5.0f);
-  b.add_input<decl::Float>("Distortion").min(-1000.0f).max(1000.0f).default_value(0.0f);
-  b.add_input<decl::Float>("Detail").min(0.0f).max(15.0f).default_value(2.0f);
-  b.add_input<decl::Float>("Detail Scale").min(-1000.0f).max(1000.0f).default_value(1.0f);
+  b.add_input<decl::Float>("Scale").min(-1000.0f).max(1000.0f).default_value(5.0f).description(
+      "Overall texture scale");
+  b.add_input<decl::Float>("Distortion")
+      .min(-1000.0f)
+      .max(1000.0f)
+      .default_value(0.0f)
+      .description("Amount of distortion of the wave");
+  b.add_input<decl::Float>("Detail").min(0.0f).max(15.0f).default_value(2.0f).description(
+      "Amount of distortion noise detail");
+  b.add_input<decl::Float>("Detail Scale")
+      .min(-1000.0f)
+      .max(1000.0f)
+      .default_value(1.0f)
+      .description("Scale of distortion noise");
   b.add_input<decl::Float>("Detail Roughness")
       .min(0.0f)
       .max(1.0f)
       .default_value(0.5f)
-      .subtype(PROP_FACTOR);
-  b.add_input<decl::Float>("Phase Offset").min(-1000.0f).max(1000.0f).default_value(0.0f);
+      .subtype(PROP_FACTOR)
+      .description("Blend between a smoother noise pattern, and rougher with sharper peaks");
+  b.add_input<decl::Float>("Phase Offset")
+      .min(-1000.0f)
+      .max(1000.0f)
+      .default_value(0.0f)
+      .description(
+          "Position of the wave along the Bands Direction.\n"
+          "This can be used as an input for more control over the distortion");
   b.add_output<decl::Color>("Color").no_muted_links();
   b.add_output<decl::Float>("Fac").no_muted_links();
 }
@@ -316,17 +333,18 @@ void register_node_type_sh_tex_wave()
 {
   namespace file_ns = blender::nodes::node_shader_tex_wave_cc;
 
-  static bNodeType ntype;
+  static blender::bke::bNodeType ntype;
 
   sh_fn_node_type_base(&ntype, SH_NODE_TEX_WAVE, "Wave Texture", NODE_CLASS_TEXTURE);
   ntype.declare = file_ns::sh_node_tex_wave_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_tex_wave;
-  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::MIDDLE);
+  blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
   ntype.initfunc = file_ns::node_shader_init_tex_wave;
-  node_type_storage(&ntype, "NodeTexWave", node_free_standard_storage, node_copy_standard_storage);
+  blender::bke::node_type_storage(
+      &ntype, "NodeTexWave", node_free_standard_storage, node_copy_standard_storage);
   ntype.gpu_fn = file_ns::node_shader_gpu_tex_wave;
   ntype.build_multi_function = file_ns::sh_node_wave_tex_build_multi_function;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  nodeRegisterType(&ntype);
+  blender::bke::nodeRegisterType(&ntype);
 }

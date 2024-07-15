@@ -12,7 +12,6 @@
 
 #include "DNA_brush_types.h"
 
-#include "BKE_context.hh"
 #include "BKE_paint.hh"
 #include "BKE_undo_system.hh"
 
@@ -77,8 +76,9 @@ static bool paintcurve_undosys_poll(bContext *C)
   if (C == nullptr || !paint_curve_poll(C)) {
     return false;
   }
-  Paint *p = BKE_paint_get_active_from_context(C);
-  return (p->brush && p->brush->paint_curve);
+  Paint *paint = BKE_paint_get_active_from_context(C);
+  Brush *brush = BKE_paint_brush(paint);
+  return (brush && brush->paint_curve);
 }
 
 static void paintcurve_undosys_step_encode_init(bContext *C, UndoStep *us_p)
@@ -95,8 +95,9 @@ static bool paintcurve_undosys_step_encode(bContext *C, Main * /*bmain*/, UndoSt
     return false;
   }
 
-  Paint *p = BKE_paint_get_active_from_context(C);
-  PaintCurve *pc = p ? (p->brush ? p->brush->paint_curve : nullptr) : nullptr;
+  Paint *paint = BKE_paint_get_active_from_context(C);
+  Brush *brush = BKE_paint_brush(paint);
+  PaintCurve *pc = paint ? (brush ? brush->paint_curve : nullptr) : nullptr;
   if (pc == nullptr) {
     return false;
   }

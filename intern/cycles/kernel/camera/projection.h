@@ -7,6 +7,9 @@
 
 #pragma once
 
+#include "util/math.h"
+#include "util/types.h"
+
 CCL_NAMESPACE_BEGIN
 
 /* Spherical coordinates <-> Cartesian direction. */
@@ -22,7 +25,7 @@ ccl_device float2 direction_to_spherical(float3 dir)
 ccl_device float3 spherical_to_direction(float theta, float phi)
 {
   float sin_theta = sinf(theta);
-  return make_float3(sin_theta * cosf(phi), sin_theta * sinf(phi), cosf(theta));
+  return make_float3(sin_theta * sinf(phi), sin_theta * cosf(phi), cosf(theta));
 }
 
 /* Equirectangular coordinates <-> Cartesian direction */
@@ -60,13 +63,9 @@ ccl_device float3 equirectangular_to_direction(float u, float v)
 
 ccl_device float2 direction_to_fisheye(float3 dir, float fov)
 {
-  float r = atan2f(sqrtf(dir.y * dir.y + dir.z * dir.z), dir.x) / fov;
-  float phi = atan2f(dir.z, dir.y);
-
-  float u = r * cosf(phi) + 0.5f;
-  float v = r * sinf(phi) + 0.5f;
-
-  return make_float2(u, v);
+  const float r = atan2f(len(make_float2(dir.y, dir.z)), dir.x) / fov;
+  const float2 uv = r * safe_normalize(make_float2(dir.y, dir.z));
+  return make_float2(0.5f - uv.x, uv.y + 0.5f);
 }
 
 ccl_device float3 fisheye_to_direction(float u, float v, float fov)
@@ -90,14 +89,11 @@ ccl_device float3 fisheye_to_direction(float u, float v, float fov)
 
 ccl_device float2 direction_to_fisheye_equisolid(float3 dir, float lens, float width, float height)
 {
-  float theta = safe_acosf(dir.x);
-  float r = 2.0f * lens * sinf(theta * 0.5f);
-  float phi = atan2f(dir.z, dir.y);
+  const float theta = safe_acosf(dir.x);
+  const float r = 2.0f * lens * sinf(theta * 0.5f);
 
-  float u = r * cosf(phi) / width + 0.5f;
-  float v = r * sinf(phi) / height + 0.5f;
-
-  return make_float2(u, v);
+  const float2 uv = r * safe_normalize(make_float2(dir.y, dir.z));
+  return make_float2(0.5f - uv.x / width, uv.y / height + 0.5f);
 }
 
 ccl_device_inline float3
@@ -146,22 +142,40 @@ ccl_device_inline float3 fisheye_lens_polynomial_to_direction(
 ccl_device float2 direction_to_fisheye_lens_polynomial(
     float3 dir, float coeff0, float4 coeffs, float width, float height)
 {
-  float theta = -safe_acosf(dir.x);
+  const float theta = -safe_acosf(dir.x);
 
+  /* Initialize r with the closed-form solution for the special case
+   * coeffs.y = coeffs.z = coeffs.w = 0 */
   float r = (theta - coeff0) / coeffs.x;
 
+  const float4 diff_coeffs = make_float4(1.0f, 2.0f, 3.0f, 4.0f) * coeffs;
+
   for (int i = 0; i < 20; i++) {
-    float r2 = r * r;
-    float4 rr = make_float4(r, r2, r2 * r, r2 * r2);
-    r = (theta - (coeff0 + dot(coeffs, rr))) / coeffs.x;
+    /*  Newton's method for finding roots
+     *
+     *  Given is the result theta = distortion_model(r),
+     *  we need to find r.
+     *  Let F(r) := theta - distortion_model(r).
+     *  Then F(r) = 0 <=> distortion_model(r) = theta
+     *  Therefore we apply Newton's method for finding a root of F(r).
+     *  Newton step for the function F:
+     *  r_n+1 = r_n - F(r_n) / F'(r_n)
+     *  The addition in the implementation is due to canceling of signs.
+     * \{ */
+    const float old_r = r, r2 = r * r;
+    const float F_r = theta - (coeff0 + dot(coeffs, make_float4(r, r2, r2 * r, r2 * r2)));
+    const float dF_r = dot(diff_coeffs, make_float4(1.0f, r, r2, r2 * r));
+    r += F_r / dF_r;
+
+    /* Early termination if the change is below the threshold */
+    if (fabsf(r - old_r) < 1e-6f) {
+      break;
+    }
+    /** \} */
   }
 
-  float phi = atan2f(dir.z, dir.y);
-
-  float u = r * cosf(phi) / width + 0.5f;
-  float v = r * sinf(phi) / height + 0.5f;
-
-  return make_float2(u, v);
+  const float2 uv = r * safe_normalize(make_float2(dir.y, dir.z));
+  return make_float2(0.5f - uv.x / width, uv.y / height + 0.5f);
 }
 
 /* Mirror Ball <-> Cartesion direction */
@@ -204,20 +218,16 @@ ccl_device float2 direction_to_mirrorball(float3 dir)
  * https://blog.google/products/google-ar-vr/bringing-pixels-front-and-center-vr-video/ */
 ccl_device float3 equiangular_cubemap_face_to_direction(float u, float v)
 {
-  u = (1.0f - u);
+  u = tanf((0.5f - u) * M_PI_2_F);
+  v = tanf((v - 0.5f) * M_PI_2_F);
 
-  u = tanf(u * M_PI_2_F - M_PI_4_F);
-  v = tanf(v * M_PI_2_F - M_PI_4_F);
-
-  return make_float3(1.0f, u, v);
+  return normalize(make_float3(1.0f, u, v));
 }
 
 ccl_device float2 direction_to_equiangular_cubemap_face(float3 dir)
 {
-  float u = atan2f(dir.y, dir.x) * 2.0f / M_PI_F + 0.5f;
+  float u = 0.5f - atan2f(dir.y, dir.x) * 2.0f / M_PI_F;
   float v = atan2f(dir.z, dir.x) * 2.0f / M_PI_F + 0.5f;
-
-  u = 1.0f - u;
 
   return make_float2(u, v);
 }

@@ -51,7 +51,7 @@ static VkMemoryPropertyFlags vma_preferred_flags(const bool is_host_visible)
  * staging buffer can be skipped, or in case of a vertex buffer an intermediate buffer can be
  * removed.
  */
-bool VKBuffer::create(int64_t size_in_bytes,
+bool VKBuffer::create(size_t size_in_bytes,
                       GPUUsageType usage,
                       VkBufferUsageFlags buffer_usage,
                       const bool is_host_visible)
@@ -61,7 +61,7 @@ bool VKBuffer::create(int64_t size_in_bytes,
   BLI_assert(mapped_memory_ == nullptr);
 
   size_in_bytes_ = size_in_bytes;
-  const VKDevice &device = VKBackend::get().device_get();
+  VKDevice &device = VKBackend::get().device;
 
   VmaAllocator allocator = device.mem_allocator_get();
   VkBufferCreateInfo create_info = {};
@@ -92,6 +92,8 @@ bool VKBuffer::create(int64_t size_in_bytes,
     return false;
   }
 
+  device.resources.add_buffer(vk_buffer_);
+
   if (is_host_visible) {
     return map();
   }
@@ -107,20 +109,24 @@ void VKBuffer::update(const void *data) const
 
 void VKBuffer::flush() const
 {
-  const VKDevice &device = VKBackend::get().device_get();
+  const VKDevice &device = VKBackend::get().device;
   VmaAllocator allocator = device.mem_allocator_get();
   vmaFlushAllocation(allocator, allocation_, 0, max_ii(size_in_bytes(), 1));
 }
 
 void VKBuffer::clear(VKContext &context, uint32_t clear_value)
 {
-  VKCommandBuffers &command_buffers = context.command_buffers_get();
-  command_buffers.fill(*this, clear_value);
+  render_graph::VKFillBufferNode::CreateInfo fill_buffer = {};
+  fill_buffer.vk_buffer = vk_buffer_;
+  fill_buffer.data = clear_value;
+  fill_buffer.size = size_in_bytes_;
+  context.render_graph.add_node(fill_buffer);
 }
 
-void VKBuffer::read(void *data) const
+void VKBuffer::read(VKContext &context, void *data) const
 {
   BLI_assert_msg(is_mapped(), "Cannot read a non-mapped buffer.");
+  context.render_graph.submit_buffer_for_read(vk_buffer_);
   memcpy(data, mapped_memory_, size_in_bytes_);
 }
 
@@ -138,7 +144,7 @@ bool VKBuffer::is_mapped() const
 bool VKBuffer::map()
 {
   BLI_assert(!is_mapped());
-  const VKDevice &device = VKBackend::get().device_get();
+  const VKDevice &device = VKBackend::get().device;
   VmaAllocator allocator = device.mem_allocator_get();
   VkResult result = vmaMapMemory(allocator, allocation_, &mapped_memory_);
   return result == VK_SUCCESS;
@@ -147,7 +153,7 @@ bool VKBuffer::map()
 void VKBuffer::unmap()
 {
   BLI_assert(is_mapped());
-  const VKDevice &device = VKBackend::get().device_get();
+  const VKDevice &device = VKBackend::get().device;
   VmaAllocator allocator = device.mem_allocator_get();
   vmaUnmapMemory(allocator, allocation_);
   mapped_memory_ = nullptr;
@@ -159,7 +165,7 @@ bool VKBuffer::free()
     unmap();
   }
 
-  VKDevice &device = VKBackend::get().device_get();
+  VKDevice &device = VKBackend::get().device;
   device.discard_buffer(vk_buffer_, allocation_);
   allocation_ = VK_NULL_HANDLE;
   vk_buffer_ = VK_NULL_HANDLE;

@@ -6,10 +6,10 @@
 #include "MEM_guardedalloc.h"
 
 #include "BKE_appdir.hh"
-#include "BKE_blender.h"
-#include "BKE_callbacks.h"
+#include "BKE_blender.hh"
+#include "BKE_callbacks.hh"
 #include "BKE_context.hh"
-#include "BKE_global.h"
+#include "BKE_global.hh"
 #include "BKE_idtype.hh"
 #include "BKE_image.h"
 #include "BKE_layer.hh"
@@ -17,7 +17,7 @@
 #include "BKE_mball_tessellate.hh"
 #include "BKE_modifier.hh"
 #include "BKE_node.hh"
-#include "BKE_scene.h"
+#include "BKE_scene.hh"
 #include "BKE_vfont.hh"
 
 #include "BLF_api.hh"
@@ -25,7 +25,7 @@
 #include "BLI_path_util.h"
 #include "BLI_threads.h"
 
-#include "BLO_readfile.h"
+#include "BLO_readfile.hh"
 
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_build.hh"
@@ -41,8 +41,6 @@
 
 #include "WM_api.hh"
 #include "wm.hh"
-
-#include "GHOST_Path-api.hh"
 
 #include "CLG_log.h"
 
@@ -64,7 +62,7 @@ void BlendfileLoadingBaseTest::SetUpTestCase()
   BKE_modifier_init();
   DEG_register_node_types();
   RNA_init();
-  BKE_node_system_init();
+  blender::bke::BKE_node_system_init();
   BKE_callback_global_init();
   BKE_vfont_builtin_register(datatoc_bfont_pfb, datatoc_bfont_pfb_size);
   BLF_init();
@@ -92,7 +90,6 @@ void BlendfileLoadingBaseTest::TearDownTestCase()
 
   BLF_exit();
   DEG_free_node_types();
-  GHOST_DisposeSystemPaths();
   DNA_sdna_current_free();
   BLI_threadapi_exit();
 

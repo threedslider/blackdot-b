@@ -241,6 +241,19 @@ class NoiseTextureNode : public TextureNode {
   NODE_SOCKET_API(float3, vector)
 };
 
+class GaborTextureNode : public TextureNode {
+ public:
+  SHADER_NODE_CLASS(GaborTextureNode)
+
+  NODE_SOCKET_API(NodeGaborType, type)
+  NODE_SOCKET_API(float3, vector)
+  NODE_SOCKET_API(float, scale)
+  NODE_SOCKET_API(float, frequency)
+  NODE_SOCKET_API(float, anisotropy)
+  NODE_SOCKET_API(float, orientation_2d)
+  NODE_SOCKET_API(float3, orientation_3d)
+};
+
 class VoronoiTextureNode : public TextureNode {
  public:
   SHADER_NODE_CLASS(VoronoiTextureNode)
@@ -479,10 +492,11 @@ class BsdfNode : public BsdfBaseNode {
   SHADER_NODE_BASE_CLASS(BsdfNode)
 
   void compile(SVMCompiler &compiler,
-               ShaderInput *param1,
-               ShaderInput *param2,
-               ShaderInput *param3 = NULL,
-               ShaderInput *param4 = NULL);
+               ShaderInput *bsdf_y,
+               ShaderInput *bsdf_z,
+               ShaderInput *data_y = nullptr,
+               ShaderInput *data_z = nullptr,
+               ShaderInput *data_w = nullptr);
 
   NODE_SOCKET_API(float3, color)
   NODE_SOCKET_API(float3, normal)
@@ -511,6 +525,7 @@ class PrincipledBsdfNode : public BsdfBaseNode {
   NODE_SOCKET_API(float, ior)
   NODE_SOCKET_API(float3, normal)
   NODE_SOCKET_API(float, alpha)
+  NODE_SOCKET_API(float, diffuse_roughness)
   NODE_SOCKET_API(ClosureType, subsurface_method)
   NODE_SOCKET_API(float, subsurface_weight)
   NODE_SOCKET_API(float3, subsurface_radius)
@@ -535,6 +550,8 @@ class PrincipledBsdfNode : public BsdfBaseNode {
   NODE_SOCKET_API(float3, emission_color)
   NODE_SOCKET_API(float, emission_strength)
   NODE_SOCKET_API(float, surface_mix_weight)
+  NODE_SOCKET_API(float, thin_film_thickness)
+  NODE_SOCKET_API(float, thin_film_ior)
 
  public:
   void attributes(Shader *shader, AttributeRequestSet *attributes);
@@ -554,6 +571,19 @@ class TranslucentBsdfNode : public BsdfNode {
 class TransparentBsdfNode : public BsdfNode {
  public:
   SHADER_NODE_CLASS(TransparentBsdfNode)
+
+  bool has_surface_transparent()
+  {
+    return true;
+  }
+};
+
+class RayPortalBsdfNode : public BsdfNode {
+ public:
+  SHADER_NODE_CLASS(RayPortalBsdfNode)
+
+  NODE_SOCKET_API(float3, position)
+  NODE_SOCKET_API(float3, direction)
 
   bool has_surface_transparent()
   {
@@ -652,6 +682,7 @@ class SubsurfaceScatteringNode : public BsdfNode {
   NODE_SOCKET_API(float, scale)
   NODE_SOCKET_API(float3, radius)
   NODE_SOCKET_API(float, subsurface_ior)
+  NODE_SOCKET_API(float, subsurface_roughness)
   NODE_SOCKET_API(float, subsurface_anisotropy)
   NODE_SOCKET_API(ClosureType, method)
 };
@@ -844,7 +875,7 @@ class PrincipledHairBsdfNode : public BsdfBaseNode {
   NODE_SOCKET_API(float, random)
   /* Selected coloring parametrization. */
   NODE_SOCKET_API(NodePrincipledHairParametrization, parametrization)
-  /* Selected scattering model (near-/far-field). */
+  /* Selected scattering model (chiang/huang). */
   NODE_SOCKET_API(NodePrincipledHairModel, model)
 
   virtual int get_feature()

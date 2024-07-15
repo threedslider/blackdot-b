@@ -66,7 +66,8 @@ static void node_shader_buts_tex_pointdensity(uiLayout *layout, bContext * /*C*/
 
 static void node_shader_init_tex_pointdensity(bNodeTree * /*ntree*/, bNode *node)
 {
-  NodeShaderTexPointDensity *point_density = MEM_new<NodeShaderTexPointDensity>("new pd node");
+  NodeShaderTexPointDensity *point_density = static_cast<NodeShaderTexPointDensity *>(
+      MEM_callocN(sizeof(NodeShaderTexPointDensity), __func__));
   point_density->resolution = 100;
   point_density->radius = 0.3f;
   point_density->space = SHD_POINTDENSITY_SPACE_OBJECT;
@@ -101,16 +102,16 @@ void register_node_type_sh_tex_pointdensity()
 {
   namespace file_ns = blender::nodes::node_shader_tex_pointdensity_cc;
 
-  static bNodeType ntype;
+  static blender::bke::bNodeType ntype;
 
   sh_node_type_base(&ntype, SH_NODE_TEX_POINTDENSITY, "Point Density", NODE_CLASS_TEXTURE);
   ntype.declare = file_ns::node_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_tex_pointdensity;
   ntype.initfunc = file_ns::node_shader_init_tex_pointdensity;
-  node_type_storage(&ntype,
-                    "NodeShaderTexPointDensity",
-                    file_ns::node_shader_free_tex_pointdensity,
-                    file_ns::node_shader_copy_tex_pointdensity);
+  blender::bke::node_type_storage(&ntype,
+                                  "NodeShaderTexPointDensity",
+                                  file_ns::node_shader_free_tex_pointdensity,
+                                  file_ns::node_shader_copy_tex_pointdensity);
 
-  nodeRegisterType(&ntype);
+  blender::bke::nodeRegisterType(&ntype);
 }

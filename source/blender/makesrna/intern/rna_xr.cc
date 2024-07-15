@@ -6,7 +6,7 @@
  * \ingroup RNA
  */
 
-#include "BLT_translation.h"
+#include "BLT_translation.hh"
 
 #include "DNA_space_types.h"
 #include "DNA_view3d_types.h"
@@ -1998,6 +1998,11 @@ static void rna_def_xr_session_settings(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Display Grid Floor", "Show the ground plane grid");
   RNA_def_property_update(prop, NC_WM | ND_XR_DATA_CHANGED, nullptr);
 
+  prop = RNA_def_property(srna, "show_passthrough", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "draw_flags", V3D_OFSDRAW_XR_SHOW_PASSTHROUGH);
+  RNA_def_property_ui_text(prop, "Show Passthrough", "Show the passthrough view");
+  RNA_def_property_update(prop, NC_WM | ND_XR_DATA_CHANGED, nullptr);
+
   prop = RNA_def_property(srna, "show_annotation", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_sdna(prop, nullptr, "draw_flags", V3D_OFSDRAW_SHOW_ANNOTATION);
   RNA_def_property_ui_text(prop, "Show Annotation", "Show annotations for this view");
@@ -2088,7 +2093,6 @@ static void rna_def_xr_session_state(BlenderRNA *brna)
   PropertyRNA *parm, *prop;
 
   srna = RNA_def_struct(brna, "XrSessionState", nullptr);
-  RNA_def_struct_clear_flag(srna, STRUCT_UNDO);
   RNA_def_struct_ui_text(srna, "Session State", "Runtime state information about the VR session");
 
   func = RNA_def_function(srna, "is_running", "rna_XrSessionState_is_running");

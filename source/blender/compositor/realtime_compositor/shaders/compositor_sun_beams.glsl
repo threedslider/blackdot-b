@@ -14,7 +14,6 @@ void main()
    * least a single step and at most the user specified maximum ray length, which is proportional
    * to the diagonal pixel count. */
   float unbounded_steps = max(1.0, distance(vec2(texel), source * input_size));
-  int max_steps = int(max_ray_length * length(input_size));
   int steps = min(max_steps, int(unbounded_steps));
 
   /* We integrate from the current pixel to the source pixel, so compute the start coordinates and
@@ -39,8 +38,8 @@ void main()
     vec4 sample_color = texture(input_tx, position);
 
     /* Attenuate the contributions of pixels that are further away from the source using a
-     * quadratic falloff. Also weight by the alpha to give more significance to opaque pixels. */
-    float weight = (square(1.0 - i / float(steps))) * sample_color.a;
+     * quadratic falloff. */
+    float weight = square(1.0 - i / float(steps));
 
     accumulated_weight += weight;
     accumulated_color += sample_color * weight;

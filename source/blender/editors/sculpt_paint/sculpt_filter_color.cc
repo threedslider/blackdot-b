@@ -13,18 +13,18 @@
 #include "BLI_math_vector.hh"
 #include "BLI_task.h"
 
-#include "BLT_translation.h"
+#include "BLT_translation.hh"
 
 #include "DNA_userdef_types.h"
 
+#include "BKE_attribute.hh"
 #include "BKE_context.hh"
 #include "BKE_layer.hh"
+#include "BKE_mesh.hh"
 #include "BKE_paint.hh"
 #include "BKE_pbvh_api.hh"
 
 #include "IMB_colormanagement.hh"
-
-#include "DEG_depsgraph.hh"
 
 #include "WM_api.hh"
 #include "WM_types.hh"
@@ -75,41 +75,49 @@ static EnumPropertyItem prop_color_filter_types[] = {
     {0, nullptr, 0, nullptr, nullptr},
 };
 
-static void color_filter_task(Object *ob,
+static void color_filter_task(Object &ob,
+                              const OffsetIndices<int> faces,
+                              const Span<int> corner_verts,
+                              const GroupedSpan<int> vert_to_face_map,
+                              const Span<bool> hide_vert,
+                              const Span<float> mask,
                               const int mode,
                               const float filter_strength,
                               const float *filter_fill_color,
-                              PBVHNode *node)
+                              PBVHNode *node,
+                              bke::GSpanAttributeWriter &color_attribute)
 {
-  SculptSession *ss = ob->sculpt;
+  SculptSession &ss = *ob.sculpt;
 
-  SculptOrigVertData orig_data;
-  SCULPT_orig_vert_data_init(&orig_data, ob, node, undo::Type::Color);
+  const Span<float4> orig_colors = orig_color_data_get_mesh(ob, *node);
 
   auto_mask::NodeData automask_data = auto_mask::node_begin(
-      *ob, ss->filter_cache->automasking.get(), *node);
+      ob, ss.filter_cache->automasking.get(), *node);
 
-  PBVHVertexIter vd;
-  BKE_pbvh_vertex_iter_begin (ss->pbvh, node, vd, PBVH_ITER_UNIQUE) {
-    SCULPT_orig_vert_data_update(&orig_data, &vd);
-    auto_mask::node_update(automask_data, vd);
+  const Span<int> verts = bke::pbvh::node_unique_verts(*node);
+
+  for (const int i : verts.index_range()) {
+    const int vert = verts[i];
+    if (!hide_vert.is_empty() && hide_vert[vert]) {
+      continue;
+    }
+    auto_mask::node_update(automask_data, i);
 
     float3 orig_color;
     float4 final_color;
     float3 hsv_color;
     int hue;
     float brightness, contrast, gain, delta, offset;
-    float fade = vd.mask;
-    fade = 1.0f - fade;
+    float fade = mask.is_empty() ? 1.0f : 1.0f - mask[vert];
     fade *= filter_strength;
     fade *= auto_mask::factor_get(
-        ss->filter_cache->automasking.get(), ss, vd.vertex, &automask_data);
+        ss.filter_cache->automasking.get(), ss, PBVHVertRef{vert}, &automask_data);
     if (fade == 0.0f) {
       continue;
     }
 
-    copy_v3_v3(orig_color, orig_data.col);
-    final_color[3] = orig_data.col[3]; /* Copy alpha */
+    copy_v3_v3(orig_color, orig_colors[i]);
+    final_color[3] = orig_colors[i][3]; /* Copy alpha */
 
     switch (mode) {
       case COLOR_FILTER_FILL: {
@@ -118,7 +126,7 @@ static void color_filter_task(Object *ob,
         fill_color_rgba[3] = 1.0f;
         fade = clamp_f(fade, 0.0f, 1.0f);
         mul_v4_fl(fill_color_rgba, fade);
-        blend_color_mix_float(final_color, orig_data.col, fill_color_rgba);
+        blend_color_mix_float(final_color, orig_colors[i], fill_color_rgba);
         break;
       }
       case COLOR_FILTER_HUE:
@@ -187,11 +195,20 @@ static void color_filter_task(Object *ob,
         break;
       case COLOR_FILTER_SMOOTH: {
         fade = clamp_f(fade, -1.0f, 1.0f);
-        float smooth_color[4];
-        smooth::neighbor_color_average(ss, smooth_color, vd.vertex);
+        float4 smooth_color = smooth::neighbor_color_average(ss,
+                                                             faces,
+                                                             corner_verts,
+                                                             vert_to_face_map,
+                                                             color_attribute.span,
+                                                             color_attribute.domain,
+                                                             vert);
 
-        float col[4];
-        SCULPT_vertex_color_get(ss, vd.vertex, col);
+        float4 col = color_vert_get(faces,
+                                    corner_verts,
+                                    vert_to_face_map,
+                                    color_attribute.span,
+                                    color_attribute.domain,
+                                    vert);
 
         if (fade < 0.0f) {
           interp_v4_v4v4(smooth_color, smooth_color, col, 0.5f);
@@ -203,7 +220,7 @@ static void color_filter_task(Object *ob,
           float delta_color[4];
 
           /* Unsharp mask. */
-          copy_v4_v4(delta_color, ss->filter_cache->pre_smoothed_color[vd.index]);
+          copy_v4_v4(delta_color, ss.filter_cache->pre_smoothed_color[vert]);
           sub_v4_v4(delta_color, smooth_color);
 
           copy_v4_v4(final_color, col);
@@ -223,24 +240,34 @@ static void color_filter_task(Object *ob,
       }
     }
 
-    SCULPT_vertex_color_set(ss, vd.vertex, final_color);
+    color_vert_set(faces,
+                   corner_verts,
+                   vert_to_face_map,
+                   color_attribute.domain,
+                   vert,
+                   final_color,
+                   color_attribute.span);
   }
-  BKE_pbvh_vertex_iter_end;
   BKE_pbvh_node_mark_update_color(node);
 }
 
-static void sculpt_color_presmooth_init(SculptSession *ss)
+static void sculpt_color_presmooth_init(const Mesh &mesh, SculptSession &ss)
 {
   int totvert = SCULPT_vertex_count_get(ss);
 
-  if (!ss->filter_cache->pre_smoothed_color) {
-    ss->filter_cache->pre_smoothed_color = static_cast<float(*)[4]>(
-        MEM_malloc_arrayN(totvert, sizeof(float[4]), __func__));
+  if (ss.filter_cache->pre_smoothed_color.is_empty()) {
+    ss.filter_cache->pre_smoothed_color = Array<float4>(totvert);
   }
 
+  const OffsetIndices<int> faces = mesh.faces();
+  const Span<int> corner_verts = mesh.corner_verts();
+  const GroupedSpan<int> vert_to_face_map = ss.vert_to_face_map;
+  const bke::GAttributeReader color_attribute = active_color_attribute(mesh);
+  const GVArraySpan colors = *color_attribute;
+
   for (int i = 0; i < totvert; i++) {
-    SCULPT_vertex_color_get(
-        ss, BKE_pbvh_index_to_vertex(ss->pbvh, i), ss->filter_cache->pre_smoothed_color[i]);
+    ss.filter_cache->pre_smoothed_color[i] = color_vert_get(
+        faces, corner_verts, vert_to_face_map, colors, color_attribute.domain, i);
   }
 
   for (int iteration = 0; iteration < 2; iteration++) {
@@ -249,10 +276,10 @@ static void sculpt_color_presmooth_init(SculptSession *ss)
       int total = 0;
 
       SculptVertexNeighborIter ni;
-      SCULPT_VERTEX_NEIGHBORS_ITER_BEGIN (ss, BKE_pbvh_index_to_vertex(ss->pbvh, i), ni) {
+      SCULPT_VERTEX_NEIGHBORS_ITER_BEGIN (ss, PBVHVertRef{i}, ni) {
         float col[4] = {0};
 
-        copy_v4_v4(col, ss->filter_cache->pre_smoothed_color[ni.index]);
+        copy_v4_v4(col, ss.filter_cache->pre_smoothed_color[ni.index]);
 
         add_v4_v4(avg, col);
         total++;
@@ -261,8 +288,8 @@ static void sculpt_color_presmooth_init(SculptSession *ss)
 
       if (total > 0) {
         mul_v4_fl(avg, 1.0f / float(total));
-        interp_v4_v4v4(ss->filter_cache->pre_smoothed_color[i],
-                       ss->filter_cache->pre_smoothed_color[i],
+        interp_v4_v4v4(ss.filter_cache->pre_smoothed_color[i],
+                       ss.filter_cache->pre_smoothed_color[i],
                        avg,
                        0.5f);
       }
@@ -270,9 +297,9 @@ static void sculpt_color_presmooth_init(SculptSession *ss)
   }
 }
 
-static void sculpt_color_filter_apply(bContext *C, wmOperator *op, Object *ob)
+static void sculpt_color_filter_apply(bContext *C, wmOperator *op, Object &ob)
 {
-  SculptSession *ss = ob->sculpt;
+  SculptSession &ss = *ob.sculpt;
 
   const int mode = RNA_enum_get(op->ptr, "type");
   float filter_strength = RNA_float_get(op->ptr, "strength");
@@ -281,32 +308,54 @@ static void sculpt_color_filter_apply(bContext *C, wmOperator *op, Object *ob)
   RNA_float_get_array(op->ptr, "fill_color", fill_color);
   IMB_colormanagement_srgb_to_scene_linear_v3(fill_color, fill_color);
 
-  if (filter_strength < 0.0 && !ss->filter_cache->pre_smoothed_color) {
-    sculpt_color_presmooth_init(ss);
+  Mesh &mesh = *static_cast<Mesh *>(ob.data);
+  if (filter_strength < 0.0 && ss.filter_cache->pre_smoothed_color.is_empty()) {
+    sculpt_color_presmooth_init(mesh, ss);
   }
 
-  threading::parallel_for(ss->filter_cache->nodes.index_range(), 1, [&](const IndexRange range) {
+  const Span<PBVHNode *> nodes = ss.filter_cache->nodes;
+
+  const OffsetIndices<int> faces = mesh.faces();
+  const Span<int> corner_verts = mesh.corner_verts();
+  const GroupedSpan<int> vert_to_face_map = ss.vert_to_face_map;
+  bke::GSpanAttributeWriter color_attribute = active_color_attribute_for_write(mesh);
+  const bke::AttributeAccessor attributes = mesh.attributes();
+  const VArraySpan hide_vert = *attributes.lookup<bool>(".hide_vert", bke::AttrDomain::Point);
+  const VArraySpan mask = *attributes.lookup<float>(".sculpt_mask", bke::AttrDomain::Point);
+  threading::parallel_for(nodes.index_range(), 1, [&](const IndexRange range) {
     for (const int i : range) {
-      color_filter_task(ob, mode, filter_strength, fill_color, ss->filter_cache->nodes[i]);
+      color_filter_task(ob,
+                        faces,
+                        corner_verts,
+                        vert_to_face_map,
+                        hide_vert,
+                        mask,
+                        mode,
+                        filter_strength,
+                        fill_color,
+                        nodes[i],
+                        color_attribute);
+      BKE_pbvh_node_mark_update_color(nodes[i]);
     }
   });
-
-  SCULPT_flush_update_step(C, SCULPT_UPDATE_COLOR);
+  color_attribute.finish();
+  flush_update_step(C, UpdateType::Color);
 }
 
-static void sculpt_color_filter_end(bContext *C, Object *ob)
+static void sculpt_color_filter_end(bContext *C, Object &ob)
 {
-  SculptSession *ss = ob->sculpt;
+  SculptSession &ss = *ob.sculpt;
 
   undo::push_end(ob);
-  filter::cache_free(ss);
-  SCULPT_flush_update_done(C, ob, SCULPT_UPDATE_COLOR);
+  MEM_delete(ss.filter_cache);
+  ss.filter_cache = nullptr;
+  flush_update_done(C, ob, UpdateType::Color);
 }
 
 static int sculpt_color_filter_modal(bContext *C, wmOperator *op, const wmEvent *event)
 {
-  Object *ob = CTX_data_active_object(C);
-  SculptSession *ss = ob->sculpt;
+  Object &ob = *CTX_data_active_object(C);
+  SculptSession &ss = *ob.sculpt;
 
   if (event->type == LEFTMOUSE && event->val == KM_RELEASE) {
     sculpt_color_filter_end(C, ob);
@@ -318,7 +367,7 @@ static int sculpt_color_filter_modal(bContext *C, wmOperator *op, const wmEvent 
   }
 
   const float len = (event->prev_press_xy[0] - event->xy[0]) * 0.001f;
-  float filter_strength = ss->filter_cache->start_filter_strength * -len;
+  float filter_strength = ss.filter_cache->start_filter_strength * -len;
   RNA_float_set(op->ptr, "strength", filter_strength);
 
   sculpt_color_filter_apply(C, op, ob);
@@ -328,9 +377,9 @@ static int sculpt_color_filter_modal(bContext *C, wmOperator *op, const wmEvent 
 
 static int sculpt_color_filter_init(bContext *C, wmOperator *op)
 {
-  Object *ob = CTX_data_active_object(C);
-  Sculpt *sd = CTX_data_tool_settings(C)->sculpt;
-  SculptSession *ss = ob->sculpt;
+  Object &ob = *CTX_data_active_object(C);
+  const Sculpt &sd = *CTX_data_tool_settings(C)->sculpt;
+  SculptSession &ss = *ob.sculpt;
   View3D *v3d = CTX_wm_view3d(C);
 
   const Base *base = CTX_data_active_base(C);
@@ -342,7 +391,7 @@ static int sculpt_color_filter_init(bContext *C, wmOperator *op)
   RNA_int_get_array(op->ptr, "start_mouse", mval);
   float mval_fl[2] = {float(mval[0]), float(mval[1])};
 
-  const bool use_automasking = auto_mask::is_enabled(sd, ss, nullptr);
+  const bool use_automasking = auto_mask::is_enabled(sd, &ss, nullptr);
   if (use_automasking) {
     /* Increment stroke id for auto-masking system. */
     SCULPT_stroke_id_next(ob);
@@ -356,17 +405,17 @@ static int sculpt_color_filter_init(bContext *C, wmOperator *op)
   }
 
   /* Disable for multires and dyntopo for now */
-  if (!ss->pbvh || !SCULPT_handles_colors_report(ss, op->reports)) {
+  if (!ss.pbvh || !SCULPT_handles_colors_report(ss, op->reports)) {
     return OPERATOR_CANCELLED;
   }
 
   undo::push_begin(ob, op);
-  BKE_sculpt_color_layer_create_if_needed(ob);
+  BKE_sculpt_color_layer_create_if_needed(&ob);
 
   /* CTX_data_ensure_evaluated_depsgraph should be used at the end to include the updates of
    * earlier steps modifying the data. */
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
-  BKE_sculpt_update_object_for_edit(depsgraph, ob, true);
+  BKE_sculpt_update_object_for_edit(depsgraph, &ob, true);
 
   filter::cache_init(C,
                      ob,
@@ -375,7 +424,7 @@ static int sculpt_color_filter_init(bContext *C, wmOperator *op)
                      mval_fl,
                      RNA_float_get(op->ptr, "area_normal_radius"),
                      RNA_float_get(op->ptr, "strength"));
-  filter::Cache *filter_cache = ss->filter_cache;
+  filter::Cache *filter_cache = ss.filter_cache;
   filter_cache->active_face_set = SCULPT_FACE_SET_NONE;
   filter_cache->automasking = auto_mask::cache_init(sd, ob);
 
@@ -384,7 +433,7 @@ static int sculpt_color_filter_init(bContext *C, wmOperator *op)
 
 static int sculpt_color_filter_exec(bContext *C, wmOperator *op)
 {
-  Object *ob = CTX_data_active_object(C);
+  Object &ob = *CTX_data_active_object(C);
 
   if (sculpt_color_filter_init(C, op) == OPERATOR_CANCELLED) {
     return OPERATOR_CANCELLED;
@@ -398,7 +447,7 @@ static int sculpt_color_filter_exec(bContext *C, wmOperator *op)
 
 static int sculpt_color_filter_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
-  Object *ob = CTX_data_active_object(C);
+  Object &ob = *CTX_data_active_object(C);
   View3D *v3d = CTX_wm_view3d(C);
   if (v3d && v3d->shading.type == OB_SOLID) {
     v3d->shading.color_type = V3D_SHADING_VERTEX_COLOR;
@@ -410,7 +459,7 @@ static int sculpt_color_filter_invoke(bContext *C, wmOperator *op, const wmEvent
     return OPERATOR_CANCELLED;
   }
 
-  ED_paint_tool_update_sticky_shading_color(C, ob);
+  ED_paint_tool_update_sticky_shading_color(C, &ob);
 
   WM_event_add_modal_handler(C, op);
   return OPERATOR_RUNNING_MODAL;

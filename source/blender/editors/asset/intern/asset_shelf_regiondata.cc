@@ -25,13 +25,27 @@ RegionAssetShelf *RegionAssetShelf::get_from_asset_shelf_region(const ARegion &r
   return static_cast<RegionAssetShelf *>(region.regiondata);
 }
 
+RegionAssetShelf *RegionAssetShelf::ensure_from_asset_shelf_region(ARegion &region)
+{
+  if (region.regiontype != RGN_TYPE_ASSET_SHELF) {
+    /* Should only be called on main asset shelf region. */
+    BLI_assert_unreachable();
+    return nullptr;
+  }
+  if (!region.regiondata) {
+    region.regiondata = MEM_cnew<RegionAssetShelf>("RegionAssetShelf");
+  }
+  return static_cast<RegionAssetShelf *>(region.regiondata);
+}
+
 namespace blender::ed::asset::shelf {
 
 RegionAssetShelf *regiondata_duplicate(const RegionAssetShelf *shelf_regiondata)
 {
   static_assert(std::is_trivial_v<RegionAssetShelf>,
                 "RegionAssetShelf needs to be trivial to allow freeing with MEM_freeN()");
-  RegionAssetShelf *new_shelf_regiondata = MEM_new<RegionAssetShelf>(__func__, *shelf_regiondata);
+  RegionAssetShelf *new_shelf_regiondata = MEM_cnew<RegionAssetShelf>(__func__);
+  *new_shelf_regiondata = *shelf_regiondata;
 
   BLI_listbase_clear(&new_shelf_regiondata->shelves);
   LISTBASE_FOREACH (const AssetShelf *, shelf, &shelf_regiondata->shelves) {
@@ -70,12 +84,12 @@ void regiondata_blend_read_data(BlendDataReader *reader, RegionAssetShelf **shel
     return;
   }
 
-  BLO_read_data_address(reader, shelf_regiondata);
+  BLO_read_struct(reader, RegionAssetShelf, shelf_regiondata);
   if ((*shelf_regiondata)->active_shelf) {
-    BLO_read_data_address(reader, &(*shelf_regiondata)->active_shelf);
+    BLO_read_struct(reader, AssetShelf, &(*shelf_regiondata)->active_shelf);
   }
 
-  BLO_read_list(reader, &(*shelf_regiondata)->shelves);
+  BLO_read_struct_list(reader, AssetShelf, &(*shelf_regiondata)->shelves);
   LISTBASE_FOREACH (AssetShelf *, shelf, &(*shelf_regiondata)->shelves) {
     shelf->type = nullptr;
     settings_blend_read_data(reader, shelf->settings);

@@ -22,14 +22,9 @@ struct PreviewImage;
 struct Scene;
 struct bContext;
 
-struct IconFile {
-  IconFile *next, *prev;
-  char filename[256]; /* FILE_MAXFILE size */
-  int index;
-};
-
 struct IconTextOverlay {
   char text[5];
+  uchar color[4] = {0};
 };
 
 #define UI_NO_ICON_OVERLAY_TEXT NULL
@@ -53,23 +48,13 @@ enum eAlertIcon {
   ALERT_ICON_MAX,
 };
 
-ImBuf *UI_icon_alert_imbuf_get(eAlertIcon icon);
+ImBuf *UI_icon_alert_imbuf_get(eAlertIcon icon, float size);
 
 /**
  * Resizable Icons for Blender
  */
 void UI_icons_init();
-/**
- * Reload the textures for internal icons.
- * This function will release the previous textures.
- */
-void UI_icons_reload_internal_textures();
 
-/**
- * NOTE: returns unscaled by DPI.
- */
-int UI_icon_get_width(int icon_id);
-int UI_icon_get_height(int icon_id);
 bool UI_icon_get_theme_color(int icon_id, unsigned char color[4]);
 
 /**
@@ -110,16 +95,11 @@ void UI_icon_draw_ex(float x,
                      float desaturate,
                      const uchar mono_color[4],
                      bool mono_border,
-                     const IconTextOverlay *text_overlay);
+                     const IconTextOverlay *text_overlay,
+                     const bool inverted = false);
 
 void UI_icons_free();
 void UI_icons_free_drawinfo(void *drawinfo);
-
-void UI_icon_draw_cache_begin();
-void UI_icon_draw_cache_end();
-
-ListBase *UI_iconfile_list();
-int UI_iconfile_get_index(const char *filename);
 
 PreviewImage *UI_icon_to_preview(int icon_id);
 

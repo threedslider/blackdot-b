@@ -79,6 +79,7 @@ void Instance::begin_sync()
   prepass.begin_sync(resources, state);
   empties.begin_sync();
   metaballs.begin_sync();
+  speakers.begin_sync();
   grid.begin_sync(resources, state, view);
 }
 
@@ -135,6 +136,9 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
         break;
       case OB_GPENCIL_LEGACY:
         break;
+      case OB_SPEAKER:
+        speakers.object_sync(ob_ref, resources, state);
+        break;
     }
   }
 }
@@ -145,6 +149,7 @@ void Instance::end_sync()
 
   metaballs.end_sync(resources, shapes, state);
   empties.end_sync(resources, shapes, state);
+  speakers.end_sync(resources, shapes, state);
 }
 
 void Instance::draw(Manager &manager)
@@ -211,11 +216,13 @@ void Instance::draw(Manager &manager)
 
   empties.draw(resources, manager, view);
   metaballs.draw(resources, manager, view);
+  speakers.draw(resources, manager, view);
 
   grid.draw(resources, manager, view);
 
   empties.draw_in_front(resources, manager, view);
   metaballs.draw_in_front(resources, manager, view);
+  speakers.draw_in_front(resources, manager, view);
 
   // anti_aliasing.draw(resources, manager, view);
 
@@ -269,10 +276,10 @@ BoneInstanceData::BoneInstanceData(Object *ob,
                                    const float color[4])
 {
   /* TODO(fclem): Use C++ math API. */
-  mul_v3_v3fl(this->mat[0], ob->object_to_world[0], radius);
-  mul_v3_v3fl(this->mat[1], ob->object_to_world[1], radius);
-  mul_v3_v3fl(this->mat[2], ob->object_to_world[2], radius);
-  mul_v3_m4v3(this->mat[3], ob->object_to_world, pos);
+  mul_v3_v3fl(this->mat[0], ob->object_to_world().ptr()[0], radius);
+  mul_v3_v3fl(this->mat[1], ob->object_to_world().ptr()[1], radius);
+  mul_v3_v3fl(this->mat[2], ob->object_to_world().ptr()[2], radius);
+  mul_v3_m4v3(this->mat[3], ob->object_to_world().ptr(), pos);
   /* WATCH: Reminder, alpha is wire-size. */
   OVERLAY_bone_instance_data_set_color(this, color);
 }

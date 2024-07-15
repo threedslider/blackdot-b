@@ -50,6 +50,8 @@ if NOT "%1" == "" (
 		goto ERR
 	) else if "%1" == "x64" (
 		set BUILD_ARCH=x64
+	) else if "%1" == "arm64" (
+		set BUILD_ARCH=arm64
 	) else if "%1" == "2019" (
 		set BUILD_VS_YEAR=2019
 	) else if "%1" == "2019pre" (
@@ -100,9 +102,6 @@ if NOT "%1" == "" (
 	) else if "%1" == "format" (
 		set FORMAT=1
 		set FORMAT_ARGS=%2 %3 %4 %5 %6 %7 %8 %9
-		goto EOF
-	) else if "%1" == "icons" (
-		set ICONS=1
 		goto EOF
 	) else if "%1" == "icons_geom" (
 		set ICONS_GEOM=1

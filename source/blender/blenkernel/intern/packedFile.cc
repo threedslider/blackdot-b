@@ -32,7 +32,7 @@
 #include "BKE_image_format.h"
 #include "BKE_main.hh"
 #include "BKE_packedFile.h"
-#include "BKE_report.h"
+#include "BKE_report.hh"
 #include "BKE_sound.h"
 #include "BKE_vfont.hh"
 #include "BKE_volume.hh"
@@ -87,7 +87,7 @@ int BKE_packedfile_read(PackedFile *pf, void *data, int size)
     }
 
     if (size > 0) {
-      memcpy(data, ((char *)pf->data) + pf->seek, size);
+      memcpy(data, ((const char *)pf->data) + pf->seek, size);
     }
     else {
       size = 0;
@@ -114,13 +114,13 @@ int BKE_packedfile_count_all(Main *bmain)
   for (ima = static_cast<Image *>(bmain->images.first); ima;
        ima = static_cast<Image *>(ima->id.next))
   {
-    if (BKE_image_has_packedfile(ima)) {
+    if (BKE_image_has_packedfile(ima) && !ID_IS_LINKED(ima)) {
       count++;
     }
   }
 
   for (vf = static_cast<VFont *>(bmain->fonts.first); vf; vf = static_cast<VFont *>(vf->id.next)) {
-    if (vf->packedfile) {
+    if (vf->packedfile && !ID_IS_LINKED(vf)) {
       count++;
     }
   }
@@ -128,7 +128,7 @@ int BKE_packedfile_count_all(Main *bmain)
   for (sound = static_cast<bSound *>(bmain->sounds.first); sound;
        sound = static_cast<bSound *>(sound->id.next))
   {
-    if (sound->packedfile) {
+    if (sound->packedfile && !ID_IS_LINKED(sound)) {
       count++;
     }
   }
@@ -136,7 +136,7 @@ int BKE_packedfile_count_all(Main *bmain)
   for (volume = static_cast<Volume *>(bmain->volumes.first); volume;
        volume = static_cast<Volume *>(volume->id.next))
   {
-    if (volume->packedfile) {
+    if (volume->packedfile && !ID_IS_LINKED(volume)) {
       count++;
     }
   }
@@ -148,8 +148,9 @@ void BKE_packedfile_free(PackedFile *pf)
 {
   if (pf) {
     BLI_assert(pf->data != nullptr);
+    BLI_assert(pf->sharing_info != nullptr);
 
-    MEM_SAFE_FREE(pf->data);
+    pf->sharing_info->remove_user_and_delete_if_last();
     MEM_freeN(pf);
   }
   else {
@@ -165,7 +166,7 @@ PackedFile *BKE_packedfile_duplicate(const PackedFile *pf_src)
   PackedFile *pf_dst;
 
   pf_dst = static_cast<PackedFile *>(MEM_dupallocN(pf_src));
-  pf_dst->data = MEM_dupallocN(pf_src->data);
+  pf_dst->sharing_info->add_user();
 
   return pf_dst;
 }
@@ -177,6 +178,7 @@ PackedFile *BKE_packedfile_new_from_memory(void *mem, int memlen)
   PackedFile *pf = static_cast<PackedFile *>(MEM_callocN(sizeof(*pf), "PackedFile"));
   pf->data = mem;
   pf->size = memlen;
+  pf->sharing_info = blender::implicit_sharing::info_for_mem_free(mem);
 
   return pf;
 }
@@ -245,7 +247,7 @@ void BKE_packedfile_pack_all(Main *bmain, ReportList *reports, bool verbose)
   for (ima = static_cast<Image *>(bmain->images.first); ima;
        ima = static_cast<Image *>(ima->id.next))
   {
-    if (BKE_image_has_packedfile(ima) == false && !ID_IS_LINKED(ima)) {
+    if (BKE_image_has_packedfile(ima) == false && ID_IS_EDITABLE(ima)) {
       if (ELEM(ima->source, IMA_SRC_FILE, IMA_SRC_TILED)) {
         BKE_image_packfiles(reports, ima, ID_BLEND_PATH(bmain, &ima->id));
         tot++;
@@ -262,7 +264,7 @@ void BKE_packedfile_pack_all(Main *bmain, ReportList *reports, bool verbose)
   for (vfont = static_cast<VFont *>(bmain->fonts.first); vfont;
        vfont = static_cast<VFont *>(vfont->id.next))
   {
-    if (vfont->packedfile == nullptr && !ID_IS_LINKED(vfont) &&
+    if (vfont->packedfile == nullptr && ID_IS_EDITABLE(vfont) &&
         BKE_vfont_is_builtin(vfont) == false)
     {
       vfont->packedfile = BKE_packedfile_new(
@@ -274,7 +276,7 @@ void BKE_packedfile_pack_all(Main *bmain, ReportList *reports, bool verbose)
   for (sound = static_cast<bSound *>(bmain->sounds.first); sound;
        sound = static_cast<bSound *>(sound->id.next))
   {
-    if (sound->packedfile == nullptr && !ID_IS_LINKED(sound)) {
+    if (sound->packedfile == nullptr && ID_IS_EDITABLE(sound)) {
       sound->packedfile = BKE_packedfile_new(
           reports, sound->filepath, BKE_main_blendfile_path(bmain));
       tot++;
@@ -284,7 +286,7 @@ void BKE_packedfile_pack_all(Main *bmain, ReportList *reports, bool verbose)
   for (volume = static_cast<Volume *>(bmain->volumes.first); volume;
        volume = static_cast<Volume *>(volume->id.next))
   {
-    if (volume->packedfile == nullptr && !ID_IS_LINKED(volume)) {
+    if (volume->packedfile == nullptr && ID_IS_EDITABLE(volume)) {
       volume->packedfile = BKE_packedfile_new(
           reports, volume->filepath, BKE_main_blendfile_path(bmain));
       tot++;
@@ -367,7 +369,7 @@ int BKE_packedfile_write_to_file(ReportList *reports,
 
 enum ePF_FileCompare BKE_packedfile_compare_to_file(const char *ref_file_name,
                                                     const char *filepath_rel,
-                                                    PackedFile *pf)
+                                                    const PackedFile *pf)
 {
   BLI_stat_t st;
   enum ePF_FileCompare ret_val;
@@ -725,8 +727,8 @@ int BKE_packedfile_unpack_all_libraries(Main *bmain, ReportList *reports)
 
       newname = BKE_packedfile_unpack_to_file(reports,
                                               BKE_main_blendfile_path(bmain),
-                                              lib->filepath_abs,
-                                              lib->filepath_abs,
+                                              lib->runtime.filepath_abs,
+                                              lib->runtime.filepath_abs,
                                               lib->packedfile,
                                               PF_WRITE_ORIGINAL);
       if (newname != nullptr) {
@@ -782,13 +784,13 @@ void BKE_packedfile_unpack_all(Main *bmain, ReportList *reports, enum ePF_FileSt
   for (ima = static_cast<Image *>(bmain->images.first); ima;
        ima = static_cast<Image *>(ima->id.next))
   {
-    if (BKE_image_has_packedfile(ima)) {
+    if (BKE_image_has_packedfile(ima) && !ID_IS_LINKED(ima)) {
       BKE_packedfile_unpack_image(bmain, reports, ima, how);
     }
   }
 
   for (vf = static_cast<VFont *>(bmain->fonts.first); vf; vf = static_cast<VFont *>(vf->id.next)) {
-    if (vf->packedfile) {
+    if (vf->packedfile && !ID_IS_LINKED(vf)) {
       BKE_packedfile_unpack_vfont(bmain, reports, vf, how);
     }
   }
@@ -796,7 +798,7 @@ void BKE_packedfile_unpack_all(Main *bmain, ReportList *reports, enum ePF_FileSt
   for (sound = static_cast<bSound *>(bmain->sounds.first); sound;
        sound = static_cast<bSound *>(sound->id.next))
   {
-    if (sound->packedfile) {
+    if (sound->packedfile && !ID_IS_LINKED(sound)) {
       BKE_packedfile_unpack_sound(bmain, reports, sound, how);
     }
   }
@@ -804,7 +806,7 @@ void BKE_packedfile_unpack_all(Main *bmain, ReportList *reports, enum ePF_FileSt
   for (volume = static_cast<Volume *>(bmain->volumes.first); volume;
        volume = static_cast<Volume *>(volume->id.next))
   {
-    if (volume->packedfile) {
+    if (volume->packedfile && !ID_IS_LINKED(volume)) {
       BKE_packedfile_unpack_volume(bmain, reports, volume, how);
     }
   }
@@ -841,6 +843,11 @@ bool BKE_packedfile_id_check(const ID *id)
 
 void BKE_packedfile_id_unpack(Main *bmain, ID *id, ReportList *reports, enum ePF_FileStatus how)
 {
+  /* Only unpack when datablock is editable. */
+  if (!ID_IS_EDITABLE(id)) {
+    return;
+  }
+
   switch (GS(id->name)) {
     case ID_IM: {
       Image *ima = (Image *)id;
@@ -880,24 +887,28 @@ void BKE_packedfile_id_unpack(Main *bmain, ID *id, ReportList *reports, enum ePF
   }
 }
 
-void BKE_packedfile_blend_write(BlendWriter *writer, PackedFile *pf)
+void BKE_packedfile_blend_write(BlendWriter *writer, const PackedFile *pf)
 {
   if (pf == nullptr) {
     return;
   }
   BLO_write_struct(writer, PackedFile, pf);
-  BLO_write_raw(writer, pf->size, pf->data);
+  BLO_write_shared(writer, pf->data, pf->size, pf->sharing_info, [&]() {
+    BLO_write_raw(writer, pf->size, pf->data);
+  });
 }
 
 void BKE_packedfile_blend_read(BlendDataReader *reader, PackedFile **pf_p)
 {
-  BLO_read_packed_address(reader, pf_p);
+  BLO_read_struct(reader, PackedFile, pf_p);
   PackedFile *pf = *pf_p;
   if (pf == nullptr) {
     return;
   }
-
-  BLO_read_packed_address(reader, &pf->data);
+  pf->sharing_info = BLO_read_shared(reader, &pf->data, [&]() {
+    BLO_read_data_address(reader, &pf->data);
+    return blender::implicit_sharing::info_for_mem_free(const_cast<void *>(pf->data));
+  });
   if (pf->data == nullptr) {
     /* We cannot allow a PackedFile with a nullptr data field,
      * the whole code assumes this is not possible. See #70315. */

@@ -13,7 +13,6 @@
 
 #include "DNA_mesh_types.h"
 #include "DNA_meshdata_types.h"
-#include "DNA_object_types.h"
 
 #include "BLI_alloca.h"
 #include "BLI_math_matrix.h"
@@ -21,7 +20,6 @@
 
 #include "BKE_attribute.hh"
 #include "BKE_customdata.hh"
-#include "BKE_object.hh"
 
 #include "bmesh.hh"
 
@@ -591,8 +589,9 @@ static void bmo_get_loop_color_ref(BMesh *bm,
   me_query.corner_data = bm->ldata;
   *((short *)me_query.id.name) = ID_ME;
 
-  CustomDataLayer *layer = BKE_id_attribute_from_index(
-      &me_query.id, index, ATTR_DOMAIN_MASK_CORNER, CD_MASK_COLOR_ALL);
+  AttributeOwner owner = AttributeOwner::from_id(&me_query.id);
+  CustomDataLayer *layer = BKE_attribute_from_index(
+      owner, index, ATTR_DOMAIN_MASK_CORNER, CD_MASK_COLOR_ALL);
   if (!layer) {
     *r_cd_color_offset = -1;
     return;

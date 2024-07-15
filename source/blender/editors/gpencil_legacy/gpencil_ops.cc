@@ -29,7 +29,7 @@
 
 #include "ED_gpencil_legacy.hh"
 
-#include "gpencil_intern.h"
+#include "gpencil_intern.hh"
 
 /* ****************************************** */
 /* Grease Pencil Keymaps */
@@ -714,9 +714,6 @@ void ED_operatortypes_gpencil_legacy()
 
   WM_operatortype_append(GPENCIL_OT_transform_fill);
   WM_operatortype_append(GPENCIL_OT_reset_transform_fill);
-
-  WM_operatortype_append(GPENCIL_OT_brush_reset);
-  WM_operatortype_append(GPENCIL_OT_brush_reset_all);
 
   /* vertex groups */
   WM_operatortype_append(GPENCIL_OT_vertex_group_assign);

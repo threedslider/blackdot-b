@@ -18,7 +18,7 @@
  * comments: (ton)
  *
  * This system needs recode, a node system should rely on the stack, and
- * callbacks for nodes only should evaluate own node, not recursively go
+ * callbacks for nodes only should evaluate their own node, not recursively go
  * over other previous ones.
  */
 
@@ -29,7 +29,7 @@
 #include "node_texture_util.hh"
 #include "node_util.hh"
 
-bool tex_node_poll_default(const bNodeType * /*ntype*/,
+bool tex_node_poll_default(const blender::bke::bNodeType * /*ntype*/,
                            const bNodeTree *ntree,
                            const char **r_disabled_hint)
 {
@@ -40,7 +40,7 @@ bool tex_node_poll_default(const bNodeType * /*ntype*/,
   return true;
 }
 
-void tex_node_type_base(bNodeType *ntype, int type, const char *name, short nclass)
+void tex_node_type_base(blender::bke::bNodeType *ntype, int type, const char *name, short nclass)
 {
   blender::bke::node_type_base(ntype, type, name, nclass);
 
@@ -124,7 +124,7 @@ void tex_output(bNode *node,
 
   if (!out->data) {
     /* Freed in tex_end_exec (node.cc) */
-    dg = MEM_new<TexDelegate>("tex delegate");
+    dg = MEM_cnew<TexDelegate>("tex delegate");
     out->data = dg;
   }
   else {

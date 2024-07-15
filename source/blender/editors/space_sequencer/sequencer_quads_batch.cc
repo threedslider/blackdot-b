@@ -11,9 +11,9 @@
 #include "BLI_color.hh"
 #include "BLI_math_vector_types.hh"
 
-#include "GPU_batch.h"
-#include "GPU_index_buffer.h"
-#include "GPU_vertex_buffer.h"
+#include "GPU_batch.hh"
+#include "GPU_index_buffer.hh"
+#include "GPU_vertex_buffer.hh"
 
 struct ColorVertex {
   blender::float2 pos;
@@ -21,7 +21,7 @@ struct ColorVertex {
 };
 static_assert(sizeof(ColorVertex) == 12);
 
-static GPUIndexBuf *create_quads_index_buffer(int quads_count)
+static blender::gpu::IndexBuf *create_quads_index_buffer(int quads_count)
 {
   GPUIndexBufBuilder elb;
   GPU_indexbuf_init(&elb, GPU_PRIM_TRIS, quads_count * 2, quads_count * 4);
@@ -45,11 +45,11 @@ SeqQuadsBatch::SeqQuadsBatch()
   GPU_vertformat_attr_add(&format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
   GPU_vertformat_attr_add(&format, "color", GPU_COMP_U8, 4, GPU_FETCH_INT_TO_FLOAT_UNIT);
 
-  vbo_quads = GPU_vertbuf_create_with_format_ex(&format, GPU_USAGE_STREAM);
-  GPU_vertbuf_data_alloc(vbo_quads, MAX_QUADS * 4);
+  vbo_quads = GPU_vertbuf_create_with_format_ex(format, GPU_USAGE_STREAM);
+  GPU_vertbuf_data_alloc(*vbo_quads, MAX_QUADS * 4);
 
-  vbo_lines = GPU_vertbuf_create_with_format_ex(&format, GPU_USAGE_STREAM);
-  GPU_vertbuf_data_alloc(vbo_lines, MAX_LINES * 2);
+  vbo_lines = GPU_vertbuf_create_with_format_ex(format, GPU_USAGE_STREAM);
+  GPU_vertbuf_data_alloc(*vbo_lines, MAX_LINES * 2);
 
   batch_quads = GPU_batch_create_ex(
       GPU_PRIM_TRIS, vbo_quads, ibo_quads, GPU_BATCH_OWNS_VBO | GPU_BATCH_OWNS_INDEX);
@@ -102,7 +102,7 @@ void SeqQuadsBatch::add_quad(float x1,
     draw();
   }
   if (quads_num == 0) {
-    verts_quads = static_cast<ColorVertex *>(GPU_vertbuf_get_data(vbo_quads));
+    verts_quads = vbo_quads->data<ColorVertex>().data();
     BLI_assert(verts_quads != nullptr);
   }
 
@@ -125,7 +125,7 @@ void SeqQuadsBatch::add_wire_quad(float x1, float y1, float x2, float y2, const 
     draw();
   }
   if (lines_num == 0) {
-    verts_lines = static_cast<ColorVertex *>(GPU_vertbuf_get_data(vbo_lines));
+    verts_lines = vbo_lines->data<ColorVertex>().data();
     BLI_assert(verts_lines != nullptr);
   }
 
@@ -157,7 +157,7 @@ void SeqQuadsBatch::add_line(
     draw();
   }
   if (lines_num == 0) {
-    verts_lines = static_cast<ColorVertex *>(GPU_vertbuf_get_data(vbo_lines));
+    verts_lines = vbo_lines->data<ColorVertex>().data();
     BLI_assert(verts_lines != nullptr);
   }
 

@@ -123,6 +123,10 @@ typedef enum {
    * Supports IME text input methods (when `WITH_INPUT_IME` is defined).
    */
   GHOST_kCapabilityInputIME = (1 << 6),
+  /**
+   * Support detecting the physical trackpad direction.
+   */
+  GHOST_kCapabilityTrackpadPhysicalDirection = (1 << 7),
 } GHOST_TCapabilityFlag;
 
 /**
@@ -132,7 +136,8 @@ typedef enum {
 #define GHOST_CAPABILITY_FLAG_ALL \
   (GHOST_kCapabilityCursorWarp | GHOST_kCapabilityWindowPosition | \
    GHOST_kCapabilityPrimaryClipboard | GHOST_kCapabilityGPUReadFrontBuffer | \
-   GHOST_kCapabilityClipboardImages | GHOST_kCapabilityDesktopSample | GHOST_kCapabilityInputIME)
+   GHOST_kCapabilityClipboardImages | GHOST_kCapabilityDesktopSample | \
+   GHOST_kCapabilityInputIME | GHOST_kCapabilityTrackpadPhysicalDirection)
 
 /* Xtilt and Ytilt represent how much the pen is tilted away from
  * vertically upright in either the X or Y direction, with X and Y the
@@ -780,6 +785,8 @@ typedef void (*GHOST_XrCustomdataFreeFn)(void *customdata);
 typedef void *(*GHOST_XrGraphicsContextBindFn)(void);
 typedef void (*GHOST_XrGraphicsContextUnbindFn)(GHOST_ContextHandle graphics_context);
 typedef void (*GHOST_XrDrawViewFn)(const struct GHOST_XrDrawViewInfo *draw_view, void *customdata);
+typedef bool (*GHOST_XrPassthroughEnabledFn)(void *customdata);
+typedef void (*GHOST_XrDisablePassthroughFn)(void *customdata);
 
 /**
  * An array of #GHOST_TXrGraphicsBinding items defining the candidate bindings to use.
@@ -788,6 +795,7 @@ typedef void (*GHOST_XrDrawViewFn)(const struct GHOST_XrDrawViewInfo *draw_view,
 typedef const GHOST_TXrGraphicsBinding *GHOST_XrGraphicsBindingCandidates;
 
 typedef struct {
+  bool is_active;
   float position[3];
   /* Blender convention (w, x, y, z) */
   float orientation_quat[4];

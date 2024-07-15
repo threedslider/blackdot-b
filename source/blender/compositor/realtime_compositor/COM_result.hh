@@ -7,10 +7,11 @@
 #include "BLI_math_matrix_types.hh"
 #include "BLI_math_vector_types.hh"
 
-#include "GPU_shader.h"
-#include "GPU_texture.h"
+#include "GPU_shader.hh"
+#include "GPU_texture.hh"
 
 #include "COM_domain.hh"
+#include "COM_meta_data.hh"
 #include "COM_texture_pool.hh"
 
 namespace blender::realtime_compositor {
@@ -127,6 +128,11 @@ class Result {
    * result. This is set up by a call to the wrap_external method. In that case, when the reference
    * count eventually reach zero, the texture will not be freed. */
   bool is_external_ = false;
+
+ public:
+  /* Stores extra information about the result such as image meta data that can eventually be
+   * written to file. */
+  MetaData meta_data;
 
  public:
   /* Construct a result of the given type and precision with the given texture pool that will be
@@ -275,11 +281,10 @@ class Result {
   void set_initial_reference_count(int count);
 
   /* Reset the result to prepare it for a new evaluation. This should be called before evaluating
-   * the operation that computes this result. First, set the value of reference_count_ to the value
-   * of initial_reference_count_ since reference_count_ may have already been decremented to zero
-   * in a previous evaluation. Second, set master_ to nullptr because the result may have been
-   * turned into a proxy result in a previous evaluation. Other fields don't need to be reset
-   * because they are runtime and overwritten during evaluation. */
+   * the operation that computes this result. Keep the type, precision, texture pool, and initial
+   * reference count, and rest all other members to their default value. Finally, set the value of
+   * reference_count_ to the value of initial_reference_count_ since reference_count_ may have
+   * already been decremented to zero in a previous evaluation. */
   void reset();
 
   /* Increment the reference count of the result by the given count. If this result have a master

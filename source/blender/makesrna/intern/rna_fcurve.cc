@@ -15,7 +15,7 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLT_translation.h"
+#include "BLT_translation.hh"
 
 #include "BKE_action.h"
 
@@ -53,8 +53,6 @@ const EnumPropertyItem rna_enum_fmodifier_type_items[] = {
      "Reshape F-Curve values, e.g. change amplitude of movements"},
     {FMODIFIER_TYPE_CYCLES, "CYCLES", 0, "Cycles", "Cyclic extend/repeat keyframe sequence"},
     {FMODIFIER_TYPE_NOISE, "NOISE", 0, "Noise", "Add pseudo-random noise on top of F-Curves"},
-    // {FMODIFIER_TYPE_FILTER, "FILTER", 0, "Filter", ""}, /* FIXME: not implemented yet! */
-    // {FMODIFIER_TYPE_PYTHON, "PYTHON", 0, "Python", ""}, /* FIXME: not implemented yet! */
     {FMODIFIER_TYPE_LIMITS,
      "LIMITS",
      0,
@@ -110,6 +108,11 @@ const EnumPropertyItem rna_enum_beztriple_keyframe_type_items[] = {
      ICON_KEYTYPE_JITTER_VEC,
      "Jitter",
      "A filler or baked keyframe for keying on ones, or some other purpose as needed"},
+    {BEZT_KEYTYPE_GENERATED,
+     "GENERATED",
+     ICON_KEYTYPE_GENERATED_VEC,
+     "Generated",
+     "A key generated automatically by a tool, not manually created"},
     {0, nullptr, 0, nullptr, nullptr},
 };
 
@@ -202,12 +205,6 @@ static StructRNA *rna_FModifierType_refine(PointerRNA *ptr)
       return &RNA_FModifierCycles;
     case FMODIFIER_TYPE_NOISE:
       return &RNA_FModifierNoise;
-#  if 0
-    case FMODIFIER_TYPE_FILTER:
-      return &RNA_FModifierFilter;
-#  endif
-    case FMODIFIER_TYPE_PYTHON:
-      return &RNA_FModifierPython;
     case FMODIFIER_TYPE_LIMITS:
       return &RNA_FModifierLimits;
     case FMODIFIER_TYPE_STEPPED:
@@ -219,8 +216,8 @@ static StructRNA *rna_FModifierType_refine(PointerRNA *ptr)
 
 /* ****************************** */
 
-#  include "BKE_anim_data.h"
-#  include "BKE_fcurve.h"
+#  include "BKE_anim_data.hh"
+#  include "BKE_fcurve.hh"
 #  include "BKE_fcurve_driver.h"
 
 #  include "DEG_depsgraph.hh"
@@ -714,7 +711,7 @@ static void rna_FCurve_update_data_relations(Main *bmain, Scene * /*scene*/, Poi
   DEG_relations_tag_update(bmain);
 }
 
-/* RNA update callback for F-Curves to indicate that there are copy-on-write tagging/flushing
+/* RNA update callback for F-Curves to indicate that there are copy-on-evaluation tagging/flushing
  * needed (e.g. for properties that affect how animation gets evaluated).
  */
 static void rna_FCurve_update_eval(Main *bmain, Scene * /*scene*/, PointerRNA *ptr)
@@ -1060,10 +1057,14 @@ static BezTriple *rna_FKeyframe_points_insert(
   using namespace blender::animrig;
   KeyframeSettings settings = get_keyframe_settings(false);
   settings.keyframe_type = eBezTriple_KeyframeType(keyframe_type);
-  int index = insert_vert_fcurve(fcu, {frame, value}, settings, eInsertKeyFlags(flag));
+  const SingleKeyingResult result = insert_vert_fcurve(
+      fcu, {frame, value}, settings, eInsertKeyFlags(flag));
 
-  if ((fcu->bezt) && (index >= 0)) {
+  if ((fcu->bezt) && (result == SingleKeyingResult::SUCCESS)) {
     rna_tag_animation_update(bmain, id);
+
+    bool replace;
+    const int index = BKE_fcurve_bezt_binarysearch_index(fcu->bezt, frame, fcu->totvert, &replace);
 
     return fcu->bezt + index;
   }
@@ -1529,19 +1530,6 @@ static void rna_def_fmodifier_cycles(BlenderRNA *brna)
                            "After Cycles",
                            "Maximum number of cycles to allow after last keyframe (0 = infinite)");
   RNA_def_property_update(prop, NC_ANIMATION | ND_KEYFRAME | NA_EDITED, "rna_FModifier_update");
-}
-
-/* --------- */
-
-static void rna_def_fmodifier_python(BlenderRNA *brna)
-{
-  StructRNA *srna;
-  // PropertyRNA *prop;
-
-  srna = RNA_def_struct(brna, "FModifierPython", "FModifier");
-  RNA_def_struct_ui_text(
-      srna, "Python F-Modifier", "Perform user-defined operation on the modified F-Curve");
-  RNA_def_struct_sdna_from(srna, "FMod_Python", "data");
 }
 
 /* --------- */
@@ -2708,7 +2696,6 @@ void RNA_def_fcurve(BlenderRNA *brna)
   rna_def_fmodifier_envelope_ctrl(brna);
 
   rna_def_fmodifier_cycles(brna);
-  rna_def_fmodifier_python(brna);
   rna_def_fmodifier_limits(brna);
   rna_def_fmodifier_noise(brna);
   rna_def_fmodifier_stepped(brna);

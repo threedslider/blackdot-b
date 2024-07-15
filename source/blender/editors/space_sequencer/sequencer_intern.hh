@@ -8,11 +8,19 @@
 
 #pragma once
 
+#include "BLI_map.hh"
 #include "BLI_utility_mixins.hh"
 #include "BLI_vector.hh"
 #include "BLI_vector_set.hh"
+
 #include "DNA_sequence_types.h"
+
 #include "RNA_access.hh"
+
+#include "GPU_immediate.hh"
+#include "GPU_viewport.hh"
+
+#include "ED_sequencer.hh"
 
 #include "sequencer_scopes.hh"
 
@@ -41,7 +49,6 @@ struct Editing;
 struct ListBase;
 
 #define DEFAULT_IMG_STRIP_LENGTH 25 /* XXX arbitrary but ok for now. */
-#define OVERLAP_ALPHA 180
 
 namespace blender::ed::seq {
 
@@ -80,14 +87,45 @@ struct SeqChannelDrawContext {
   float scale;
 };
 
+struct StripDrawContext {
+  Sequence *seq;
+  /* Strip boundary in timeline space. Content start/end is clamped by left/right handle. */
+  float content_start, content_end, bottom, top;
+  float left_handle, right_handle; /* Position in frames. */
+  float strip_content_top; /* Position in timeline space without content and text overlay. */
+  float handle_width;      /* Width of strip handle in frames. */
+  float strip_length;
+
+  bool can_draw_text_overlay;
+  bool can_draw_strip_content;
+  bool strip_is_too_small; /* Shorthand for (!can_draw_text_overlay && !can_draw_strip_content). */
+  bool is_active_strip;
+  bool is_single_image; /* Strip has single frame of content. */
+  bool show_strip_color_tag;
+  bool missing_data_block;
+  bool missing_media;
+};
+
+struct TimelineDrawContext {
+  const bContext *C;
+  ARegion *region;
+  Scene *scene;
+  SpaceSeq *sseq;
+  View2D *v2d;
+  Editing *ed;
+  ListBase *channels;
+  GPUViewport *viewport;
+  GPUFrameBuffer *framebuffer_overlay;
+  float pixelx, pixely; /* Width and height of pixel in timeline space. */
+  blender::Map<SeqRetimingKey *, Sequence *> retiming_selection;
+
+  SeqQuadsBatch *quads;
+};
+
 /* `sequencer_timeline_draw.cc` */
 
 void draw_timeline_seq(const bContext *C, ARegion *region);
 void draw_timeline_seq_display(const bContext *C, ARegion *region);
-void color3ubv_from_seq(const Scene *curscene,
-                        const Sequence *seq,
-                        bool show_strip_color_tag,
-                        uchar r_col[3]);
 
 /* `sequencer_preview_draw.cc` */
 
@@ -116,11 +154,7 @@ float sequence_handle_size_get_clamped(const Scene *scene, Sequence *seq, float 
  * TODO: do not rely on such hack and just update the \a ibuf outside of
  * the UI drawing code.
  */
-ImBuf *sequencer_ibuf_get(Main *bmain,
-                          ARegion *region,
-                          Depsgraph *depsgraph,
-                          Scene *scene,
-                          SpaceSeq *sseq,
+ImBuf *sequencer_ibuf_get(const bContext *C,
                           int timeline_frame,
                           int frame_ofs,
                           const char *viewname);
@@ -134,8 +168,10 @@ void draw_seq_strip_thumbnail(View2D *v2d,
                               Sequence *seq,
                               float y1,
                               float y2,
+                              float y_top,
                               float pixelx,
-                              float pixely);
+                              float pixely,
+                              float round_radius);
 
 /* sequencer_draw_channels.c */
 
@@ -146,7 +182,7 @@ void channel_draw_context_init(const bContext *C,
 
 /* `sequencer_edit.cc` */
 
-void seq_rectf(const Scene *scene, Sequence *seq, rctf *rectf);
+void seq_rectf(const Scene *scene, const Sequence *seq, rctf *rectf);
 Sequence *find_neighboring_sequence(Scene *scene, Sequence *test, int lr, int sel);
 void recurs_sel_seq(Sequence *seq_meta);
 int seq_effect_find_selected(Scene *scene,
@@ -178,20 +214,10 @@ bool sequencer_view_strips_poll(bContext *C);
  */
 blender::VectorSet<Sequence *> all_strips_from_context(bContext *C);
 
-/**
- * Returns collection with selected strips presented to user. If operation is done in preview,
- * collection is limited to selected presented strips, that can produce image output at current
- * frame.
- *
- * \param C: context
- * \return collection of strips (`Sequence`)
- */
-blender::VectorSet<Sequence *> selected_strips_from_context(bContext *C);
-
 /* Externals. */
 
-extern EnumPropertyItem sequencer_prop_effect_types[];
-extern EnumPropertyItem prop_side_types[];
+extern const EnumPropertyItem sequencer_prop_effect_types[];
+extern const EnumPropertyItem prop_side_types[];
 
 /* Operators. */
 
@@ -247,6 +273,7 @@ void SEQUENCER_OT_scene_frame_range_update(wmOperatorType *ot);
 
 void SEQUENCER_OT_select_all(wmOperatorType *ot);
 void SEQUENCER_OT_select(wmOperatorType *ot);
+void SEQUENCER_OT_select_handle(wmOperatorType *ot);
 void SEQUENCER_OT_select_side_of_frame(wmOperatorType *ot);
 void SEQUENCER_OT_select_more(wmOperatorType *ot);
 void SEQUENCER_OT_select_less(wmOperatorType *ot);
@@ -257,7 +284,10 @@ void SEQUENCER_OT_select_side(wmOperatorType *ot);
 void SEQUENCER_OT_select_box(wmOperatorType *ot);
 void SEQUENCER_OT_select_inverse(wmOperatorType *ot);
 void SEQUENCER_OT_select_grouped(wmOperatorType *ot);
-Sequence *find_nearest_seq(const Scene *scene, const View2D *v2d, const int mval[2], int *r_hand);
+Sequence *find_nearest_seq(const Scene *scene,
+                           const View2D *v2d,
+                           const int mval[2],
+                           eSeqHandle *r_hand);
 
 /* `sequencer_add.cc` */
 
@@ -293,6 +323,9 @@ void SEQUENCER_OT_strip_modifier_equalizer_redefine(wmOperatorType *ot);
 
 /* `sequencer_view.cc` */
 
+void SEQ_get_timeline_region_padding(const bContext *C, float *r_pad_top, float *r_pad_bottom);
+void SEQ_add_timeline_region_padding(const bContext *C, rctf *view_box);
+
 void SEQUENCER_OT_sample(wmOperatorType *ot);
 void SEQUENCER_OT_view_all(wmOperatorType *ot);
 void SEQUENCER_OT_view_frame(wmOperatorType *ot);
@@ -324,23 +357,32 @@ void SEQUENCER_OT_retiming_show(wmOperatorType *ot);
 void SEQUENCER_OT_retiming_key_add(wmOperatorType *ot);
 void SEQUENCER_OT_retiming_freeze_frame_add(wmOperatorType *ot);
 void SEQUENCER_OT_retiming_transition_add(wmOperatorType *ot);
+void SEQUENCER_OT_retiming_key_delete(wmOperatorType *ot);
 void SEQUENCER_OT_retiming_segment_speed_set(wmOperatorType *ot);
 int sequencer_retiming_key_select_exec(bContext *C, wmOperator *op);
 /* Select a key and all following keys. */
 int sequencer_retiming_select_linked_time(bContext *C, wmOperator *op);
 int sequencer_select_exec(bContext *C, wmOperator *op);
-int sequencer_retiming_key_remove_exec(bContext *C, wmOperator *op);
 int sequencer_retiming_select_all_exec(bContext *C, wmOperator *op);
 int sequencer_retiming_box_select_exec(bContext *C, wmOperator *op);
 
 /* `sequencer_retiming_draw.cc` */
-void sequencer_draw_retiming(const bContext *C, SeqQuadsBatch *quads);
-blender::Vector<Sequence *> sequencer_visible_strips_get(const bContext *C);
-SeqRetimingKey *try_to_realize_virtual_key(const bContext *C, Sequence *seq, const int mval[2]);
+void sequencer_retiming_draw_continuity(const TimelineDrawContext *timeline_ctx,
+                                        const StripDrawContext &strip_ctx);
+void sequencer_retiming_keys_draw(const TimelineDrawContext *timeline_ctx,
+                                  const StripDrawContext &strip_ctx);
+void sequencer_retiming_speed_draw(const TimelineDrawContext *timeline_ctx,
+                                   const StripDrawContext &strip_ctx);
+SeqRetimingKey *try_to_realize_virtual_keys(const bContext *C, Sequence *seq, const int mval[2]);
 SeqRetimingKey *retiming_mousover_key_get(const bContext *C, const int mval[2], Sequence **r_seq);
 int left_fake_key_frame_get(const bContext *C, const Sequence *seq);
 int right_fake_key_frame_get(const bContext *C, const Sequence *seq);
-bool retiming_keys_are_visible(const bContext *C);
+bool retiming_keys_are_visible(const SpaceSeq *sseq);
+rctf seq_retiming_keys_box_get(const Scene *scene, const View2D *v2d, const Sequence *seq);
+
+/* `sequencer_timeline_draw.cc` */
+blender::Vector<Sequence *> sequencer_visible_strips_get(const bContext *C);
+blender::Vector<Sequence *> sequencer_visible_strips_get(const Scene *scene, const View2D *v2d);
 
 /* `sequencer_clipboard.cc` */
 int sequencer_clipboard_copy_exec(bContext *C, wmOperator *op);

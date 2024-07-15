@@ -25,7 +25,8 @@
 
 namespace blender::realtime_compositor {
 class RenderContext;
-}
+class Profiler;
+}  // namespace blender::realtime_compositor
 
 struct bNodeTree;
 struct Depsgraph;
@@ -49,9 +50,9 @@ struct BaseRender {
   virtual void compositor_execute(const Scene &scene,
                                   const RenderData &render_data,
                                   const bNodeTree &node_tree,
-                                  const bool use_file_output,
                                   const char *view_name,
-                                  blender::realtime_compositor::RenderContext *render_context) = 0;
+                                  blender::realtime_compositor::RenderContext *render_context,
+                                  blender::realtime_compositor::Profiler *profiler) = 0;
   virtual void compositor_free() = 0;
 
   virtual void display_init(RenderResult *render_result) = 0;
@@ -98,13 +99,12 @@ struct ViewRender : public BaseRender {
     return nullptr;
   }
 
-  void compositor_execute(
-      const Scene & /*scene*/,
-      const RenderData & /*render_data*/,
-      const bNodeTree & /*node_tree*/,
-      const bool /*use_file_output*/,
-      const char * /*view_name*/,
-      blender::realtime_compositor::RenderContext * /*render_context*/) override
+  void compositor_execute(const Scene & /*scene*/,
+                          const RenderData & /*render_data*/,
+                          const bNodeTree & /*node_tree*/,
+                          const char * /*view_name*/,
+                          blender::realtime_compositor::RenderContext * /*render_context*/,
+                          blender::realtime_compositor::Profiler * /*profiler*/) override
   {
   }
   void compositor_free() override {}
@@ -132,7 +132,7 @@ struct ViewRender : public BaseRender {
   }
 };
 
-/* Controls state of render, everything that's read-only during render stage */
+/** Controls state of render, everything that's read-only during render stage. */
 struct Render : public BaseRender {
   /* NOTE: Currently unused, provision for the future.
    * Add these now to allow the guarded memory allocator to catch C-specific function calls. */
@@ -147,9 +147,9 @@ struct Render : public BaseRender {
   void compositor_execute(const Scene &scene,
                           const RenderData &render_data,
                           const bNodeTree &node_tree,
-                          const bool use_file_output,
                           const char *view_name,
-                          blender::realtime_compositor::RenderContext *render_context) override;
+                          blender::realtime_compositor::RenderContext *render_context,
+                          blender::realtime_compositor::Profiler *profiler) override;
   void compositor_free() override;
 
   void display_init(RenderResult *render_result) override;

@@ -21,7 +21,10 @@
 
 namespace blender::gpu {
 
-VKContext::VKContext(void *ghost_window, void *ghost_context)
+VKContext::VKContext(void *ghost_window,
+                     void *ghost_context,
+                     render_graph::VKResourceStateTracker &resources)
+    : render_graph(std::make_unique<render_graph::VKCommandBufferWrapper>(), resources)
 {
   ghost_window_ = ghost_window;
   ghost_context_ = ghost_context;
@@ -33,6 +36,8 @@ VKContext::VKContext(void *ghost_window, void *ghost_context)
   VKFrameBuffer *framebuffer = new VKFrameBuffer("back_left");
   back_left = framebuffer;
   active_fb = framebuffer;
+
+  compiler = new ShaderCompilerGeneric();
 }
 
 VKContext::~VKContext()
@@ -41,21 +46,23 @@ VKContext::~VKContext()
     GPU_texture_free(surface_texture_);
     surface_texture_ = nullptr;
   }
-  VKBackend::get().device_.context_unregister(*this);
+  render_graph.free_data();
+  VKBackend::get().device.context_unregister(*this);
 
   delete imm;
   imm = nullptr;
+
+  delete compiler;
 }
 
 void VKContext::sync_backbuffer()
 {
   if (ghost_context_) {
-    VKDevice &device = VKBackend::get().device_;
-    if (!command_buffers_.is_initialized()) {
-      command_buffers_.init(device);
+    VKDevice &device = VKBackend::get().device;
+    if (!is_init_) {
+      is_init_ = true;
       descriptor_pools_.init(device);
       device.init_dummy_buffer(*this);
-      device.init_dummy_color_attachment();
     }
     descriptor_pools_.reset();
   }
@@ -108,31 +115,35 @@ void VKContext::activate()
 
 void VKContext::deactivate()
 {
+  /* Draw manager draws in a different context than the rest of the UI. Although run from the
+   * same thread. Commands inside the render-graph need to be submitted into the device queue. */
+  flush_render_graph();
   immDeactivate();
   is_active_ = false;
 }
 
 void VKContext::begin_frame() {}
 
-void VKContext::end_frame()
+void VKContext::end_frame() {}
+
+void VKContext::flush() {}
+
+void VKContext::flush_render_graph()
 {
-  VKDevice &device = VKBackend::get().device_get();
-  device.destroy_discarded_resources();
+  if (has_active_framebuffer()) {
+    VKFrameBuffer &framebuffer = *active_framebuffer_get();
+    if (framebuffer.is_rendering()) {
+      framebuffer.rendering_end(*this);
+    }
+  }
+  render_graph.submit();
 }
 
-void VKContext::flush()
-{
-  command_buffers_.submit();
-}
-
-void VKContext::finish()
-{
-  command_buffers_.finish();
-}
+void VKContext::finish() {}
 
 void VKContext::memory_statistics_get(int *r_total_mem_kb, int *r_free_mem_kb)
 {
-  const VKDevice &device = VKBackend::get().device_get();
+  const VKDevice &device = VKBackend::get().device;
   device.memory_statistics_get(r_total_mem_kb, r_free_mem_kb);
 }
 
@@ -144,6 +155,16 @@ VKStateManager &VKContext::state_manager_get() const
 {
   return *static_cast<VKStateManager *>(state_manager);
 }
+
+void VKContext::debug_unbind_all_ubo()
+{
+  state_manager_get().uniform_buffer_unbind_all();
+};
+
+void VKContext::debug_unbind_all_ssbo()
+{
+  state_manager_get().storage_buffer_unbind_all();
+};
 
 /** \} */
 
@@ -161,7 +182,7 @@ void VKContext::activate_framebuffer(VKFrameBuffer &framebuffer)
   active_fb = &framebuffer;
   framebuffer.update_size();
   framebuffer.update_srgb();
-  command_buffers_get().begin_render_pass(framebuffer);
+  framebuffer.rendering_reset();
 }
 
 VKFrameBuffer *VKContext::active_framebuffer_get() const
@@ -178,53 +199,84 @@ void VKContext::deactivate_framebuffer()
 {
   VKFrameBuffer *framebuffer = active_framebuffer_get();
   BLI_assert(framebuffer != nullptr);
-  command_buffers_get().end_render_pass(*framebuffer);
+  framebuffer->rendering_end(*this);
   active_fb = nullptr;
 }
 
-/** \} */
-
-/* -------------------------------------------------------------------- */
-/** \name Compute pipeline
- * \{ */
-
-void VKContext::bind_compute_pipeline()
+void VKContext::rendering_end()
 {
-  VKShader *shader = unwrap(this->shader);
-  BLI_assert(shader);
-  VKPipeline &pipeline = shader->pipeline_get();
-  pipeline.bind(*this, VK_PIPELINE_BIND_POINT_COMPUTE);
-  pipeline.update_push_constants(*this);
-  if (shader->has_descriptor_set()) {
-    descriptor_set_.bind(*this, shader->vk_pipeline_layout_get(), VK_PIPELINE_BIND_POINT_COMPUTE);
+  VKFrameBuffer *framebuffer = active_framebuffer_get();
+  if (framebuffer) {
+    framebuffer->rendering_end(*this);
   }
 }
 
 /** \} */
 
 /* -------------------------------------------------------------------- */
-/** \name Graphics pipeline
+/** \name Pipeline
  * \{ */
 
-void VKContext::bind_graphics_pipeline(const GPUPrimType prim_type,
-                                       const VKVertexAttributeObject &vertex_attribute_object)
+void VKContext::update_pipeline_data(GPUPrimType primitive,
+                                     VKVertexAttributeObject &vao,
+                                     render_graph::VKPipelineData &r_pipeline_data)
 {
-  VKShader *shader = unwrap(this->shader);
-  BLI_assert(shader);
-  BLI_assert_msg(
-      prim_type != GPU_PRIM_POINTS || shader->interface_get().is_point_shader(),
-      "GPU_PRIM_POINTS is used with a shader that doesn't set point size before "
-      "drawing fragments. Calling code should be adapted to use a shader that sets the "
-      "gl_PointSize before entering the fragment stage. For example `GPU_SHADER_3D_POINT_*`.");
+  VKShader &vk_shader = unwrap(*shader);
+  BLI_assert(vk_shader.is_graphics_shader());
+  VKFrameBuffer &framebuffer = *active_framebuffer_get();
+  update_pipeline_data(
+      vk_shader,
+      vk_shader.ensure_and_get_graphics_pipeline(primitive, vao, state_manager_get(), framebuffer),
+      r_pipeline_data);
+}
 
-  shader->update_graphics_pipeline(*this, prim_type, vertex_attribute_object);
+void VKContext::update_pipeline_data(render_graph::VKPipelineData &r_pipeline_data)
+{
+  VKShader &vk_shader = unwrap(*shader);
+  BLI_assert(vk_shader.is_compute_shader());
+  update_pipeline_data(vk_shader, vk_shader.ensure_and_get_compute_pipeline(), r_pipeline_data);
+}
 
-  VKPipeline &pipeline = shader->pipeline_get();
-  pipeline.bind(*this, VK_PIPELINE_BIND_POINT_GRAPHICS);
-  pipeline.update_push_constants(*this);
-  if (shader->has_descriptor_set()) {
-    descriptor_set_.bind(*this, shader->vk_pipeline_layout_get(), VK_PIPELINE_BIND_POINT_GRAPHICS);
+void VKContext::update_pipeline_data(VKShader &vk_shader,
+                                     VkPipeline vk_pipeline,
+                                     render_graph::VKPipelineData &r_pipeline_data)
+{
+  r_pipeline_data.vk_pipeline_layout = vk_shader.vk_pipeline_layout;
+  r_pipeline_data.vk_pipeline = vk_pipeline;
+
+  /* Update push constants. */
+  r_pipeline_data.push_constants_data = nullptr;
+  r_pipeline_data.push_constants_size = 0;
+  const VKPushConstants::Layout &push_constants_layout =
+      vk_shader.interface_get().push_constants_layout_get();
+  vk_shader.push_constants.update(*this);
+  if (push_constants_layout.storage_type_get() == VKPushConstants::StorageType::PUSH_CONSTANTS) {
+    r_pipeline_data.push_constants_size = push_constants_layout.size_in_bytes();
+    r_pipeline_data.push_constants_data = vk_shader.push_constants.data();
   }
+
+  /* When using the push constant fallback we need to add a read access dependency to the uniform
+   * buffer after the buffer has been updated.
+   * NOTE: this alters the context instance variable `access_info_` which isn't clear from the API.
+   */
+  if (push_constants_layout.storage_type_get() == VKPushConstants::StorageType::UNIFORM_BUFFER) {
+    access_info_.buffers.append(
+        {vk_shader.push_constants.uniform_buffer_get()->vk_handle(), VK_ACCESS_UNIFORM_READ_BIT});
+  }
+
+  /* Update descriptor set. */
+  r_pipeline_data.vk_descriptor_set = VK_NULL_HANDLE;
+  if (vk_shader.has_descriptor_set()) {
+    descriptor_set_.update(*this);
+    r_pipeline_data.vk_descriptor_set = descriptor_set_get().active_descriptor_set()->vk_handle();
+  }
+}
+
+render_graph::VKResourceAccessInfo &VKContext::update_and_get_access_info()
+{
+  access_info_.reset();
+  state_manager_get().apply_bindings(*this, access_info_);
+  return access_info_;
 }
 
 /** \} */
@@ -249,45 +301,48 @@ void VKContext::swap_buffers_post_callback()
 
 void VKContext::swap_buffers_pre_handler(const GHOST_VulkanSwapChainData &swap_chain_data)
 {
-  /*
-   * Ensure no graphics/compute commands are scheduled. They could use the back buffer, which
-   * layout is altered here.
-   */
-  command_buffers_get().submit();
-
   VKFrameBuffer &framebuffer = *unwrap(back_left);
-
-  VKTexture wrapper("display_texture");
-  wrapper.init(swap_chain_data.image,
-               VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-               to_gpu_format(swap_chain_data.format));
-  wrapper.layout_ensure(*this, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  framebuffer.color_attachment_layout_ensure(*this, 0, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
   VKTexture *color_attachment = unwrap(unwrap(framebuffer.color_tex(0)));
 
-  VkImageBlit image_blit = {};
-  image_blit.srcOffsets[0] = {0, color_attachment->height_get() - 1, 0};
-  image_blit.srcOffsets[1] = {color_attachment->width_get(), 0, 1};
-  image_blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  image_blit.srcSubresource.mipLevel = 0;
-  image_blit.srcSubresource.baseArrayLayer = 0;
-  image_blit.srcSubresource.layerCount = 1;
+  render_graph::VKBlitImageNode::CreateInfo blit_image = {};
+  blit_image.src_image = color_attachment->vk_image_handle();
+  blit_image.dst_image = swap_chain_data.image;
+  blit_image.filter = VK_FILTER_NEAREST;
 
-  image_blit.dstOffsets[0] = {0, 0, 0};
-  image_blit.dstOffsets[1] = {
+  VkImageBlit &region = blit_image.region;
+  region.srcOffsets[0] = {0, color_attachment->height_get() - 1, 0};
+  region.srcOffsets[1] = {color_attachment->width_get(), 0, 1};
+  region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.srcSubresource.mipLevel = 0;
+  region.srcSubresource.baseArrayLayer = 0;
+  region.srcSubresource.layerCount = 1;
+
+  region.dstOffsets[0] = {0, 0, 0};
+  region.dstOffsets[1] = {
       int32_t(swap_chain_data.extent.width), int32_t(swap_chain_data.extent.height), 1};
-  image_blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  image_blit.dstSubresource.mipLevel = 0;
-  image_blit.dstSubresource.baseArrayLayer = 0;
-  image_blit.dstSubresource.layerCount = 1;
+  region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.dstSubresource.mipLevel = 0;
+  region.dstSubresource.baseArrayLayer = 0;
+  region.dstSubresource.layerCount = 1;
 
-  command_buffers_get().blit(wrapper,
-                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                             *color_attachment,
-                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                             Span<VkImageBlit>(&image_blit, 1));
-  wrapper.layout_ensure(*this, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-  command_buffers_get().submit();
+  /* Swap chain commands are CPU synchronized at this moment, allowing to temporary add the swap
+   * chain image as device resources. When we move towards GPU swap chain synchronization we need
+   * to keep track of the swap chain image between frames. */
+  VKDevice &device = VKBackend::get().device;
+  device.resources.add_image(swap_chain_data.image,
+                             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                             render_graph::ResourceOwner::SWAP_CHAIN,
+                             "SwapchainImage");
+
+  framebuffer.rendering_end(*this);
+  render_graph.add_node(blit_image);
+  render_graph.submit_for_present(swap_chain_data.image);
+
+  device.resources.remove_image(swap_chain_data.image);
+#if 0
+  device.debug_print();
+#endif
+  device.destroy_discarded_resources();
 }
 
 void VKContext::swap_buffers_post_handler()

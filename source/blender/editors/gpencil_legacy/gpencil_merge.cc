@@ -11,7 +11,6 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_ghash.h"
 #include "BLI_math_vector.h"
 
@@ -22,9 +21,9 @@
 #include "BKE_context.hh"
 #include "BKE_gpencil_geom_legacy.h"
 #include "BKE_gpencil_legacy.h"
-#include "BKE_main.hh"
 #include "BKE_material.h"
-#include "BKE_report.h"
+#include "BKE_paint.hh"
+#include "BKE_report.hh"
 
 #include "WM_api.hh"
 #include "WM_types.hh"
@@ -32,12 +31,11 @@
 #include "RNA_access.hh"
 #include "RNA_define.hh"
 
-#include "ED_gpencil_legacy.hh"
 #include "ED_screen.hh"
 
 #include "DEG_depsgraph.hh"
 
-#include "gpencil_intern.h"
+#include "gpencil_intern.hh"
 
 struct tGPencilPointCache {
   float factor; /* value to sort */
@@ -87,7 +85,6 @@ static void gpencil_insert_points_to_stroke(bGPDstroke *gps,
 
 static bGPDstroke *gpencil_prepare_stroke(bContext *C, wmOperator *op, int totpoints)
 {
-  Main *bmain = CTX_data_main(C);
   ToolSettings *ts = CTX_data_tool_settings(C);
   Object *ob = CTX_data_active_object(C);
   bGPdata *gpd = static_cast<bGPdata *>(ob->data);
@@ -100,12 +97,10 @@ static bGPDstroke *gpencil_prepare_stroke(bContext *C, wmOperator *op, int totpo
   const bool cyclic = RNA_boolean_get(op->ptr, "cyclic");
 
   Paint *paint = &ts->gp_paint->paint;
-  /* if not exist, create a new one */
-  if ((paint->brush == nullptr) || (paint->brush->gpencil_settings == nullptr)) {
-    /* create new brushes */
-    BKE_brush_gpencil_paint_presets(bmain, ts, false);
+  Brush *brush = BKE_paint_brush(paint);
+  if (brush && !brush->gpencil_settings) {
+    BKE_brush_init_gpencil_settings(brush);
   }
-  Brush *brush = paint->brush;
 
   /* frame */
   short add_frame_mode;

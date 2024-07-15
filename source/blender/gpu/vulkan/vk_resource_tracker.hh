@@ -14,8 +14,17 @@
 #include "vk_common.hh"
 
 namespace blender::gpu {
+namespace render_graph {
+class VKRenderGraph;
+}
 class VKContext;
-class VKCommandBuffers;
+
+#if (defined(__GNUC__) && __GNUC__ >= 14 && !defined(__clang__))
+#  pragma GCC diagnostic push
+/* CPP20 compiler warnings in GCC14+.
+ * Must be resolved before upgrading to a newer C++, avoid noisy warnings for now. */
+#  pragma GCC diagnostic ignored "-Wtemplate-id-cdtor"
+#endif
 
 /**
  * In vulkan multiple commands can be in flight simultaneously.
@@ -33,6 +42,8 @@ class VKCommandBuffers;
  * being recorded.
  */
 struct VKSubmissionID {
+  friend class render_graph::VKRenderGraph;
+
  private:
   int64_t id_ = -1;
 
@@ -80,8 +91,6 @@ struct VKSubmissionID {
   {
     return id_ != other.id_;
   }
-
-  friend class VKCommandBuffers;
 };
 
 /**
@@ -96,7 +105,7 @@ class VKSubmissionTracker {
    * Check if the submission_id has changed since the last time it was called
    * on this VKSubmissionTracker.
    */
-  bool is_changed(VKContext &context);
+  bool is_changed(const VKContext &context);
 };
 
 /**
@@ -182,5 +191,9 @@ template<typename Resource> class VKResourceTracker : NonCopyable {
     tracked_resources_.clear();
   }
 };
+
+#if (defined(__GNUC__) && __GNUC__ >= 14 && !defined(__clang__))
+#  pragma GCC diagnostic pop
+#endif
 
 }  // namespace blender::gpu

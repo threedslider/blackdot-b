@@ -130,6 +130,7 @@ set(LIB
   PRIVATE bf::depsgraph
   PRIVATE bf::dna
   PRIVATE bf::intern::guardedalloc
+  PRIVATE bf::extern::fmtlib
   bf_realtime_compositor
 )
 
@@ -155,6 +156,17 @@ if(WITH_OPENIMAGEDENOISE)
     ${OPENIMAGEDENOISE_LIBRARIES}
     ${TBB_LIBRARIES}
   )
+endif()
+
+
+if(WITH_FFTW3)
+  list(APPEND INC_SYS
+    ${FFTW3_INCLUDE_DIRS}
+  )
+  list(APPEND LIB
+    ${FFTW3_LIBRARIES}
+  )
+  add_definitions(-DWITH_FFTW3)
 endif()
 
 blender_add_lib(bf_nodes_composite "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")

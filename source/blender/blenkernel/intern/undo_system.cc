@@ -18,13 +18,14 @@
 #include "BLI_sys_types.h"
 #include "BLI_utildefines.h"
 
-#include "BLT_translation.h"
+#include "BLT_translation.hh"
 
 #include "DNA_listBase.h"
 #include "DNA_windowmanager_types.h"
 
 #include "BKE_context.hh"
-#include "BKE_global.h"
+#include "BKE_global.hh"
+#include "BKE_lib_id.hh"
 #include "BKE_lib_override.hh"
 #include "BKE_main.hh"
 #include "BKE_undo_system.hh"
@@ -32,6 +33,9 @@
 #include "RNA_access.hh"
 
 #include "MEM_guardedalloc.h"
+
+/* Header to pull symbols from the file which otherwise might get stripped away. */
+#include "BKE_blender_undo.hh"
 
 #define undo_stack _wm_undo_stack_disallow /* pass in as a variable always. */
 
@@ -62,6 +66,15 @@ const UndoType *BKE_UNDOSYS_TYPE_SCULPT = nullptr;
 const UndoType *BKE_UNDOSYS_TYPE_TEXT = nullptr;
 
 static ListBase g_undo_types = {nullptr, nullptr};
+
+/* An unused function with public linkage just to ensure symbols from the blender_undo.cc are not
+ * stripped. */
+void bke_undo_system_linker_workaround();
+void bke_undo_system_linker_workaround()
+{
+  BLI_assert_unreachable();
+  BKE_memfile_undo_free(nullptr);
+}
 
 static const UndoType *BKE_undosys_type_from_context(bContext *C)
 {
@@ -122,6 +135,12 @@ static void undosys_id_ref_store(void * /*user_data*/, UndoRefID *id_ref)
   BLI_assert(id_ref->name[0] == '\0');
   if (id_ref->ptr) {
     STRNCPY(id_ref->name, id_ref->ptr->name);
+    if (id_ref->ptr->lib) {
+      STRNCPY(id_ref->library_filepath_abs, id_ref->ptr->lib->runtime.filepath_abs);
+    }
+    else {
+      id_ref->library_filepath_abs[0] = '\0';
+    }
     /* Not needed, just prevents stale data access. */
     id_ref->ptr = nullptr;
   }
@@ -132,13 +151,11 @@ static void undosys_id_ref_resolve(void *user_data, UndoRefID *id_ref)
   /* NOTE: we could optimize this,
    * for now it's not too bad since it only runs when we access undo! */
   Main *bmain = static_cast<Main *>(user_data);
-  ListBase *lb = which_libbase(bmain, GS(id_ref->name));
-  LISTBASE_FOREACH (ID *, id, lb) {
-    if (STREQ(id_ref->name, id->name) && !ID_IS_LINKED(id)) {
-      id_ref->ptr = id;
-      break;
-    }
-  }
+  id_ref->ptr = BKE_libblock_find_name_and_library_filepath(
+      bmain,
+      GS(id_ref->name),
+      id_ref->name + 2,
+      (id_ref->library_filepath_abs[0] ? id_ref->library_filepath_abs : nullptr));
 }
 
 static bool undosys_step_encode(bContext *C, Main *bmain, UndoStack *ustack, UndoStep *us)
@@ -268,6 +285,10 @@ void BKE_undosys_stack_clear(UndoStack *ustack)
   for (UndoStep *us = static_cast<UndoStep *>(ustack->steps.last), *us_prev; us; us = us_prev) {
     us_prev = us->prev;
     undosys_step_free_and_unlink(ustack, us);
+  }
+  if (UndoStep *us = ustack->step_init) {
+    undosys_step_free_and_unlink(ustack, us);
+    ustack->step_init = nullptr;
   }
   BLI_listbase_clear(&ustack->steps);
   ustack->step_active = nullptr;
@@ -460,6 +481,10 @@ UndoStep *BKE_undosys_step_push_init_with_type(UndoStack *ustack,
   if (ut->step_encode_init) {
     undosys_stack_validate(ustack, false);
 
+    if (UndoStep *us = ustack->step_init) {
+      undosys_step_free_and_unlink(ustack, us);
+      ustack->step_init = nullptr;
+    }
     if (ustack->step_active) {
       undosys_stack_clear_all_last(ustack, ustack->step_active->next);
     }
@@ -806,8 +831,9 @@ bool BKE_undosys_step_load_data_ex(UndoStack *ustack,
     }
   }
 
-  BLI_assert(
-      !"This should never be reached, either undo stack is corrupted, or code above is buggy");
+  BLI_assert_msg(
+      false,
+      "This should never be reached, either undo stack is corrupted, or code above is buggy");
   return false;
 }
 

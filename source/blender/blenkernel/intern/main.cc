@@ -24,8 +24,8 @@
 
 #include "DNA_ID.h"
 
-#include "BKE_bpath.h"
-#include "BKE_global.h"
+#include "BKE_bpath.hh"
+#include "BKE_global.hh"
 #include "BKE_idtype.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
@@ -33,47 +33,48 @@
 #include "BKE_main.hh"
 #include "BKE_main_idmap.hh"
 #include "BKE_main_namemap.hh"
-#include "BKE_report.h"
+#include "BKE_report.hh"
 
 #include "IMB_imbuf.hh"
 #include "IMB_imbuf_types.hh"
+
+using namespace blender::bke;
 
 static CLG_LogRef LOG = {"bke.main"};
 
 Main *BKE_main_new()
 {
   Main *bmain = static_cast<Main *>(MEM_callocN(sizeof(Main), "new main"));
-  bmain->lock = static_cast<MainLock *>(MEM_mallocN(sizeof(SpinLock), "main lock"));
-  BLI_spin_init((SpinLock *)bmain->lock);
-  bmain->is_global_main = false;
+  BKE_main_init(*bmain);
   return bmain;
 }
 
-void BKE_main_free(Main *mainvar)
+void BKE_main_init(Main &bmain)
 {
-  /* In case this is called on a 'split-by-libraries' list of mains.
-   *
-   * Should not happen in typical usages, but can occur e.g. if a file reading is aborted. */
-  if (mainvar->next) {
-    BKE_main_free(mainvar->next);
-  }
+  bmain.lock = static_cast<MainLock *>(MEM_mallocN(sizeof(SpinLock), "main lock"));
+  BLI_spin_init(reinterpret_cast<SpinLock *>(bmain.lock));
+  bmain.is_global_main = false;
 
-  /* Include this check here as the path may be manipulated after creation. */
-  BLI_assert_msg(!(mainvar->filepath[0] == '/' && mainvar->filepath[1] == '/'),
-                 "'.blend' relative \"//\" must not be used in Main!");
+  /* Just rebuilding the Action Slot to ID* map once is likely cheaper than,
+   * for every ID, when it's loaded from disk, check whether it's animated or
+   * not, and then figure out which Main it went into, and then set the flag. */
+  bmain.is_action_slot_to_id_map_dirty = true;
+}
 
-  /* also call when reading a file, erase all, etc */
+void BKE_main_clear(Main &bmain)
+{
+  /* Also call when reading a file, erase all, etc */
   ListBase *lbarray[INDEX_ID_MAX];
   int a;
 
-  /* Since we are removing whole main, no need to bother 'properly'
-   * (and slowly) removing each ID from it. */
+  /* Since we are removing whole main, no need to bother 'properly' (and slowly) removing each ID
+   * from it. */
   const int free_flag = (LIB_ID_FREE_NO_MAIN | LIB_ID_FREE_NO_UI_USER |
                          LIB_ID_FREE_NO_USER_REFCOUNT | LIB_ID_FREE_NO_DEG_TAG);
 
-  MEM_SAFE_FREE(mainvar->blen_thumb);
+  MEM_SAFE_FREE(bmain.blen_thumb);
 
-  a = set_listbasepointers(mainvar, lbarray);
+  a = set_listbasepointers(&bmain, lbarray);
   while (a--) {
     ListBase *lb = lbarray[a];
     ID *id, *id_next;
@@ -81,14 +82,14 @@ void BKE_main_free(Main *mainvar)
     for (id = static_cast<ID *>(lb->first); id != nullptr; id = id_next) {
       id_next = static_cast<ID *>(id->next);
 #if 1
-      BKE_id_free_ex(mainvar, id, free_flag, false);
+      BKE_id_free_ex(&bmain, id, free_flag, false);
 #else
       /* Errors freeing ID's can be hard to track down,
        * enable this so VALGRIND or ASAN will give the line number in its error log. */
 
 #  define CASE_ID_INDEX(id_index) \
     case id_index: \
-      BKE_id_free_ex(mainvar, id, free_flag, false); \
+      BKE_id_free_ex(&bmain, id, free_flag, false); \
       break
 
       switch ((eID_Index)a) {
@@ -145,25 +146,47 @@ void BKE_main_free(Main *mainvar)
     BLI_listbase_clear(lb);
   }
 
-  if (mainvar->relations) {
-    BKE_main_relations_free(mainvar);
+  if (bmain.relations) {
+    BKE_main_relations_free(&bmain);
   }
 
-  if (mainvar->id_map) {
-    BKE_main_idmap_destroy(mainvar->id_map);
+  if (bmain.id_map) {
+    BKE_main_idmap_destroy(bmain.id_map);
   }
 
   /* NOTE: `name_map` in libraries are freed together with the library IDs above. */
-  if (mainvar->name_map) {
-    BKE_main_namemap_destroy(&mainvar->name_map);
+  if (bmain.name_map) {
+    BKE_main_namemap_destroy(&bmain.name_map);
   }
-  if (mainvar->name_map_global) {
-    BKE_main_namemap_destroy(&mainvar->name_map_global);
+  if (bmain.name_map_global) {
+    BKE_main_namemap_destroy(&bmain.name_map_global);
+  }
+}
+
+void BKE_main_destroy(Main &bmain)
+{
+  BKE_main_clear(bmain);
+
+  BLI_spin_end(reinterpret_cast<SpinLock *>(bmain.lock));
+  MEM_freeN(bmain.lock);
+  bmain.lock = nullptr;
+}
+
+void BKE_main_free(Main *bmain)
+{
+  /* In case this is called on a 'split-by-libraries' list of mains.
+   *
+   * Should not happen in typical usages, but can occur e.g. if a file reading is aborted. */
+  if (bmain->next) {
+    BKE_main_free(bmain->next);
   }
 
-  BLI_spin_end((SpinLock *)mainvar->lock);
-  MEM_freeN(mainvar->lock);
-  MEM_freeN(mainvar);
+  /* Include this check here as the path may be manipulated after creation. */
+  BLI_assert_msg(!(bmain->filepath[0] == '/' && bmain->filepath[1] == '/'),
+                 "'.blend' relative \"//\" must not be used in Main!");
+
+  BKE_main_destroy(*bmain);
+  MEM_freeN(bmain);
 }
 
 static bool are_ids_from_different_mains_matching(Main *bmain_1, ID *id_1, Main *bmain_2, ID *id_2)
@@ -192,24 +215,24 @@ static bool are_ids_from_different_mains_matching(Main *bmain_1, ID *id_1, Main 
     Library *lib_2 = reinterpret_cast<Library *>(id_2);
 
     if (lib_1 && lib_2) {
-      BLI_assert(STREQ(lib_1->filepath_abs, lib_2->filepath_abs));
+      BLI_assert(STREQ(lib_1->runtime.filepath_abs, lib_2->runtime.filepath_abs));
     }
     if (lib_1) {
-      BLI_assert(!STREQ(lib_1->filepath_abs, bmain_1->filepath));
+      BLI_assert(!STREQ(lib_1->runtime.filepath_abs, bmain_1->filepath));
       if (lib_2) {
-        BLI_assert(!STREQ(lib_1->filepath_abs, bmain_2->filepath));
+        BLI_assert(!STREQ(lib_1->runtime.filepath_abs, bmain_2->filepath));
       }
       else {
-        BLI_assert(STREQ(lib_1->filepath_abs, bmain_2->filepath));
+        BLI_assert(STREQ(lib_1->runtime.filepath_abs, bmain_2->filepath));
       }
     }
     if (lib_2) {
-      BLI_assert(!STREQ(lib_2->filepath_abs, bmain_2->filepath));
+      BLI_assert(!STREQ(lib_2->runtime.filepath_abs, bmain_2->filepath));
       if (lib_1) {
-        BLI_assert(!STREQ(lib_2->filepath_abs, bmain_1->filepath));
+        BLI_assert(!STREQ(lib_2->runtime.filepath_abs, bmain_1->filepath));
       }
       else {
-        BLI_assert(STREQ(lib_2->filepath_abs, bmain_1->filepath));
+        BLI_assert(STREQ(lib_2->runtime.filepath_abs, bmain_1->filepath));
       }
     }
 
@@ -229,7 +252,7 @@ static bool are_ids_from_different_mains_matching(Main *bmain_1, ID *id_1, Main 
     if (id_1->lib == id_2->lib) {
       return true;
     }
-    if (STREQ(id_1->lib->filepath_abs, id_2->lib->filepath_abs)) {
+    if (STREQ(id_1->lib->runtime.filepath_abs, id_2->lib->runtime.filepath_abs)) {
       return true;
     }
     return false;
@@ -238,14 +261,14 @@ static bool are_ids_from_different_mains_matching(Main *bmain_1, ID *id_1, Main 
   /* In case one Main is the library of the ID from the other Main. */
 
   if (id_1->lib) {
-    if (STREQ(id_1->lib->filepath_abs, bmain_2->filepath)) {
+    if (STREQ(id_1->lib->runtime.filepath_abs, bmain_2->filepath)) {
       return true;
     }
     return false;
   }
 
   if (id_2->lib) {
-    if (STREQ(id_2->lib->filepath_abs, bmain_1->filepath)) {
+    if (STREQ(id_2->lib->runtime.filepath_abs, bmain_1->filepath)) {
       return true;
     }
     return false;
@@ -258,7 +281,7 @@ static bool are_ids_from_different_mains_matching(Main *bmain_1, ID *id_1, Main 
 static void main_merge_add_id_to_move(Main *bmain_dst,
                                       blender::Map<std::string, blender::Vector<ID *>> &id_map_dst,
                                       ID *id_src,
-                                      IDRemapper *id_remapper,
+                                      id::IDRemapper &id_remapper,
                                       blender::Vector<ID *> &ids_to_move,
                                       const bool is_library,
                                       MainMergeReport &reports)
@@ -268,8 +291,8 @@ static void main_merge_add_id_to_move(Main *bmain_dst,
   if (is_id_src_linked) {
     BLI_assert(!is_library);
     UNUSED_VARS_NDEBUG(is_library);
-    blender::Vector<ID *> id_src_lib_dst = id_map_dst.lookup_default(id_src->lib->filepath_abs,
-                                                                     {});
+    blender::Vector<ID *> id_src_lib_dst = id_map_dst.lookup_default(
+        id_src->lib->runtime.filepath_abs, {});
     /* The current library of the source ID would be remapped to null, which means that it comes
      * from the destination Main. */
     is_id_src_from_bmain_dst = !id_src_lib_dst.is_empty() && !id_src_lib_dst[0];
@@ -287,7 +310,7 @@ static void main_merge_add_id_to_move(Main *bmain_dst,
               "found in given destination Main",
               id_src->name,
               bmain_dst->filepath);
-    BKE_id_remapper_add(id_remapper, id_src, nullptr);
+    id_remapper.add(id_src, nullptr);
     reports.num_unknown_ids++;
   }
   else {
@@ -306,8 +329,8 @@ void BKE_main_merge(Main *bmain_dst, Main **r_bmain_src, MainMergeReport &report
       /* Libraries need specific handling, as we want to check them by their filepath, not the IDs
        * themselves. */
       Library *lib_dst = reinterpret_cast<Library *>(id_iter_dst);
-      BLI_assert(!id_map_dst.contains(lib_dst->filepath_abs));
-      id_map_dst.add(lib_dst->filepath_abs, {id_iter_dst});
+      BLI_assert(!id_map_dst.contains(lib_dst->runtime.filepath_abs));
+      id_map_dst.add(lib_dst->runtime.filepath_abs, {id_iter_dst});
     }
     else {
       id_map_dst.lookup_or_add(id_iter_dst->name, {}).append(id_iter_dst);
@@ -321,15 +344,16 @@ void BKE_main_merge(Main *bmain_dst, Main **r_bmain_src, MainMergeReport &report
   /* A dedicated remapper for libraries is needed because these need to be remapped _before_ IDs
    * are moved from `bmain_src` to `bmain_dst`, to avoid having to fix naming and ordering of IDs
    * afterwards (especially in case some source linked IDs become local in `bmain_dst`). */
-  IDRemapper *id_remapper = BKE_id_remapper_create();
-  IDRemapper *id_remapper_libraries = BKE_id_remapper_create();
+  id::IDRemapper id_remapper;
+  id::IDRemapper id_remapper_libraries;
   blender::Vector<ID *> ids_to_move;
 
   FOREACH_MAIN_ID_BEGIN (bmain_src, id_iter_src) {
     const bool is_library = GS(id_iter_src->name) == ID_LI;
 
     blender::Vector<ID *> ids_dst = id_map_dst.lookup_default(
-        is_library ? reinterpret_cast<Library *>(id_iter_src)->filepath_abs : id_iter_src->name,
+        is_library ? reinterpret_cast<Library *>(id_iter_src)->runtime.filepath_abs :
+                     id_iter_src->name,
         {});
     if (is_library) {
       BLI_assert(ids_dst.size() <= 1);
@@ -347,11 +371,11 @@ void BKE_main_merge(Main *bmain_dst, Main **r_bmain_src, MainMergeReport &report
         BLI_assert(!src_has_match_in_dst);
         if (!src_has_match_in_dst) {
           if (is_library) {
-            BKE_id_remapper_add(id_remapper_libraries, id_iter_src, id_iter_dst);
+            id_remapper_libraries.add(id_iter_src, id_iter_dst);
             reports.num_remapped_libraries++;
           }
           else {
-            BKE_id_remapper_add(id_remapper, id_iter_src, id_iter_dst);
+            id_remapper.add(id_iter_src, id_iter_dst);
             reports.num_remapped_ids++;
           }
           src_has_match_in_dst = true;
@@ -426,8 +450,6 @@ void BKE_main_merge(Main *bmain_dst, Main **r_bmain_src, MainMergeReport &report
 
   BLI_assert(BKE_main_namemap_validate(bmain_dst));
 
-  BKE_id_remapper_free(id_remapper);
-  BKE_id_remapper_free(id_remapper_libraries);
   BKE_main_free(bmain_src);
   *r_bmain_src = nullptr;
 }
@@ -442,6 +464,16 @@ bool BKE_main_is_empty(Main *bmain)
   }
   FOREACH_MAIN_ID_END;
   return result;
+}
+
+bool BKE_main_has_issues(const Main *bmain)
+{
+  return bmain->has_forward_compatibility_issues || bmain->is_asset_edit_file;
+}
+
+bool BKE_main_needs_overwrite_confirm(const Main *bmain)
+{
+  return bmain->has_forward_compatibility_issues || bmain->is_asset_edit_file;
 }
 
 void BKE_main_lock(Main *bmain)
@@ -598,40 +630,32 @@ GSet *BKE_main_gset_create(Main *bmain, GSet *gset)
 struct LibWeakRefKey {
   char filepath[FILE_MAX];
   char id_name[MAX_ID_NAME];
+
+  LibWeakRefKey(const char *lib_path, const char *id_name)
+  {
+    STRNCPY(this->filepath, lib_path);
+    STRNCPY(this->id_name, id_name);
+  }
+
+  friend bool operator==(const LibWeakRefKey &a, const LibWeakRefKey &b)
+  {
+    return STREQ(a.filepath, b.filepath) && STREQ(a.id_name, b.id_name);
+  }
+
+  uint64_t hash() const
+  {
+    return blender::get_default_hash(blender::StringRef(this->filepath),
+                                     blender::StringRef(this->id_name));
+  }
 };
 
-static LibWeakRefKey *lib_weak_key_create(LibWeakRefKey *key,
-                                          const char *lib_path,
-                                          const char *id_name)
-{
-  if (key == nullptr) {
-    key = static_cast<LibWeakRefKey *>(MEM_mallocN(sizeof(*key), __func__));
-  }
-  STRNCPY(key->filepath, lib_path);
-  STRNCPY(key->id_name, id_name);
-  return key;
-}
+struct MainLibraryWeakReferenceMap {
+  blender::Map<LibWeakRefKey, ID *> map;
+};
 
-static uint lib_weak_key_hash(const void *ptr)
+MainLibraryWeakReferenceMap *BKE_main_library_weak_reference_create(Main *bmain)
 {
-  const LibWeakRefKey *string_pair = static_cast<const LibWeakRefKey *>(ptr);
-  uint hash = BLI_ghashutil_strhash_p_murmur(string_pair->filepath);
-  return hash ^ BLI_ghashutil_strhash_p_murmur(string_pair->id_name);
-}
-
-static bool lib_weak_key_cmp(const void *a, const void *b)
-{
-  const LibWeakRefKey *string_pair_a = static_cast<const LibWeakRefKey *>(a);
-  const LibWeakRefKey *string_pair_b = static_cast<const LibWeakRefKey *>(b);
-
-  return !(STREQ(string_pair_a->filepath, string_pair_b->filepath) &&
-           STREQ(string_pair_a->id_name, string_pair_b->id_name));
-}
-
-GHash *BKE_main_library_weak_reference_create(Main *bmain)
-{
-  GHash *library_weak_reference_mapping = BLI_ghash_new(
-      lib_weak_key_hash, lib_weak_key_cmp, __func__);
+  auto *library_weak_reference_mapping = MEM_new<MainLibraryWeakReferenceMap>(__func__);
 
   ListBase *lb;
   FOREACH_MAIN_LISTBASE_BEGIN (bmain, lb) {
@@ -648,10 +672,9 @@ GHash *BKE_main_library_weak_reference_create(Main *bmain)
       if (id_iter->library_weak_reference == nullptr) {
         continue;
       }
-      LibWeakRefKey *key = lib_weak_key_create(nullptr,
-                                               id_iter->library_weak_reference->library_filepath,
-                                               id_iter->library_weak_reference->library_id_name);
-      BLI_ghash_insert(library_weak_reference_mapping, key, id_iter);
+      const LibWeakRefKey key{id_iter->library_weak_reference->library_filepath,
+                              id_iter->library_weak_reference->library_id_name};
+      library_weak_reference_mapping->map.add(key, id_iter);
     }
     FOREACH_MAIN_LISTBASE_ID_END;
   }
@@ -660,24 +683,26 @@ GHash *BKE_main_library_weak_reference_create(Main *bmain)
   return library_weak_reference_mapping;
 }
 
-void BKE_main_library_weak_reference_destroy(GHash *library_weak_reference_mapping)
+void BKE_main_library_weak_reference_destroy(
+    MainLibraryWeakReferenceMap *library_weak_reference_mapping)
 {
-  BLI_ghash_free(library_weak_reference_mapping, MEM_freeN, nullptr);
+  MEM_delete(library_weak_reference_mapping);
 }
 
-ID *BKE_main_library_weak_reference_search_item(GHash *library_weak_reference_mapping,
-                                                const char *library_filepath,
-                                                const char *library_id_name)
+ID *BKE_main_library_weak_reference_search_item(
+    MainLibraryWeakReferenceMap *library_weak_reference_mapping,
+    const char *library_filepath,
+    const char *library_id_name)
 {
-  LibWeakRefKey key;
-  lib_weak_key_create(&key, library_filepath, library_id_name);
-  return (ID *)BLI_ghash_lookup(library_weak_reference_mapping, &key);
+  const LibWeakRefKey key{library_filepath, library_id_name};
+  return library_weak_reference_mapping->map.lookup_default(key, nullptr);
 }
 
-void BKE_main_library_weak_reference_add_item(GHash *library_weak_reference_mapping,
-                                              const char *library_filepath,
-                                              const char *library_id_name,
-                                              ID *new_id)
+void BKE_main_library_weak_reference_add_item(
+    MainLibraryWeakReferenceMap *library_weak_reference_mapping,
+    const char *library_filepath,
+    const char *library_id_name,
+    ID *new_id)
 {
   BLI_assert(GS(library_id_name) == GS(new_id->name));
   BLI_assert(new_id->library_weak_reference == nullptr);
@@ -686,23 +711,19 @@ void BKE_main_library_weak_reference_add_item(GHash *library_weak_reference_mapp
   new_id->library_weak_reference = static_cast<LibraryWeakReference *>(
       MEM_mallocN(sizeof(*(new_id->library_weak_reference)), __func__));
 
-  LibWeakRefKey *key = lib_weak_key_create(nullptr, library_filepath, library_id_name);
-  void **id_p;
-  const bool already_exist_in_mapping = BLI_ghash_ensure_p(
-      library_weak_reference_mapping, key, &id_p);
-  BLI_assert(!already_exist_in_mapping);
-  UNUSED_VARS_NDEBUG(already_exist_in_mapping);
+  const LibWeakRefKey key{library_filepath, library_id_name};
+  library_weak_reference_mapping->map.add_new(key, new_id);
 
   STRNCPY(new_id->library_weak_reference->library_filepath, library_filepath);
   STRNCPY(new_id->library_weak_reference->library_id_name, library_id_name);
-  *id_p = new_id;
 }
 
-void BKE_main_library_weak_reference_update_item(GHash *library_weak_reference_mapping,
-                                                 const char *library_filepath,
-                                                 const char *library_id_name,
-                                                 ID *old_id,
-                                                 ID *new_id)
+void BKE_main_library_weak_reference_update_item(
+    MainLibraryWeakReferenceMap *library_weak_reference_mapping,
+    const char *library_filepath,
+    const char *library_id_name,
+    ID *old_id,
+    ID *new_id)
 {
   BLI_assert(GS(library_id_name) == GS(old_id->name));
   BLI_assert(GS(library_id_name) == GS(new_id->name));
@@ -711,29 +732,27 @@ void BKE_main_library_weak_reference_update_item(GHash *library_weak_reference_m
   BLI_assert(STREQ(old_id->library_weak_reference->library_filepath, library_filepath));
   BLI_assert(STREQ(old_id->library_weak_reference->library_id_name, library_id_name));
 
-  LibWeakRefKey key;
-  lib_weak_key_create(&key, library_filepath, library_id_name);
-  void **id_p = BLI_ghash_lookup_p(library_weak_reference_mapping, &key);
-  BLI_assert(id_p != nullptr && *id_p == old_id);
+  const LibWeakRefKey key{library_filepath, library_id_name};
+  BLI_assert(library_weak_reference_mapping->map.lookup(key) == old_id);
+  library_weak_reference_mapping->map.add_overwrite(key, new_id);
 
   new_id->library_weak_reference = old_id->library_weak_reference;
   old_id->library_weak_reference = nullptr;
-  *id_p = new_id;
 }
 
-void BKE_main_library_weak_reference_remove_item(GHash *library_weak_reference_mapping,
-                                                 const char *library_filepath,
-                                                 const char *library_id_name,
-                                                 ID *old_id)
+void BKE_main_library_weak_reference_remove_item(
+    MainLibraryWeakReferenceMap *library_weak_reference_mapping,
+    const char *library_filepath,
+    const char *library_id_name,
+    ID *old_id)
 {
   BLI_assert(GS(library_id_name) == GS(old_id->name));
   BLI_assert(old_id->library_weak_reference != nullptr);
 
-  LibWeakRefKey key;
-  lib_weak_key_create(&key, library_filepath, library_id_name);
+  const LibWeakRefKey key{library_filepath, library_id_name};
 
-  BLI_assert(BLI_ghash_lookup(library_weak_reference_mapping, &key) == old_id);
-  BLI_ghash_remove(library_weak_reference_mapping, &key, MEM_freeN, nullptr);
+  BLI_assert(library_weak_reference_mapping->map.lookup(key) == old_id);
+  library_weak_reference_mapping->map.remove(key);
 
   MEM_SAFE_FREE(old_id->library_weak_reference);
 }

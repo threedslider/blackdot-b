@@ -25,21 +25,19 @@
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.h"
 
-#include "BLT_translation.h"
+#include "BLT_translation.hh"
 
 #include "DNA_anim_types.h"
 #include "DNA_brush_types.h"
 #include "DNA_gpencil_legacy_types.h"
 #include "DNA_material_types.h"
 #include "DNA_meshdata_types.h"
-#include "DNA_modifier_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
-#include "DNA_space_types.h"
 #include "DNA_view3d_types.h"
 
-#include "BKE_anim_data.h"
+#include "BKE_anim_data.hh"
 #include "BKE_animsys.h"
 #include "BKE_brush.hh"
 #include "BKE_context.hh"
@@ -50,11 +48,8 @@
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
 #include "BKE_material.h"
-#include "BKE_modifier.hh"
-#include "BKE_object.hh"
 #include "BKE_paint.hh"
-#include "BKE_report.h"
-#include "BKE_scene.h"
+#include "BKE_report.hh"
 
 #include "UI_interface.hh"
 #include "UI_resources.hh"
@@ -71,9 +66,8 @@
 
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_build.hh"
-#include "DEG_depsgraph_query.hh"
 
-#include "gpencil_intern.h"
+#include "gpencil_intern.hh"
 
 /* ************************************************ */
 /* Datablock Operators */
@@ -247,8 +241,7 @@ static int gpencil_layer_add_exec(bContext *C, wmOperator *op)
 
   /* notifiers */
   if (gpd) {
-    DEG_id_tag_update(&gpd->id,
-                      ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_COPY_ON_WRITE);
+    DEG_id_tag_update(&gpd->id, ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_SYNC_TO_EVAL);
   }
   WM_event_add_notifier(C, NC_GPENCIL | ND_DATA | NA_EDITED, nullptr);
   WM_event_add_notifier(C, NC_GPENCIL | ND_DATA | NA_SELECTED, nullptr);
@@ -626,8 +619,8 @@ static int gpencil_layer_duplicate_object_exec(bContext *C, wmOperator *op)
     }
     /* notifiers */
     DEG_id_tag_update(&gpd_dst->id,
-                      ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_COPY_ON_WRITE);
-    DEG_id_tag_update(&ob->id, ID_RECALC_COPY_ON_WRITE);
+                      ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_SYNC_TO_EVAL);
+    DEG_id_tag_update(&ob->id, ID_RECALC_SYNC_TO_EVAL);
   }
   CTX_DATA_END;
 
@@ -1900,7 +1893,7 @@ static int gpencil_material_lock_unsused_exec(bContext *C, wmOperator * /*op*/)
     Material *tmp_ma = BKE_object_material_get(ob, i + 1);
     if (tmp_ma) {
       tmp_ma->gp_style->flag |= GP_MATERIAL_LOCKED;
-      DEG_id_tag_update(&tmp_ma->id, ID_RECALC_COPY_ON_WRITE);
+      DEG_id_tag_update(&tmp_ma->id, ID_RECALC_SYNC_TO_EVAL);
     }
   }
 
@@ -1920,7 +1913,7 @@ static int gpencil_material_lock_unsused_exec(bContext *C, wmOperator * /*op*/)
           Material *tmp_ma = BKE_object_material_get(ob, gps->mat_nr + 1);
           if (tmp_ma) {
             tmp_ma->gp_style->flag &= ~GP_MATERIAL_LOCKED;
-            DEG_id_tag_update(&tmp_ma->id, ID_RECALC_COPY_ON_WRITE);
+            DEG_id_tag_update(&tmp_ma->id, ID_RECALC_SYNC_TO_EVAL);
           }
 
           changed = true;
@@ -1933,8 +1926,8 @@ static int gpencil_material_lock_unsused_exec(bContext *C, wmOperator * /*op*/)
     /* updates */
     DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY);
 
-    /* copy on write tag is needed, or else no refresh happens */
-    DEG_id_tag_update(&gpd->id, ID_RECALC_COPY_ON_WRITE);
+    /* Copy-on-eval tag is needed, or else no refresh happens */
+    DEG_id_tag_update(&gpd->id, ID_RECALC_SYNC_TO_EVAL);
 
     /* notifiers */
     DEG_id_tag_update(&gpd->id, ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY);
@@ -1954,284 +1947,6 @@ void GPENCIL_OT_material_lock_unused(wmOperatorType *ot)
   /* api callbacks */
   ot->exec = gpencil_material_lock_unsused_exec;
   ot->poll = gpencil_active_layer_poll;
-
-  /* flags */
-  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
-}
-
-/* ************************************************ */
-/* Drawing Brushes Operators */
-
-/* ******************* Brush resets ************************** */
-static int gpencil_brush_reset_exec(bContext *C, wmOperator * /*op*/)
-{
-  Main *bmain = CTX_data_main(C);
-  ToolSettings *ts = CTX_data_tool_settings(C);
-  const enum eContextObjectMode mode = CTX_data_mode_enum(C);
-  Brush *brush = nullptr;
-
-  switch (mode) {
-    case CTX_MODE_PAINT_GPENCIL_LEGACY: {
-      Paint *paint = &ts->gp_paint->paint;
-      brush = paint->brush;
-      if (brush && brush->gpencil_settings) {
-        BKE_gpencil_brush_preset_set(bmain, brush, brush->gpencil_settings->preset_type);
-      }
-      break;
-    }
-    case CTX_MODE_SCULPT_GPENCIL_LEGACY: {
-      Paint *paint = &ts->gp_sculptpaint->paint;
-      brush = paint->brush;
-      if (brush && brush->gpencil_settings) {
-        BKE_gpencil_brush_preset_set(bmain, brush, brush->gpencil_settings->preset_type);
-      }
-      break;
-    }
-    case CTX_MODE_WEIGHT_GPENCIL_LEGACY: {
-      Paint *paint = &ts->gp_weightpaint->paint;
-      brush = paint->brush;
-      if (brush && brush->gpencil_settings) {
-        BKE_gpencil_brush_preset_set(bmain, brush, brush->gpencil_settings->preset_type);
-      }
-      break;
-    }
-    case CTX_MODE_VERTEX_GPENCIL_LEGACY: {
-      Paint *paint = &ts->gp_vertexpaint->paint;
-      brush = paint->brush;
-      if (brush && brush->gpencil_settings) {
-        BKE_gpencil_brush_preset_set(bmain, brush, brush->gpencil_settings->preset_type);
-      }
-      break;
-    }
-    default:
-      break;
-  }
-
-  /* notifiers */
-  WM_main_add_notifier(NC_BRUSH | NA_EDITED, nullptr);
-
-  return OPERATOR_FINISHED;
-}
-
-void GPENCIL_OT_brush_reset(wmOperatorType *ot)
-{
-  /* identifiers */
-  ot->name = "Reset Brush";
-  ot->idname = "GPENCIL_OT_brush_reset";
-  ot->description = "Reset brush to default parameters";
-
-  /* api callbacks */
-  ot->exec = gpencil_brush_reset_exec;
-
-  /* flags */
-  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
-}
-
-static Brush *gpencil_brush_get_first_by_mode(Main *bmain,
-                                              Paint * /*paint*/,
-                                              const enum eContextObjectMode mode,
-                                              char tool)
-{
-  Brush *brush_next = nullptr;
-  for (Brush *brush = static_cast<Brush *>(bmain->brushes.first); brush; brush = brush_next) {
-    brush_next = static_cast<Brush *>(brush->id.next);
-
-    if (brush->gpencil_settings == nullptr) {
-      continue;
-    }
-
-    if ((mode == CTX_MODE_PAINT_GPENCIL_LEGACY) && (brush->gpencil_tool == tool)) {
-      return brush;
-    }
-
-    if ((mode == CTX_MODE_SCULPT_GPENCIL_LEGACY) && (brush->gpencil_sculpt_tool == tool)) {
-      return brush;
-    }
-
-    if ((mode == CTX_MODE_WEIGHT_GPENCIL_LEGACY) && (brush->gpencil_weight_tool == tool)) {
-      return brush;
-    }
-
-    if ((mode == CTX_MODE_VERTEX_GPENCIL_LEGACY) && (brush->gpencil_vertex_tool == tool)) {
-      return brush;
-    }
-  }
-
-  return nullptr;
-}
-
-static void gpencil_brush_delete_mode_brushes(Main *bmain,
-                                              Paint *paint,
-                                              const enum eContextObjectMode mode)
-{
-  Brush *brush_active = paint->brush;
-  Brush *brush_next = nullptr;
-  for (Brush *brush = static_cast<Brush *>(bmain->brushes.first); brush; brush = brush_next) {
-    brush_next = static_cast<Brush *>(brush->id.next);
-
-    if ((brush->gpencil_settings == nullptr) && (brush->ob_mode != OB_MODE_PAINT_GPENCIL_LEGACY)) {
-      continue;
-    }
-
-    short preset = (brush->gpencil_settings) ? brush->gpencil_settings->preset_type :
-                                               short(GP_BRUSH_PRESET_UNKNOWN);
-
-    if (preset != GP_BRUSH_PRESET_UNKNOWN) {
-      /* Verify to delete only the brushes of the current mode. */
-      if (mode == CTX_MODE_PAINT_GPENCIL_LEGACY) {
-        if ((preset < GP_BRUSH_PRESET_AIRBRUSH) || (preset > GP_BRUSH_PRESET_TINT)) {
-          continue;
-        }
-        if ((brush_active) && (brush_active->gpencil_tool != brush->gpencil_tool)) {
-          continue;
-        }
-      }
-
-      if (mode == CTX_MODE_SCULPT_GPENCIL_LEGACY) {
-        if ((preset < GP_BRUSH_PRESET_SMOOTH_STROKE) || (preset > GP_BRUSH_PRESET_CLONE_STROKE)) {
-          continue;
-        }
-        if ((brush_active) && (brush_active->gpencil_sculpt_tool != brush->gpencil_sculpt_tool)) {
-          continue;
-        }
-      }
-
-      if (mode == CTX_MODE_WEIGHT_GPENCIL_LEGACY) {
-        if ((preset < GP_BRUSH_PRESET_WEIGHT_DRAW) || (preset > GP_BRUSH_PRESET_WEIGHT_SMEAR)) {
-          continue;
-        }
-        if ((brush_active) && (brush_active->gpencil_weight_tool != brush->gpencil_weight_tool)) {
-          continue;
-        }
-      }
-
-      if (mode == CTX_MODE_VERTEX_GPENCIL_LEGACY) {
-        if ((preset < GP_BRUSH_PRESET_VERTEX_DRAW) || (preset > GP_BRUSH_PRESET_VERTEX_REPLACE)) {
-          continue;
-        }
-        if ((brush_active) && (brush_active->gpencil_vertex_tool != brush->gpencil_vertex_tool)) {
-          continue;
-        }
-      }
-    }
-
-    /* Before delete, un-pin any material of the brush. */
-    if ((brush->gpencil_settings) && (brush->gpencil_settings->material != nullptr)) {
-      brush->gpencil_settings->material = nullptr;
-      brush->gpencil_settings->flag &= ~GP_BRUSH_MATERIAL_PINNED;
-    }
-
-    BKE_brush_delete(bmain, brush);
-    if (brush == brush_active) {
-      brush_active = nullptr;
-    }
-  }
-}
-
-static int gpencil_brush_reset_all_exec(bContext *C, wmOperator * /*op*/)
-{
-  Main *bmain = CTX_data_main(C);
-  ToolSettings *ts = CTX_data_tool_settings(C);
-  const enum eContextObjectMode mode = CTX_data_mode_enum(C);
-  Paint *paint = nullptr;
-
-  switch (mode) {
-    case CTX_MODE_PAINT_GPENCIL_LEGACY: {
-      paint = &ts->gp_paint->paint;
-      break;
-    }
-    case CTX_MODE_SCULPT_GPENCIL_LEGACY: {
-      paint = &ts->gp_sculptpaint->paint;
-      break;
-    }
-    case CTX_MODE_WEIGHT_GPENCIL_LEGACY: {
-      paint = &ts->gp_weightpaint->paint;
-      break;
-    }
-    case CTX_MODE_VERTEX_GPENCIL_LEGACY: {
-      paint = &ts->gp_vertexpaint->paint;
-      break;
-    }
-    default:
-      break;
-  }
-
-  char tool = '0';
-  if (paint) {
-    if (paint->brush) {
-      Brush *brush_active = paint->brush;
-      switch (mode) {
-        case CTX_MODE_PAINT_GPENCIL_LEGACY: {
-          tool = brush_active->gpencil_tool;
-          break;
-        }
-        case CTX_MODE_SCULPT_GPENCIL_LEGACY: {
-          tool = brush_active->gpencil_sculpt_tool;
-          break;
-        }
-        case CTX_MODE_WEIGHT_GPENCIL_LEGACY: {
-          tool = brush_active->gpencil_weight_tool;
-          break;
-        }
-        case CTX_MODE_VERTEX_GPENCIL_LEGACY: {
-          tool = brush_active->gpencil_vertex_tool;
-          break;
-        }
-        default: {
-          tool = brush_active->gpencil_tool;
-          break;
-        }
-      }
-    }
-
-    gpencil_brush_delete_mode_brushes(bmain, paint, mode);
-
-    switch (mode) {
-      case CTX_MODE_PAINT_GPENCIL_LEGACY: {
-        BKE_brush_gpencil_paint_presets(bmain, ts, true);
-        break;
-      }
-      case CTX_MODE_SCULPT_GPENCIL_LEGACY: {
-        BKE_brush_gpencil_sculpt_presets(bmain, ts, true);
-        break;
-      }
-      case CTX_MODE_WEIGHT_GPENCIL_LEGACY: {
-        BKE_brush_gpencil_weight_presets(bmain, ts, true);
-        break;
-      }
-      case CTX_MODE_VERTEX_GPENCIL_LEGACY: {
-        BKE_brush_gpencil_vertex_presets(bmain, ts, true);
-        break;
-      }
-      default: {
-        break;
-      }
-    }
-
-    BKE_paint_toolslots_brush_validate(bmain, paint);
-
-    /* Set Again the first brush of the mode. */
-    Brush *deft_brush = gpencil_brush_get_first_by_mode(bmain, paint, mode, tool);
-    if (deft_brush) {
-      BKE_paint_brush_set(paint, deft_brush);
-    }
-    /* notifiers */
-    DEG_relations_tag_update(bmain);
-    WM_main_add_notifier(NC_BRUSH | NA_EDITED, nullptr);
-  }
-
-  return OPERATOR_FINISHED;
-}
-
-void GPENCIL_OT_brush_reset_all(wmOperatorType *ot)
-{
-  /* identifiers */
-  ot->name = "Reset All Brushes";
-  ot->idname = "GPENCIL_OT_brush_reset_all";
-  ot->description = "Delete all mode brushes and recreate a default set";
-
-  /* api callbacks */
-  ot->exec = gpencil_brush_reset_all_exec;
 
   /* flags */
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
@@ -2978,8 +2693,8 @@ int ED_gpencil_join_objects_exec(bContext *C, wmOperator *op)
         float offset_global[3];
         float offset_local[3];
 
-        sub_v3_v3v3(offset_global, ob_active->loc, ob_iter->object_to_world[3]);
-        copy_m3_m4(bmat, ob_active->object_to_world);
+        sub_v3_v3v3(offset_global, ob_active->loc, ob_iter->object_to_world().location());
+        copy_m3_m4(bmat, ob_active->object_to_world().ptr());
 
         /* Inverse transform for all selected curves in this object,
          * See #object_join_exec for detailed comment on why the safe version is used. */
@@ -3060,17 +2775,17 @@ int ED_gpencil_join_objects_exec(bContext *C, wmOperator *op)
           }
         }
         DEG_id_tag_update(&gpd_src->id,
-                          ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_COPY_ON_WRITE);
+                          ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_SYNC_TO_EVAL);
       }
 
       /* Free the old object */
-      ED_object_base_free_and_unlink(bmain, scene, ob_iter);
+      blender::ed::object::base_free_and_unlink(bmain, scene, ob_iter);
     }
   }
   CTX_DATA_END;
 
   DEG_id_tag_update(&gpd_dst->id,
-                    ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_COPY_ON_WRITE);
+                    ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_SYNC_TO_EVAL);
   DEG_relations_tag_update(bmain); /* because we removed object(s) */
 
   WM_event_add_notifier(C, NC_SCENE | ND_OB_ACTIVE, scene);
@@ -3116,7 +2831,7 @@ static int gpencil_lock_layer_exec(bContext *C, wmOperator * /*op*/)
       gp_style = ma->gp_style;
       gp_style->flag |= GP_MATERIAL_LOCKED;
       gp_style->flag |= GP_MATERIAL_HIDE;
-      DEG_id_tag_update(&ma->id, ID_RECALC_COPY_ON_WRITE);
+      DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
     }
   }
 
@@ -3133,7 +2848,7 @@ static int gpencil_lock_layer_exec(bContext *C, wmOperator * /*op*/)
         }
 
         ma = BKE_gpencil_material(ob, gps->mat_nr + 1);
-        DEG_id_tag_update(&ma->id, ID_RECALC_COPY_ON_WRITE);
+        DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
 
         gp_style = ma->gp_style;
         /* unlock/unhide color if not unlocked before */
@@ -3147,8 +2862,8 @@ static int gpencil_lock_layer_exec(bContext *C, wmOperator * /*op*/)
   /* updates */
   DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY);
 
-  /* copy on write tag is needed, or else no refresh happens */
-  DEG_id_tag_update(&gpd->id, ID_RECALC_COPY_ON_WRITE);
+  /* Copy-on-eval tag is needed, or else no refresh happens */
+  DEG_id_tag_update(&gpd->id, ID_RECALC_SYNC_TO_EVAL);
 
   /* notifiers */
   DEG_id_tag_update(&gpd->id, ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY);
@@ -3224,7 +2939,7 @@ static int gpencil_material_isolate_exec(bContext *C, wmOperator *op)
         continue;
       }
       gp_style->flag |= flags;
-      DEG_id_tag_update(&ma->id, ID_RECALC_COPY_ON_WRITE);
+      DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
     }
   }
   else {
@@ -3236,15 +2951,15 @@ static int gpencil_material_isolate_exec(bContext *C, wmOperator *op)
       }
       gp_style = ma->gp_style;
       gp_style->flag &= ~flags;
-      DEG_id_tag_update(&ma->id, ID_RECALC_COPY_ON_WRITE);
+      DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
     }
   }
 
   /* notifiers */
   DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY);
 
-  /* copy on write tag is needed, or else no refresh happens */
-  DEG_id_tag_update(&gpd->id, ID_RECALC_COPY_ON_WRITE);
+  /* Copy-on-eval tag is needed, or else no refresh happens */
+  DEG_id_tag_update(&gpd->id, ID_RECALC_SYNC_TO_EVAL);
 
   WM_event_add_notifier(C, NC_GPENCIL | ND_DATA | NA_EDITED, nullptr);
 
@@ -3300,7 +3015,7 @@ static int gpencil_material_hide_exec(bContext *C, wmOperator *op)
         color = ma->gp_style;
         if (active_color != color) {
           color->flag |= GP_MATERIAL_HIDE;
-          DEG_id_tag_update(&ma->id, ID_RECALC_COPY_ON_WRITE);
+          DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
         }
       }
     }
@@ -3313,8 +3028,8 @@ static int gpencil_material_hide_exec(bContext *C, wmOperator *op)
   /* updates */
   DEG_id_tag_update(&gpd->id, ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY);
 
-  /* copy on write tag is needed, or else no refresh happens */
-  DEG_id_tag_update(&gpd->id, ID_RECALC_COPY_ON_WRITE);
+  /* Copy-on-eval tag is needed, or else no refresh happens */
+  DEG_id_tag_update(&gpd->id, ID_RECALC_SYNC_TO_EVAL);
 
   /* notifiers */
   WM_event_add_notifier(C, NC_GPENCIL | ND_DATA | NA_EDITED, nullptr);
@@ -3362,15 +3077,15 @@ static int gpencil_material_reveal_exec(bContext *C, wmOperator * /*op*/)
     if (ma) {
       gp_style = ma->gp_style;
       gp_style->flag &= ~GP_MATERIAL_HIDE;
-      DEG_id_tag_update(&ma->id, ID_RECALC_COPY_ON_WRITE);
+      DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
     }
   }
 
   /* updates */
   DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY);
 
-  /* copy on write tag is needed, or else no refresh happens */
-  DEG_id_tag_update(&gpd->id, ID_RECALC_COPY_ON_WRITE);
+  /* Copy-on-eval tag is needed, or else no refresh happens */
+  DEG_id_tag_update(&gpd->id, ID_RECALC_SYNC_TO_EVAL);
 
   /* notifiers */
   WM_event_add_notifier(C, NC_GPENCIL | ND_DATA | NA_EDITED, nullptr);
@@ -3415,15 +3130,15 @@ static int gpencil_material_lock_all_exec(bContext *C, wmOperator * /*op*/)
     if (ma) {
       gp_style = ma->gp_style;
       gp_style->flag |= GP_MATERIAL_LOCKED;
-      DEG_id_tag_update(&ma->id, ID_RECALC_COPY_ON_WRITE);
+      DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
     }
   }
 
   /* updates */
   DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY);
 
-  /* copy on write tag is needed, or else no refresh happens */
-  DEG_id_tag_update(&gpd->id, ID_RECALC_COPY_ON_WRITE);
+  /* Copy-on-eval tag is needed, or else no refresh happens */
+  DEG_id_tag_update(&gpd->id, ID_RECALC_SYNC_TO_EVAL);
 
   /* notifiers */
   WM_event_add_notifier(C, NC_GPENCIL | ND_DATA | NA_EDITED, nullptr);
@@ -3468,15 +3183,15 @@ static int gpencil_material_unlock_all_exec(bContext *C, wmOperator * /*op*/)
     if (ma) {
       gp_style = ma->gp_style;
       gp_style->flag &= ~GP_MATERIAL_LOCKED;
-      DEG_id_tag_update(&ma->id, ID_RECALC_COPY_ON_WRITE);
+      DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
     }
   }
 
   /* updates */
   DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY);
 
-  /* copy on write tag is needed, or else no refresh happens */
-  DEG_id_tag_update(&gpd->id, ID_RECALC_COPY_ON_WRITE);
+  /* Copy-on-eval tag is needed, or else no refresh happens */
+  DEG_id_tag_update(&gpd->id, ID_RECALC_SYNC_TO_EVAL);
 
   /* notifiers */
   WM_event_add_notifier(C, NC_GPENCIL | ND_DATA | NA_EDITED, nullptr);
@@ -3565,8 +3280,8 @@ static int gpencil_material_select_exec(bContext *C, wmOperator *op)
   }
   CTX_DATA_END;
 
-  /* copy on write tag is needed, or else no refresh happens */
-  DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY | ID_RECALC_COPY_ON_WRITE);
+  /* Copy-on-eval tag is needed, or else no refresh happens */
+  DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY | ID_RECALC_SYNC_TO_EVAL);
 
   /* notifiers */
   WM_event_add_notifier(C, NC_GPENCIL | ND_DATA | NA_EDITED, nullptr);
@@ -3722,7 +3437,7 @@ static int gpencil_materials_copy_to_object_exec(bContext *C, wmOperator *op)
     }
 
     /* notifiers */
-    DEG_id_tag_update(&ob->id, ID_RECALC_COPY_ON_WRITE);
+    DEG_id_tag_update(&ob->id, ID_RECALC_SYNC_TO_EVAL);
   }
   CTX_DATA_END;
 
@@ -3772,7 +3487,7 @@ bool ED_gpencil_add_lattice_modifier(const bContext *C,
   /* if no lattice modifier, add a new one */
   GpencilModifierData *md = BKE_gpencil_modifiers_findby_type(ob, eGpencilModifierType_Lattice);
   if (md == nullptr) {
-    md = ED_object_gpencil_modifier_add(
+    md = blender::ed::object::gpencil_modifier_add(
         reports, bmain, scene, ob, "Lattice", eGpencilModifierType_Lattice);
     if (md == nullptr) {
       BKE_report(reports, RPT_ERROR, "Unable to add a new Lattice modifier to object");
@@ -3842,8 +3557,7 @@ static int gpencil_layer_mask_add_exec(bContext *C, wmOperator *op)
 
   /* notifiers */
   if (gpd) {
-    DEG_id_tag_update(&gpd->id,
-                      ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_COPY_ON_WRITE);
+    DEG_id_tag_update(&gpd->id, ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY | ID_RECALC_SYNC_TO_EVAL);
   }
   WM_event_add_notifier(C, NC_GPENCIL | ND_DATA | NA_EDITED, nullptr);
 

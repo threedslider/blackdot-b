@@ -9,53 +9,42 @@
 #include "vk_state_manager.hh"
 #include "vk_context.hh"
 #include "vk_index_buffer.hh"
-#include "vk_pipeline.hh"
 #include "vk_shader.hh"
 #include "vk_storage_buffer.hh"
 #include "vk_texture.hh"
 #include "vk_vertex_buffer.hh"
 
-#include "GPU_capabilities.h"
+#include "GPU_capabilities.hh"
 
 namespace blender::gpu {
 
 void VKStateManager::apply_state()
 {
-  VKContext &context = *VKContext::get();
-  if (context.shader) {
-    VKShader &shader = unwrap(*context.shader);
-    VKPipeline &pipeline = shader.pipeline_get();
-    pipeline.state_manager_get().set_state(state, mutable_state);
-  }
+  /* Intentionally empty. State is polled during pipeline creation and doesn't need to be applied.
+   * If this leads to issues we should have an active state. */
 }
 
-void VKStateManager::apply_bindings()
+void VKStateManager::apply_bindings(VKContext &context,
+                                    render_graph::VKResourceAccessInfo &resource_access_info)
 {
-  VKContext &context = *VKContext::get();
-  if (context.shader) {
-    textures_.apply_bindings();
-    images_.apply_bindings();
-    uniform_buffers_.apply_bindings();
-    storage_buffers_.apply_bindings();
+  VKShader *shader = unwrap(context.shader);
+  if (shader == nullptr) {
+    return;
   }
+  AddToDescriptorSetContext data(
+      context.descriptor_set_get(), shader->interface_get(), resource_access_info);
+  textures_.add_to_descriptor_set(data);
+  images_.add_to_descriptor_set(data);
+  uniform_buffers_.add_to_descriptor_set(data);
+  storage_buffers_.add_to_descriptor_set(data);
 }
 
 void VKStateManager::force_state()
 {
-  VKContext &context = *VKContext::get();
-  BLI_assert(context.shader);
-  VKShader &shader = unwrap(*context.shader);
-  VKPipeline &pipeline = shader.pipeline_get();
-  pipeline.state_manager_get().force_state(state, mutable_state);
+  /* Intentionally empty. State is polled during pipeline creation and is always forced. */
 }
 
-void VKStateManager::issue_barrier(eGPUBarrier /*barrier_bits*/)
-{
-  VKContext &context = *VKContext::get();
-  /* TODO: Pipeline barriers should be added. We might be able to extract it from
-   * the actual pipeline, later on, but for now we submit the work as barrier. */
-  context.flush();
-}
+void VKStateManager::issue_barrier(eGPUBarrier /*barrier_bits*/) {}
 
 void VKStateManager::texture_bind(Texture *tex, GPUSamplerState sampler, int unit)
 {
@@ -101,6 +90,11 @@ void VKStateManager::uniform_buffer_unbind(VKUniformBuffer *uniform_buffer)
   uniform_buffers_.unbind(*uniform_buffer);
 }
 
+void VKStateManager::uniform_buffer_unbind_all()
+{
+  uniform_buffers_.unbind_all();
+}
+
 void VKStateManager::unbind_from_all_namespaces(VKBindableResource &resource)
 {
   uniform_buffers_.unbind(resource);
@@ -127,6 +121,11 @@ void VKStateManager::storage_buffer_bind(VKBindableResource &resource, int slot)
 void VKStateManager::storage_buffer_unbind(VKBindableResource &resource)
 {
   storage_buffers_.unbind(resource);
+}
+
+void VKStateManager::storage_buffer_unbind_all()
+{
+  storage_buffers_.unbind_all();
 }
 
 void VKStateManager::texture_unpack_row_length_set(uint len)

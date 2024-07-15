@@ -38,6 +38,8 @@
 #include "../../source/blender/blenlib/BLI_compiler_attrs.h"
 #include "../../source/blender/blenlib/BLI_sys_types.h"
 
+#include <string.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,7 +54,7 @@ extern size_t (*MEM_allocN_len)(const void *vmemh) ATTR_WARN_UNUSED_RESULT;
 /**
  * Release memory previously allocated by this module.
  */
-extern void (*MEM_freeN)(void *vmemh);
+void MEM_freeN(void *vmemh);
 
 #if 0 /* UNUSED */
 /**
@@ -127,10 +129,20 @@ extern void *(*MEM_malloc_arrayN)(size_t len,
  * Allocate an aligned block of memory of size len, with tag name str. The
  * name must be a static, because only a pointer to it is stored!
  */
-extern void *(*MEM_mallocN_aligned)(size_t len,
-                                    size_t alignment,
-                                    const char *str) /* ATTR_MALLOC */ ATTR_WARN_UNUSED_RESULT
+void *MEM_mallocN_aligned(size_t len,
+                          size_t alignment,
+                          const char *str) /* ATTR_MALLOC */ ATTR_WARN_UNUSED_RESULT
     ATTR_ALLOC_SIZE(1) ATTR_NONNULL(3);
+
+/**
+ * Allocate an aligned block of memory that is initialized with zeros.
+ */
+extern void *(*MEM_calloc_arrayN_aligned)(
+    size_t len,
+    size_t size,
+    size_t alignment,
+    const char *str) /* ATTR_MALLOC */ ATTR_WARN_UNUSED_RESULT ATTR_ALLOC_SIZE(1, 2)
+    ATTR_NONNULL(4);
 
 /**
  * Print a list of the names and sizes of all allocated memory
@@ -194,7 +206,7 @@ extern size_t (*MEM_get_peak_memory)(void) ATTR_WARN_UNUSED_RESULT;
     } while (0)
 #endif
 
-/* overhead for lockfree allocator (use to avoid slop-space) */
+/** Overhead for lockfree allocator (use to avoid slop-space). */
 #define MEM_SIZE_OVERHEAD sizeof(size_t)
 #define MEM_SIZE_OPTIMAL(size) ((size)-MEM_SIZE_OVERHEAD)
 
@@ -230,22 +242,26 @@ void MEM_use_memleak_detection(bool enabled);
  */
 void MEM_enable_fail_on_memleak(void);
 
-/* Switch allocator to fast mode, with less tracking.
+/**
+ * Switch allocator to fast mode, with less tracking.
  *
  * Use in the production code where performance is the priority, and exact details about allocation
  * is not. This allocator keeps track of number of allocation and amount of allocated bytes, but it
  * does not track of names of allocated blocks.
  *
- * NOTE: The switch between allocator types can only happen before any allocation did happen. */
+ * \note The switch between allocator types can only happen before any allocation did happen.
+ */
 void MEM_use_lockfree_allocator(void);
 
-/* Switch allocator to slow fully guarded mode.
+/**
+ * Switch allocator to slow fully guarded mode.
  *
  * Use for debug purposes. This allocator contains lock section around every allocator call, which
  * makes it slow. What is gained with this is the ability to have list of allocated blocks (in an
  * addition to the tracking of number of allocations and amount of allocated bytes).
  *
- * NOTE: The switch between allocator types can only happen before any allocation did happen. */
+ * \note The switch between allocator types can only happen before any allocation did happen.
+ */
 void MEM_use_guarded_allocator(void);
 
 #ifdef __cplusplus
@@ -257,6 +273,17 @@ void MEM_use_guarded_allocator(void);
 #  include <new>
 #  include <type_traits>
 #  include <utility>
+
+#  include "intern/mallocn_intern_function_pointers.hh"
+
+/**
+ * Conservative value of memory alignment returned by non-aligned OS-level memory allocation
+ * functions. For alignments smaller than this value, using non-aligned versions of allocator API
+ * functions is okay, allowing use of `calloc`, for example.
+ */
+#  define MEM_MIN_CPP_ALIGNMENT \
+    (__STDCPP_DEFAULT_NEW_ALIGNMENT__ < alignof(void *) ? __STDCPP_DEFAULT_NEW_ALIGNMENT__ : \
+                                                          alignof(void *))
 
 /**
  * Allocate new memory for and constructs an object of type #T.
@@ -272,7 +299,8 @@ void MEM_use_guarded_allocator(void);
 template<typename T, typename... Args>
 inline T *MEM_new(const char *allocation_name, Args &&...args)
 {
-  void *buffer = MEM_mallocN_aligned(sizeof(T), alignof(T), allocation_name);
+  void *buffer = mem_guarded::internal::mem_mallocN_aligned_ex(
+      sizeof(T), alignof(T), allocation_name, mem_guarded::internal::AllocationType::NEW_DELETE);
   return new (buffer) T(std::forward<Args>(args)...);
 }
 
@@ -288,9 +316,10 @@ template<typename T> inline void MEM_delete(const T *ptr)
     /* Support #ptr being null, because C++ `delete` supports that as well. */
     return;
   }
-  /* C++ allows destruction of const objects, so the pointer is allowed to be const. */
+  /* C++ allows destruction of `const` objects, so the pointer is allowed to be `const`. */
   ptr->~T();
-  MEM_freeN(const_cast<T *>(ptr));
+  mem_guarded::internal::mem_freeN_ex(const_cast<T *>(ptr),
+                                      mem_guarded::internal::AllocationType::NEW_DELETE);
 }
 
 /**
@@ -302,7 +331,7 @@ template<typename T> inline void MEM_delete(const T *ptr)
 template<typename T> inline T *MEM_cnew(const char *allocation_name)
 {
   static_assert(std::is_trivial_v<T>, "For non-trivial types, MEM_new should be used.");
-  return static_cast<T *>(MEM_callocN(sizeof(T), allocation_name));
+  return static_cast<T *>(MEM_calloc_arrayN_aligned(1, sizeof(T), alignof(T), allocation_name));
 }
 
 /**
@@ -311,7 +340,8 @@ template<typename T> inline T *MEM_cnew(const char *allocation_name)
 template<typename T> inline T *MEM_cnew_array(const size_t length, const char *allocation_name)
 {
   static_assert(std::is_trivial_v<T>, "For non-trivial types, MEM_new should be used.");
-  return static_cast<T *>(MEM_calloc_arrayN(length, sizeof(T), allocation_name));
+  return static_cast<T *>(
+      MEM_calloc_arrayN_aligned(length, sizeof(T), alignof(T), allocation_name));
 }
 
 /**
@@ -327,50 +357,68 @@ template<typename T> inline T *MEM_cnew_array(const size_t length, const char *a
 template<typename T> inline T *MEM_cnew(const char *allocation_name, const T &other)
 {
   static_assert(std::is_trivial_v<T>, "For non-trivial types, MEM_new should be used.");
-  T *new_object = static_cast<T *>(MEM_mallocN(sizeof(T), allocation_name));
+  T *new_object = static_cast<T *>(MEM_mallocN_aligned(sizeof(T), alignof(T), allocation_name));
   if (new_object) {
     memcpy(new_object, &other, sizeof(T));
   }
   return new_object;
 }
 
-/* Allocation functions (for C++ only). */
+/** Allocation functions (for C++ only). */
 #  define MEM_CXX_CLASS_ALLOC_FUNCS(_id) \
    public: \
     void *operator new(size_t num_bytes) \
     { \
-      return MEM_mallocN_aligned(num_bytes, __STDCPP_DEFAULT_NEW_ALIGNMENT__, _id); \
+      return mem_guarded::internal::mem_mallocN_aligned_ex( \
+          num_bytes, \
+          __STDCPP_DEFAULT_NEW_ALIGNMENT__, \
+          _id, \
+          mem_guarded::internal::AllocationType::NEW_DELETE); \
     } \
     void *operator new(size_t num_bytes, std::align_val_t alignment) \
     { \
-      return MEM_mallocN_aligned(num_bytes, size_t(alignment), _id); \
+      return mem_guarded::internal::mem_mallocN_aligned_ex( \
+          num_bytes, size_t(alignment), _id, mem_guarded::internal::AllocationType::NEW_DELETE); \
     } \
     void operator delete(void *mem) \
     { \
       if (mem) { \
-        MEM_freeN(mem); \
+        mem_guarded::internal::mem_freeN_ex(mem, \
+                                            mem_guarded::internal::AllocationType::NEW_DELETE); \
       } \
     } \
     void *operator new[](size_t num_bytes) \
     { \
-      return MEM_mallocN_aligned(num_bytes, __STDCPP_DEFAULT_NEW_ALIGNMENT__, _id "[]"); \
+      return mem_guarded::internal::mem_mallocN_aligned_ex( \
+          num_bytes, \
+          __STDCPP_DEFAULT_NEW_ALIGNMENT__, \
+          _id "[]", \
+          mem_guarded::internal::AllocationType::NEW_DELETE); \
     } \
     void *operator new[](size_t num_bytes, std::align_val_t alignment) \
     { \
-      return MEM_mallocN_aligned(num_bytes, size_t(alignment), _id "[]"); \
+      return mem_guarded::internal::mem_mallocN_aligned_ex( \
+          num_bytes, \
+          size_t(alignment), \
+          _id "[]", \
+          mem_guarded::internal::AllocationType::NEW_DELETE); \
     } \
     void operator delete[](void *mem) \
     { \
       if (mem) { \
-        MEM_freeN(mem); \
+        mem_guarded::internal::mem_freeN_ex(mem, \
+                                            mem_guarded::internal::AllocationType::NEW_DELETE); \
       } \
     } \
     void *operator new(size_t /*count*/, void *ptr) \
     { \
       return ptr; \
     } \
-    /* This is the matching delete operator to the placement-new operator above. Both parameters \
-     * will have the same value. Without this, we get the warning C4291 on windows. */ \
+    /** \
+     * This is the matching delete operator to the placement-new operator above. \
+     * Both parameters \
+     * will have the same value. Without this, we get the warning C4291 on windows. \
+     */ \
     void operator delete(void * /*ptr_to_free*/, void * /*ptr*/) {}
 
 #endif /* __cplusplus */

@@ -28,7 +28,7 @@
 #include "ED_screen.hh"
 #include "ED_undo.hh"
 
-#include "BLT_translation.h"
+#include "BLT_translation.hh"
 
 #include "UI_interface.hh"
 #include "UI_resources.hh"
@@ -157,6 +157,7 @@ static eCustomDataType data_type_in_attribute_input_node(const eCustomDataType t
     case CD_PROP_COLOR:
     case CD_PROP_BOOL:
     case CD_PROP_QUATERNION:
+    case CD_PROP_FLOAT4X4:
       return type;
     case CD_PROP_BYTE_COLOR:
       return CD_PROP_COLOR;
@@ -250,7 +251,7 @@ void node_geometry_add_attribute_search_button(const bContext & /*C*/,
                                  "");
 
   const bNodeSocket &socket = *static_cast<const bNodeSocket *>(socket_ptr.data);
-  AttributeSearchData *data = MEM_new<AttributeSearchData>(__func__);
+  AttributeSearchData *data = MEM_cnew<AttributeSearchData>(__func__);
   data->node_id = node.identifier;
   STRNCPY(data->socket_identifier, socket.identifier);
 

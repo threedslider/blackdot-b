@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 
 #include "MEM_guardedalloc.h"
 
@@ -32,18 +33,18 @@
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.h"
 
-#include "BLT_translation.h"
+#include "BLT_translation.hh"
 
 #include "BKE_action.h"
-#include "BKE_anim_data.h"
+#include "BKE_anim_data.hh"
 #include "BKE_anim_visualization.h"
 #include "BKE_animsys.h"
 #include "BKE_armature.hh"
 #include "BKE_asset.hh"
 #include "BKE_constraint.h"
 #include "BKE_deform.hh"
-#include "BKE_fcurve.h"
-#include "BKE_idprop.h"
+#include "BKE_fcurve.hh"
+#include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
@@ -63,6 +64,7 @@
 
 #include "BLO_read_write.hh"
 
+#include "ANIM_action.hh"
 #include "ANIM_bone_collections.hh"
 #include "ANIM_bonecolor.hh"
 
@@ -86,6 +88,7 @@ static CLG_LogRef LOG = {"bke.action"};
 /**************************** Action Datablock ******************************/
 
 /*********************** Armature Datablock ***********************/
+namespace blender::bke {
 
 /**
  * Only copy internal data of Action ID from source
@@ -97,22 +100,29 @@ static CLG_LogRef LOG = {"bke.action"};
  *
  * \param flag: Copying options (see BKE_lib_id.hh's LIB_ID_COPY_... flags for more).
  */
-static void action_copy_data(Main * /*bmain*/, ID *id_dst, const ID *id_src, const int flag)
+static void action_copy_data(Main * /*bmain*/,
+                             std::optional<Library *> /*owner_library*/,
+                             ID *id_dst,
+                             const ID *id_src,
+                             const int flag)
 {
-  bAction *action_dst = (bAction *)id_dst;
-  const bAction *action_src = (const bAction *)id_src;
+  bAction *dna_action_dst = reinterpret_cast<bAction *>(id_dst);
+  animrig::Action &action_dst = dna_action_dst->wrap();
+
+  const bAction *dna_action_src = reinterpret_cast<const bAction *>(id_src);
+  const animrig::Action &action_src = dna_action_src->wrap();
 
   bActionGroup *group_dst, *group_src;
   FCurve *fcurve_dst, *fcurve_src;
 
   /* Duplicate the lists of groups and markers. */
-  BLI_duplicatelist(&action_dst->groups, &action_src->groups);
-  BLI_duplicatelist(&action_dst->markers, &action_src->markers);
+  BLI_duplicatelist(&action_dst.groups, &action_src.groups);
+  BLI_duplicatelist(&action_dst.markers, &action_src.markers);
 
   /* Copy F-Curves, fixing up the links as we go. */
-  BLI_listbase_clear(&action_dst->curves);
+  BLI_listbase_clear(&action_dst.curves);
 
-  for (fcurve_src = static_cast<FCurve *>(action_src->curves.first); fcurve_src;
+  for (fcurve_src = static_cast<FCurve *>(action_src.curves.first); fcurve_src;
        fcurve_src = fcurve_src->next)
   {
     /* Duplicate F-Curve. */
@@ -121,11 +131,11 @@ static void action_copy_data(Main * /*bmain*/, ID *id_dst, const ID *id_src, con
      * But surprisingly does not seem to be doing any ID reference-counting. */
     fcurve_dst = BKE_fcurve_copy(fcurve_src);
 
-    BLI_addtail(&action_dst->curves, fcurve_dst);
+    BLI_addtail(&action_dst.curves, fcurve_dst);
 
     /* Fix group links (kind of bad list-in-list search, but this is the most reliable way). */
-    for (group_dst = static_cast<bActionGroup *>(action_dst->groups.first),
-        group_src = static_cast<bActionGroup *>(action_src->groups.first);
+    for (group_dst = static_cast<bActionGroup *>(action_dst.groups.first),
+        group_src = static_cast<bActionGroup *>(action_src.groups.first);
          group_dst && group_src;
          group_dst = group_dst->next, group_src = group_src->next)
     {
@@ -143,47 +153,134 @@ static void action_copy_data(Main * /*bmain*/, ID *id_dst, const ID *id_src, con
     }
   }
 
+  /* Copy all simple properties. */
+  action_dst.layer_array_num = action_src.layer_array_num;
+  action_dst.layer_active_index = action_src.layer_active_index;
+  action_dst.slot_array_num = action_src.slot_array_num;
+  action_dst.last_slot_handle = action_src.last_slot_handle;
+
+  /* Layers. */
+  action_dst.layer_array = MEM_cnew_array<ActionLayer *>(action_src.layer_array_num, __func__);
+  for (int i : action_src.layers().index_range()) {
+    action_dst.layer_array[i] = MEM_new<animrig::Layer>(__func__, *action_src.layer(i));
+  }
+
+  /* Slots. */
+  action_dst.slot_array = MEM_cnew_array<ActionSlot *>(action_src.slot_array_num, __func__);
+  for (int i : action_src.slots().index_range()) {
+    action_dst.slot_array[i] = MEM_new<animrig::Slot>(__func__, *action_src.slot(i));
+  }
+
   if (flag & LIB_ID_COPY_NO_PREVIEW) {
-    action_dst->preview = nullptr;
+    action_dst.preview = nullptr;
   }
   else {
-    BKE_previewimg_id_copy(&action_dst->id, &action_src->id);
+    BKE_previewimg_id_copy(&action_dst.id, &action_src.id);
   }
 }
 
 /** Free (or release) any data used by this action (does not free the action itself). */
 static void action_free_data(ID *id)
 {
-  bAction *action = (bAction *)id;
-  /* No animdata here. */
+  animrig::Action &action = reinterpret_cast<bAction *>(id)->wrap();
 
-  /* Free F-Curves. */
-  BKE_fcurves_free(&action->curves);
+  /* Free layers. */
+  for (animrig::Layer *layer : action.layers()) {
+    MEM_delete(layer);
+  }
+  MEM_SAFE_FREE(action.layer_array);
+  action.layer_array_num = 0;
 
-  /* Free groups. */
-  BLI_freelistN(&action->groups);
+  /* Free slots. */
+  for (animrig::Slot *slot : action.slots()) {
+    MEM_delete(slot);
+  }
+  MEM_SAFE_FREE(action.slot_array);
+  action.slot_array_num = 0;
 
-  /* Free pose-references (aka local markers). */
-  BLI_freelistN(&action->markers);
+  /* Free legacy F-Curves & groups. */
+  BKE_fcurves_free(&action.curves);
+  BLI_freelistN(&action.groups);
 
-  BKE_previewimg_free(&action->preview);
+  /* Free markers & preview. */
+  BLI_freelistN(&action.markers);
+  BKE_previewimg_free(&action.preview);
+
+  BLI_assert(action.is_empty());
 }
 
 static void action_foreach_id(ID *id, LibraryForeachIDData *data)
 {
-  bAction *act = reinterpret_cast<bAction *>(id);
-  const int flag = BKE_lib_query_foreachid_process_flags_get(data);
+  animrig::Action &action = reinterpret_cast<bAction *>(id)->wrap();
 
-  LISTBASE_FOREACH (FCurve *, fcu, &act->curves) {
-    BKE_LIB_FOREACHID_PROCESS_FUNCTION_CALL(data, BKE_fcurve_foreach_id(fcu, data));
+  /* When this function is called without the IDWALK_READONLY flag, calls to
+   * BKE_LIB_FOREACHID_PROCESS_... macros can change ID pointers. ID remapping is the main example
+   * of such use.
+   *
+   * Those ID pointer changes are not guaranteed to be valid, though. For example, the remapping
+   * can be used to replace one Mesh with another, but that neither means that the new Mesh is
+   * animated with the same Action, nor that the old Mesh is no longer animated by that Action. In
+   * other words, the best that can be done is to invalidate the cache.
+   *
+   * NOTE: early-returns by BKE_LIB_FOREACHID_PROCESS_... macros are forbidden in non-readonly
+   * cases (see #IDWALK_RET_STOP_ITER documentation). */
+
+  const int flag = BKE_lib_query_foreachid_process_flags_get(data);
+  const bool is_readonly = flag & IDWALK_READONLY;
+
+  constexpr int idwalk_flags = IDWALK_CB_NEVER_SELF | IDWALK_CB_LOOPBACK;
+
+  Main *bmain = BKE_lib_query_foreachid_process_main_get(data);
+
+  if (is_readonly) {
+    /* bmain is still necessary to have, because in the read-only mode the cache
+     * may still be dirty, and we have no way to check. Without that knowledge
+     * it's possible to report invalid pointers, which should be avoided at all
+     * time. */
+    if (bmain) {
+      for (animrig::Slot *slot : action.slots()) {
+        for (ID *slot_user : slot->users(*bmain)) {
+          BKE_LIB_FOREACHID_PROCESS_ID(data, slot_user, idwalk_flags);
+        }
+      }
+    }
+  }
+  else if (bmain && !bmain->is_action_slot_to_id_map_dirty) {
+    /* Because BKE_library_foreach_ID_link() can be called with bmain=nullptr,
+     * there are cases where we do not know which `main` this is called for. An example is in
+     * `deg_eval_copy_on_write.cc`, function `deg_expand_eval_copy_datablock`.
+     *
+     * Also if the cache is already dirty, we shouldn't loop over the pointers in there. If we
+     * were to call `slot->users(*bmain)` in that case, it would rebuild the cache. But then
+     * another ID using the same Action may also trigger a rebuild of the cache, because another
+     * user pointer changed, forcing way too many rebuilds of the user map.  */
+    bool should_invalidate = false;
+
+    for (animrig::Slot *slot : action.slots()) {
+      for (ID *slot_user : slot->runtime_users()) {
+        ID *old_pointer = slot_user;
+        BKE_LIB_FOREACHID_PROCESS_ID(data, slot_user, idwalk_flags);
+        /* If slot_user changed, the cache should be invalidated. */
+        should_invalidate |= (slot_user != old_pointer);
+      }
+    }
+
+    if (should_invalidate) {
+      animrig::Slot::users_invalidate(*bmain);
+    }
   }
 
-  LISTBASE_FOREACH (TimeMarker *, marker, &act->markers) {
+  /* Note that, even though `BKE_fcurve_foreach_id()` exists, it is not called here. That function
+   * is only relevant for drivers, but the F-Curves stored in an Action are always just animation
+   * data, not drivers. */
+
+  LISTBASE_FOREACH (TimeMarker *, marker, &action.markers) {
     BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, marker->camera, IDWALK_CB_NOP);
   }
 
+  /* Legacy IPO curves. */
   if (flag & IDWALK_DO_DEPRECATED_POINTERS) {
-    LISTBASE_FOREACH (bActionChannel *, chan, &act->chanbase) {
+    LISTBASE_FOREACH (bActionChannel *, chan, &action.chanbase) {
       BKE_LIB_FOREACHID_PROCESS_ID_NOCHECK(data, chan->ipo, IDWALK_CB_USER);
       LISTBASE_FOREACH (bConstraintChannel *, chan_constraint, &chan->constraintChannels) {
         BKE_LIB_FOREACHID_PROCESS_ID_NOCHECK(data, chan_constraint->ipo, IDWALK_CB_USER);
@@ -192,63 +289,181 @@ static void action_foreach_id(ID *id, LibraryForeachIDData *data)
   }
 }
 
+static void write_channelbag(BlendWriter *writer, animrig::ChannelBag &channelbag)
+{
+  BLO_write_struct(writer, ActionChannelBag, &channelbag);
+
+  Span<FCurve *> fcurves = channelbag.fcurves();
+  BLO_write_pointer_array(writer, fcurves.size(), fcurves.data());
+
+  for (FCurve *fcurve : fcurves) {
+    BLO_write_struct(writer, FCurve, fcurve);
+    BKE_fcurve_blend_write_data(writer, fcurve);
+  }
+}
+
+static void write_keyframe_strip(BlendWriter *writer, animrig::KeyframeStrip &key_strip)
+{
+  BLO_write_struct(writer, KeyframeActionStrip, &key_strip);
+
+  auto channelbags = key_strip.channelbags();
+  BLO_write_pointer_array(writer, channelbags.size(), channelbags.data());
+
+  for (animrig::ChannelBag *channelbag : channelbags) {
+    write_channelbag(writer, *channelbag);
+  }
+}
+
+static void write_strips(BlendWriter *writer, Span<animrig::Strip *> strips)
+{
+  BLO_write_pointer_array(writer, strips.size(), strips.data());
+
+  for (animrig::Strip *strip : strips) {
+    switch (strip->type()) {
+      case animrig::Strip::Type::Keyframe: {
+        auto &key_strip = strip->as<animrig::KeyframeStrip>();
+        write_keyframe_strip(writer, key_strip);
+      }
+    }
+  }
+}
+
+static void write_layers(BlendWriter *writer, Span<animrig::Layer *> layers)
+{
+  BLO_write_pointer_array(writer, layers.size(), layers.data());
+
+  for (animrig::Layer *layer : layers) {
+    BLO_write_struct(writer, ActionLayer, layer);
+    write_strips(writer, layer->strips());
+  }
+}
+
+static void write_slots(BlendWriter *writer, Span<animrig::Slot *> slots)
+{
+  BLO_write_pointer_array(writer, slots.size(), slots.data());
+  for (animrig::Slot *slot : slots) {
+    /* Make a shallow copy using the C type, so that no new runtime struct is
+     * allocated for the copy. */
+    ActionSlot shallow_copy = *slot;
+    shallow_copy.runtime = nullptr;
+
+    BLO_write_struct_at_address(writer, ActionSlot, slot, &shallow_copy);
+  }
+}
+
 static void action_blend_write(BlendWriter *writer, ID *id, const void *id_address)
 {
-  bAction *act = (bAction *)id;
+  animrig::Action &action = reinterpret_cast<bAction *>(id)->wrap();
 
-  BLO_write_id_struct(writer, bAction, id_address, &act->id);
-  BKE_id_blend_write(writer, &act->id);
+  BLO_write_id_struct(writer, bAction, id_address, &action.id);
+  BKE_id_blend_write(writer, &action.id);
 
-  BKE_fcurve_blend_write(writer, &act->curves);
+  /* Write layered Action data. */
+  write_layers(writer, action.layers());
+  write_slots(writer, action.slots());
 
-  LISTBASE_FOREACH (bActionGroup *, grp, &act->groups) {
+  /* Write legacy F-Curves & groups. */
+  BKE_fcurve_blend_write_listbase(writer, &action.curves);
+  LISTBASE_FOREACH (bActionGroup *, grp, &action.groups) {
     BLO_write_struct(writer, bActionGroup, grp);
   }
 
-  LISTBASE_FOREACH (TimeMarker *, marker, &act->markers) {
+  LISTBASE_FOREACH (TimeMarker *, marker, &action.markers) {
     BLO_write_struct(writer, TimeMarker, marker);
   }
 
-  BKE_previewimg_blend_write(writer, act->preview);
+  BKE_previewimg_blend_write(writer, action.preview);
+}
+
+static void read_channelbag(BlendDataReader *reader, animrig::ChannelBag &channelbag)
+{
+  BLO_read_pointer_array(reader, reinterpret_cast<void **>(&channelbag.fcurve_array));
+
+  for (int i = 0; i < channelbag.fcurve_array_num; i++) {
+    BLO_read_struct(reader, FCurve, &channelbag.fcurve_array[i]);
+    BKE_fcurve_blend_read_data(reader, channelbag.fcurve_array[i]);
+  }
+}
+
+static void read_keyframe_strip(BlendDataReader *reader, animrig::KeyframeStrip &strip)
+{
+  BLO_read_pointer_array(reader, reinterpret_cast<void **>(&strip.channelbags_array));
+
+  for (int i = 0; i < strip.channelbags_array_num; i++) {
+    BLO_read_struct(reader, ActionChannelBag, &strip.channelbags_array[i]);
+    ActionChannelBag *channelbag = strip.channelbags_array[i];
+    read_channelbag(reader, channelbag->wrap());
+  }
+}
+
+static void read_layers(BlendDataReader *reader, animrig::Action &action)
+{
+  BLO_read_pointer_array(reader, reinterpret_cast<void **>(&action.layer_array));
+
+  for (int layer_idx = 0; layer_idx < action.layer_array_num; layer_idx++) {
+    BLO_read_struct(reader, ActionLayer, &action.layer_array[layer_idx]);
+    ActionLayer *layer = action.layer_array[layer_idx];
+
+    BLO_read_pointer_array(reader, reinterpret_cast<void **>(&layer->strip_array));
+    for (int strip_idx = 0; strip_idx < layer->strip_array_num; strip_idx++) {
+      BLO_read_struct(reader, ActionStrip, &layer->strip_array[strip_idx]);
+      ActionStrip *dna_strip = layer->strip_array[strip_idx];
+      animrig::Strip &strip = dna_strip->wrap();
+
+      switch (strip.type()) {
+        case animrig::Strip::Type::Keyframe: {
+          read_keyframe_strip(reader, strip.as<animrig::KeyframeStrip>());
+        }
+      }
+    }
+  }
+}
+
+static void read_slots(BlendDataReader *reader, animrig::Action &action)
+{
+  BLO_read_pointer_array(reader, reinterpret_cast<void **>(&action.slot_array));
+
+  for (int i = 0; i < action.slot_array_num; i++) {
+    BLO_read_struct(reader, ActionSlot, &action.slot_array[i]);
+    action.slot_array[i]->wrap().blend_read_post();
+  }
 }
 
 static void action_blend_read_data(BlendDataReader *reader, ID *id)
 {
-  bAction *act = (bAction *)id;
+  animrig::Action &action = reinterpret_cast<bAction *>(id)->wrap();
 
-  BLO_read_list(reader, &act->curves);
-  BLO_read_list(reader, &act->chanbase); /* XXX deprecated - old animation system */
-  BLO_read_list(reader, &act->groups);
-  BLO_read_list(reader, &act->markers);
+  read_layers(reader, action);
+  read_slots(reader, action);
 
-  /* XXX deprecated - old animation system <<< */
-  LISTBASE_FOREACH (bActionChannel *, achan, &act->chanbase) {
-    BLO_read_data_address(reader, &achan->grp);
+  /* Read legacy data. */
+  BLO_read_struct_list(reader, FCurve, &action.curves);
+  BLO_read_struct_list(reader, bActionChannel, &action.chanbase);
+  BLO_read_struct_list(reader, bActionGroup, &action.groups);
+  BLO_read_struct_list(reader, TimeMarker, &action.markers);
 
-    BLO_read_list(reader, &achan->constraintChannels);
-  }
-  /* >>> XXX deprecated - old animation system */
-
-  BKE_fcurve_blend_read_data(reader, &act->curves);
-
-  LISTBASE_FOREACH (bActionGroup *, agrp, &act->groups) {
-    BLO_read_data_address(reader, &agrp->channels.first);
-    BLO_read_data_address(reader, &agrp->channels.last);
+  LISTBASE_FOREACH (bActionChannel *, achan, &action.chanbase) {
+    BLO_read_struct(reader, bActionGroup, &achan->grp);
+    BLO_read_struct_list(reader, bConstraintChannel, &achan->constraintChannels);
   }
 
-  BLO_read_data_address(reader, &act->preview);
-  BKE_previewimg_blend_read(reader, act->preview);
+  BKE_fcurve_blend_read_data_listbase(reader, &action.curves);
+
+  LISTBASE_FOREACH (bActionGroup *, agrp, &action.groups) {
+    BLO_read_struct(reader, FCurve, &agrp->channels.first);
+    BLO_read_struct(reader, FCurve, &agrp->channels.last);
+  }
+  /* End of reading legacy data. */
+
+  BLO_read_struct(reader, PreviewImage, &action.preview);
+  BKE_previewimg_blend_read(reader, action.preview);
 }
 
 static IDProperty *action_asset_type_property(const bAction *action)
 {
+  using namespace blender;
   const bool is_single_frame = BKE_action_has_single_frame(action);
-
-  IDPropertyTemplate idprop = {0};
-  idprop.i = is_single_frame;
-
-  IDProperty *property = IDP_New(IDP_INT, &idprop, "is_single_frame");
-  return property;
+  return bke::idprop::create("is_single_frame", int(is_single_frame)).release();
 }
 
 static void action_asset_metadata_ensure(void *asset_ptr, AssetMetaData *asset_data)
@@ -263,30 +478,38 @@ static void action_asset_metadata_ensure(void *asset_ptr, AssetMetaData *asset_d
 static AssetTypeInfo AssetType_AC = {
     /*pre_save_fn*/ action_asset_metadata_ensure,
     /*on_mark_asset_fn*/ action_asset_metadata_ensure,
+    /*on_clear_asset_fn*/ nullptr,
 };
+
+}  // namespace blender::bke
 
 IDTypeInfo IDType_ID_AC = {
     /*id_code*/ ID_AC,
     /*id_filter*/ FILTER_ID_AC,
+
+    /* This value will be set dynamically in `BKE_idtype_init()` to only include
+     * animatable ID types (see `animrig::Binding::users()`). */
+    /*dependencies_id_types*/ FILTER_ID_ALL,
+
     /*main_listbase_index*/ INDEX_ID_AC,
     /*struct_size*/ sizeof(bAction),
     /*name*/ "Action",
     /*name_plural*/ "actions",
     /*translation_context*/ BLT_I18NCONTEXT_ID_ACTION,
     /*flags*/ IDTYPE_FLAGS_NO_ANIMDATA,
-    /*asset_type_info*/ &AssetType_AC,
+    /*asset_type_info*/ &blender::bke::AssetType_AC,
 
     /*init_data*/ nullptr,
-    /*copy_data*/ action_copy_data,
-    /*free_data*/ action_free_data,
+    /*copy_data*/ blender::bke::action_copy_data,
+    /*free_data*/ blender::bke::action_free_data,
     /*make_local*/ nullptr,
-    /*foreach_id*/ action_foreach_id,
+    /*foreach_id*/ blender::bke::action_foreach_id,
     /*foreach_cache*/ nullptr,
     /*foreach_path*/ nullptr,
     /*owner_pointer_get*/ nullptr,
 
-    /*blend_write*/ action_blend_write,
-    /*blend_read_data*/ action_blend_read_data,
+    /*blend_write*/ blender::bke::action_blend_write,
+    /*blend_read_data*/ blender::bke::action_blend_read_data,
     /*blend_read_after_liblink*/ nullptr,
 
     /*blend_read_undo_preserve*/ nullptr,
@@ -348,8 +571,8 @@ void action_group_colors_sync(bActionGroup *grp, const bActionGroup *ref_grp)
   if (grp->customCol) {
     if (grp->customCol > 0) {
       /* copy theme colors on-to group's custom color in case user tries to edit color */
-      bTheme *btheme = static_cast<bTheme *>(U.themes.first);
-      ThemeWireColor *col_set = &btheme->tarm[(grp->customCol - 1)];
+      const bTheme *btheme = static_cast<const bTheme *>(U.themes.first);
+      const ThemeWireColor *col_set = &btheme->tarm[(grp->customCol - 1)];
 
       memcpy(&grp->cs, col_set, sizeof(ThemeWireColor));
     }
@@ -642,6 +865,7 @@ bPoseChannel *BKE_pose_channel_ensure(bPose *pose, const char *name)
   copy_v3_fl(chan->custom_scale_xyz, 1.0f);
   zero_v3(chan->custom_translation);
   zero_v3(chan->custom_rotation_euler);
+  chan->custom_shape_wire_width = 1.0f;
 
   /* init vars to prevent math errors */
   unit_qt(chan->quat);
@@ -1167,6 +1391,7 @@ void BKE_pose_channel_copy_data(bPoseChannel *pchan, const bPoseChannel *pchan_f
   copy_v3_v3(pchan->custom_scale_xyz, pchan_from->custom_scale_xyz);
   copy_v3_v3(pchan->custom_translation, pchan_from->custom_translation);
   copy_v3_v3(pchan->custom_rotation_euler, pchan_from->custom_rotation_euler);
+  pchan->custom_shape_wire_width = pchan_from->custom_shape_wire_width;
 
   pchan->drawflag = pchan_from->drawflag;
 }
@@ -1379,78 +1604,94 @@ bool BKE_action_has_single_frame(const bAction *act)
 }
 
 void BKE_action_frame_range_calc(const bAction *act,
-                                 bool include_modifiers,
+                                 const bool include_modifiers,
                                  float *r_start,
                                  float *r_end)
 {
-  float min = 999999999.0f, max = -999999999.0f;
-  short foundvert = 0, foundmod = 0;
-
-  if (act) {
-    LISTBASE_FOREACH (FCurve *, fcu, &act->curves) {
-      /* if curve has keyframes, consider them first */
-      if (fcu->totvert) {
-        float nmin, nmax;
-
-        /* get extents for this curve
-         * - no "selected only", since this is often used in the backend
-         * - no "minimum length" (we will apply this later), otherwise
-         *   single-keyframe curves will increase the overall length by
-         *   a phantom frame (#50354)
-         */
-        BKE_fcurve_calc_range(fcu, &nmin, &nmax, false);
-
-        /* compare to the running tally */
-        min = min_ff(min, nmin);
-        max = max_ff(max, nmax);
-
-        foundvert = 1;
-      }
-
-      /* if include_modifiers is enabled, need to consider modifiers too
-       * - only really care about the last modifier
-       */
-      if ((include_modifiers) && (fcu->modifiers.last)) {
-        FModifier *fcm = static_cast<FModifier *>(fcu->modifiers.last);
-
-        /* only use the maximum sensible limits of the modifiers if they are more extreme */
-        switch (fcm->type) {
-          case FMODIFIER_TYPE_LIMITS: /* Limits F-Modifier */
-          {
-            FMod_Limits *fmd = (FMod_Limits *)fcm->data;
-
-            if (fmd->flag & FCM_LIMIT_XMIN) {
-              min = min_ff(min, fmd->rect.xmin);
-            }
-            if (fmd->flag & FCM_LIMIT_XMAX) {
-              max = max_ff(max, fmd->rect.xmax);
-            }
-            break;
-          }
-          case FMODIFIER_TYPE_CYCLES: /* Cycles F-Modifier */
-          {
-            FMod_Cycles *fmd = (FMod_Cycles *)fcm->data;
-
-            if (fmd->before_mode != FCM_EXTRAPOLATE_NONE) {
-              min = MINAFRAMEF;
-            }
-            if (fmd->after_mode != FCM_EXTRAPOLATE_NONE) {
-              max = MAXFRAMEF;
-            }
-            break;
-          }
-            /* TODO: function modifier may need some special limits */
-
-          default: /* all other standard modifiers are on the infinite range... */
-            min = MINAFRAMEF;
-            max = MAXFRAMEF;
-            break;
-        }
-
-        foundmod = 1;
-      }
-    }
+  if (!act) {
+    *r_start = 0.0f;
+    *r_end = 0.0f;
+    return;
   }
+
+  float min = 999999999.0f, max = -999999999.0f;
+  bool foundvert = false, foundmod = false;
+
+#ifdef WITH_ANIM_BAKLAVA
+  const blender::animrig::Action &action = act->wrap();
+  for (const FCurve *fcu : fcurves_all(action)) {
+#else
+  LISTBASE_FOREACH (const FCurve *, fcu, &act->curves) {
+#endif /* WITH_ANIM_BAKLAVA */
+    /* if curve has keyframes, consider them first */
+    if (fcu->totvert) {
+      float nmin, nmax;
+
+      /* get extents for this curve
+       * - no "selected only", since this is often used in the backend
+       * - no "minimum length" (we will apply this later), otherwise
+       *   single-keyframe curves will increase the overall length by
+       *   a phantom frame (#50354)
+       */
+      BKE_fcurve_calc_range(fcu, &nmin, &nmax, false);
+
+      /* compare to the running tally */
+      min = min_ff(min, nmin);
+      max = max_ff(max, nmax);
+
+      foundvert = true;
+    }
+
+    /* if include_modifiers is enabled, need to consider modifiers too
+     * - only really care about the last modifier
+     */
+    if ((include_modifiers) && (fcu->modifiers.last)) {
+      FModifier *fcm = static_cast<FModifier *>(fcu->modifiers.last);
+
+      /* only use the maximum sensible limits of the modifiers if they are more extreme */
+      switch (fcm->type) {
+        case FMODIFIER_TYPE_LIMITS: /* Limits F-Modifier */
+        {
+          FMod_Limits *fmd = (FMod_Limits *)fcm->data;
+
+          if (fmd->flag & FCM_LIMIT_XMIN) {
+            min = min_ff(min, fmd->rect.xmin);
+          }
+          if (fmd->flag & FCM_LIMIT_XMAX) {
+            max = max_ff(max, fmd->rect.xmax);
+          }
+          break;
+        }
+        case FMODIFIER_TYPE_CYCLES: /* Cycles F-Modifier */
+        {
+          FMod_Cycles *fmd = (FMod_Cycles *)fcm->data;
+
+          if (fmd->before_mode != FCM_EXTRAPOLATE_NONE) {
+            min = MINAFRAMEF;
+          }
+          if (fmd->after_mode != FCM_EXTRAPOLATE_NONE) {
+            max = MAXFRAMEF;
+          }
+          break;
+        }
+          /* TODO: function modifier may need some special limits */
+
+        default: /* all other standard modifiers are on the infinite range... */
+          min = MINAFRAMEF;
+          max = MAXFRAMEF;
+          break;
+      }
+
+      foundmod = true;
+    }
+
+    /* This block is here just so that editors/IDEs do not get confused about the two opening curly
+     * braces in the `#ifdef WITH_ANIM_BAKLAVA` block above, but one closing curly brace here. */
+#ifdef WITH_ANIM_BAKLAVA
+  }
+#else
+  }
+#endif /* WITH_ANIM_BAKLAVA */
 
   if (foundvert || foundmod) {
     *r_start = max_ff(min, MINAFRAMEF);
@@ -1717,7 +1958,7 @@ void what_does_obaction(Object *ob,
   workob->runtime = &workob_runtime;
 
   /* init workob */
-  copy_m4_m4(workob->object_to_world, ob->object_to_world);
+  copy_m4_m4(workob->runtime->object_to_world.ptr(), ob->object_to_world().ptr());
   copy_m4_m4(workob->parentinv, ob->parentinv);
   copy_m4_m4(workob->constinv, ob->constinv);
   workob->parent = ob->parent;
@@ -1777,7 +2018,12 @@ void what_does_obaction(Object *ob,
 
     /* execute effects of Action on to workob (or its PoseChannels) */
     BKE_animsys_evaluate_animdata(&workob->id, &adt, anim_eval_context, ADT_RECALC_ANIM, false);
+
+    /* Ensure stack memory set here isn't accessed later, relates to !118847. */
+    workob->adt = nullptr;
   }
+  /* Ensure stack memory set here isn't accessed later, see !118847. */
+  workob->runtime = nullptr;
 }
 
 void BKE_pose_check_uids_unique_and_report(const bPose *pose)
@@ -1862,8 +2108,8 @@ void BKE_pose_blend_read_data(BlendDataReader *reader, ID *id_owner, bPose *pose
     return;
   }
 
-  BLO_read_list(reader, &pose->chanbase);
-  BLO_read_list(reader, &pose->agroups);
+  BLO_read_struct_list(reader, bPoseChannel, &pose->chanbase);
+  BLO_read_struct_list(reader, bActionGroup, &pose->agroups);
 
   pose->chanhash = nullptr;
   pose->chan_array = nullptr;
@@ -1873,19 +2119,19 @@ void BKE_pose_blend_read_data(BlendDataReader *reader, ID *id_owner, bPose *pose
     BKE_pose_channel_session_uid_generate(pchan);
 
     pchan->bone = nullptr;
-    BLO_read_data_address(reader, &pchan->parent);
-    BLO_read_data_address(reader, &pchan->child);
-    BLO_read_data_address(reader, &pchan->custom_tx);
+    BLO_read_struct(reader, bPoseChannel, &pchan->parent);
+    BLO_read_struct(reader, bPoseChannel, &pchan->child);
+    BLO_read_struct(reader, bPoseChannel, &pchan->custom_tx);
 
-    BLO_read_data_address(reader, &pchan->bbone_prev);
-    BLO_read_data_address(reader, &pchan->bbone_next);
+    BLO_read_struct(reader, bPoseChannel, &pchan->bbone_prev);
+    BLO_read_struct(reader, bPoseChannel, &pchan->bbone_next);
 
     BKE_constraint_blend_read_data(reader, id_owner, &pchan->constraints);
 
-    BLO_read_data_address(reader, &pchan->prop);
+    BLO_read_struct(reader, IDProperty, &pchan->prop);
     IDP_BlendDataRead(reader, &pchan->prop);
 
-    BLO_read_data_address(reader, &pchan->mpath);
+    BLO_read_struct(reader, bMotionPath, &pchan->mpath);
     if (pchan->mpath) {
       animviz_motionpath_blend_read_data(reader, pchan->mpath);
     }

@@ -8,14 +8,15 @@
 
 #pragma once
 
-#include "BKE_lib_id.hh"
-
 #include "BLI_utility_mixins.hh"
 
 #include "obj_import_mtl.hh"
 #include "obj_import_objects.hh"
 
+struct Main;
+struct Mesh;
 struct Material;
+struct Object;
 
 namespace blender::io::obj {
 
@@ -33,10 +34,12 @@ class MeshFromGeometry : NonMovable, NonCopyable {
   {
   }
 
-  Object *create_mesh(Main *bmain,
-                      Map<std::string, std::unique_ptr<MTLMaterial>> &materials,
-                      Map<std::string, Material *> &created_materials,
-                      const OBJImportParams &import_params);
+  Mesh *create_mesh(const OBJImportParams &import_params);
+
+  Object *create_mesh_object(Main *bmain,
+                             Map<std::string, std::unique_ptr<MTLMaterial>> &materials,
+                             Map<std::string, Material *> &created_materials,
+                             const OBJImportParams &import_params);
 
  private:
   /**
@@ -69,6 +72,8 @@ class MeshFromGeometry : NonMovable, NonCopyable {
   void create_normals(Mesh *mesh);
   void create_colors(Mesh *mesh);
   void create_vertex_groups(Object *obj);
+
+  bool has_normals() const;
 };
 
 }  // namespace blender::io::obj

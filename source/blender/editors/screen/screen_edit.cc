@@ -14,22 +14,21 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_userdef_types.h"
-#include "DNA_workspace_types.h"
 
 #include "BLI_blenlib.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
-#include "BKE_global.h"
+#include "BKE_global.hh"
 #include "BKE_icons.h"
 #include "BKE_image.h"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
-#include "BKE_scene.h"
+#include "BKE_scene.hh"
 #include "BKE_screen.hh"
 #include "BKE_sound.h"
-#include "BKE_workspace.h"
+#include "BKE_workspace.hh"
 
 #include "WM_api.hh"
 #include "WM_types.hh"
@@ -39,6 +38,9 @@
 #include "ED_screen.hh"
 #include "ED_screen_types.hh"
 
+#include "RNA_access.hh"
+#include "RNA_enum_types.hh"
+
 #include "UI_interface.hh"
 
 #include "WM_message.hh"
@@ -46,7 +48,7 @@
 
 #include "DEG_depsgraph_query.hh"
 
-#include "screen_intern.h" /* own module include */
+#include "screen_intern.hh" /* own module include */
 
 /* adds no space data */
 static ScrArea *screen_addarea_ex(ScrAreaMap *area_map,
@@ -756,6 +758,9 @@ static void screen_regions_poll(bContext *C, const wmWindow *win, bScreen *scree
       if (region_poll(C, screen, area, region) == false) {
         region->flag |= RGN_FLAG_POLL_FAILED;
       }
+      else if (region->type && region->type->on_poll_success) {
+        region->type->on_poll_success(C, region);
+      }
 
       if (old_region_flag != region->flag) {
         any_changed = true;
@@ -806,6 +811,18 @@ void ED_region_exit(bContext *C, ARegion *region)
 
   WM_event_remove_handlers(C, &region->handlers);
   WM_event_modal_handler_region_replace(win, region, nullptr);
+
+  if (region->regiontype == RGN_TYPE_TEMPORARY) {
+    /* This may be a popup region such as a popover or splash screen.
+     * In the case of popups which spawn popups it's possible for
+     * the parent popup to be freed *before* a popup which created it.
+     * The child may have a reference to the freed parent unless cleared here, see: #122132.
+     *
+     * Having parent popups freed before the popups they spawn could be investigated although
+     * they're not technically nested as they're both stored in #Screen::regionbase. */
+    WM_event_ui_handler_region_popup_replace(win, region, nullptr);
+  }
+
   WM_draw_region_free(region);
   /* The region is not in a state that it can be visible in anymore. Reinitializing is needed. */
   region->visible = false;
@@ -886,6 +903,28 @@ void ED_screen_exit(bContext *C, wmWindow *window, bScreen *screen)
     /* none otherwise */
     CTX_wm_window_set(C, nullptr);
   }
+}
+
+blender::StringRefNull ED_area_name(const ScrArea *area)
+{
+  if (area->type && area->type->space_name_get) {
+    return area->type->space_name_get(area);
+  }
+
+  const int index = RNA_enum_from_value(rna_enum_space_type_items, area->spacetype);
+  const EnumPropertyItem item = rna_enum_space_type_items[index];
+  return item.name;
+}
+
+int ED_area_icon(const ScrArea *area)
+{
+  if (area->type && area->type->space_icon_get) {
+    return area->type->space_icon_get(area);
+  }
+
+  const int index = RNA_enum_from_value(rna_enum_space_type_items, area->spacetype);
+  const EnumPropertyItem item = rna_enum_space_type_items[index];
+  return item.icon;
 }
 
 /* *********************************** */
@@ -1796,7 +1835,7 @@ void ED_update_for_newframe(Main *bmain, Depsgraph *depsgraph)
     LISTBASE_FOREACH (bScreen *, screen, &bmain->screens) {
       BKE_screen_view3d_scene_sync(screen, scene);
     }
-    DEG_id_tag_update(&scene->id, ID_RECALC_COPY_ON_WRITE);
+    DEG_id_tag_update(&scene->id, ID_RECALC_SYNC_TO_EVAL);
   }
 #endif
 

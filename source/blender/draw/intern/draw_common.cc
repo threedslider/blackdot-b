@@ -8,19 +8,19 @@
 
 #include "DRW_render.hh"
 
-#include "GPU_matrix.h"
-#include "GPU_shader.h"
-#include "GPU_texture.h"
+#include "GPU_matrix.hh"
+#include "GPU_shader.hh"
+#include "GPU_texture.hh"
 
 #include "UI_resources.hh"
 
 #include "BLI_math_color.h"
 
 #include "BKE_colorband.hh"
-#include "BKE_global.h"
+#include "BKE_global.hh"
 #include "BKE_object.hh"
 
-#include "draw_common.h"
+#include "draw_common_c.hh"
 
 #if 0
 #  define UI_COLOR_RGB_FROM_U8(r, g, b, v4) \
@@ -37,7 +37,7 @@ DRW_Global G_draw{};
 static bool weight_ramp_custom = false;
 static ColorBand weight_ramp_copy;
 
-static GPUTexture *DRW_create_weight_colorramp_texture(void);
+static GPUTexture *DRW_create_weight_colorramp_texture();
 
 void DRW_globals_update()
 {
@@ -142,6 +142,8 @@ void DRW_globals_update()
   UI_GetThemeColor4fv(TH_ACTIVE_SPLINE, gb->color_active_spline);
 
   UI_GetThemeColor4fv(TH_CFRAME, gb->color_current_frame);
+  UI_GetThemeColor4fv(TH_FRAME_BEFORE, gb->color_before_frame);
+  UI_GetThemeColor4fv(TH_FRAME_AFTER, gb->color_after_frame);
 
   /* Meta-ball. */
   UI_COLOR_RGBA_FROM_U8(0xA0, 0x30, 0x30, 0xFF, gb->color_mball_radius);

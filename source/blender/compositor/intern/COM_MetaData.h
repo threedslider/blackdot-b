@@ -36,7 +36,17 @@ class MetaData {
                              const blender::StringRef value);
 
  public:
+  /* The pixels in the result represents data, which is not to be color-managed. */
+  bool is_data = false;
+  /* The result stores a 4D vector as opposed to a 3D vector. This is the case for things like
+   * velocity passes, and we need to mark them as 4D in order to write them to file correctly. This
+   * field can be ignored for results that are not of type Vector. */
+  bool is_4d_vector = false;
+
   void add(const blender::StringRef key, const blender::StringRef value);
+
+  bool is_cryptomatte_layer() const;
+
   /**
    * Replace the hash neutral cryptomatte keys with hashed versions.
    *
@@ -45,8 +55,10 @@ class MetaData {
    */
   void replace_hash_neutral_cryptomatte_keys(const blender::StringRef layer_name);
   void add_to_render_result(RenderResult *render_result) const;
+
   /* Invokes the given callback on each entry of the meta data. */
   void for_each_entry(FunctionRef<void(const std::string &, const std::string &)> callback) const;
+
 #ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("COM:MetaData")
 #endif

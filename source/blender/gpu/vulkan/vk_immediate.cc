@@ -11,6 +11,7 @@
 #include "vk_immediate.hh"
 #include "vk_backend.hh"
 #include "vk_data_conversion.hh"
+#include "vk_framebuffer.hh"
 #include "vk_state_manager.hh"
 
 namespace blender::gpu {
@@ -21,7 +22,7 @@ VKImmediate::~VKImmediate() {}
 uchar *VKImmediate::begin()
 {
   VKContext &context = *VKContext::get();
-  const VKWorkarounds &workarounds = VKBackend::get().device_get().workarounds_get();
+  const VKWorkarounds &workarounds = VKBackend::get().device.workarounds_get();
   vertex_format_converter.init(&vertex_format, workarounds);
   const size_t bytes_needed = vertex_buffer_size(&vertex_format_converter.device_format_get(),
                                                  vertex_len);
@@ -52,14 +53,22 @@ void VKImmediate::end()
 
   VKContext &context = *VKContext::get();
   BLI_assert(context.shader == unwrap(shader));
+  render_graph::VKResourceAccessInfo &resource_access_info = context.update_and_get_access_info();
   VKStateManager &state_manager = context.state_manager_get();
   state_manager.apply_state();
-  state_manager.apply_bindings();
   vertex_attributes_.update_bindings(*this);
-  context.bind_graphics_pipeline(prim_type, vertex_attributes_);
-  vertex_attributes_.bind(context);
+  vertex_attributes_.ensure_vbos_uploaded();
+  context.active_framebuffer_get()->rendering_ensure(context);
 
-  context.command_buffers_get().draw(0, vertex_idx, 0, 1);
+  render_graph::VKDrawNode::CreateInfo draw(resource_access_info);
+  draw.node_data.vertex_count = vertex_idx;
+  draw.node_data.instance_count = 1;
+  draw.node_data.first_vertex = 0;
+  draw.node_data.first_instance = 0;
+  vertex_attributes_.bind(draw.node_data.vertex_buffers);
+  context.update_pipeline_data(prim_type, vertex_attributes_, draw.node_data.pipeline_data);
+
+  context.render_graph.add_node(draw);
 
   buffer_offset_ += current_subbuffer_len_;
   current_subbuffer_len_ = 0;

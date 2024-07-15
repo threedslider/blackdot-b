@@ -20,7 +20,7 @@
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
-#include "BKE_fcurve.h"
+#include "BKE_fcurve.hh"
 #include "BKE_lib_query.hh"
 #include "BKE_lib_remap.hh"
 #include "BKE_screen.hh"
@@ -31,9 +31,8 @@
 #include "ED_space_api.hh"
 #include "ED_time_scrub_ui.hh"
 
-#include "GPU_framebuffer.h"
-#include "GPU_immediate.h"
-#include "GPU_state.h"
+#include "GPU_immediate.hh"
+#include "GPU_state.hh"
 
 #include "WM_api.hh"
 #include "WM_message.hh"
@@ -49,7 +48,7 @@
 
 #include "BLO_read_write.hh"
 
-#include "graph_intern.h" /* own include */
+#include "graph_intern.hh" /* own include */
 
 /* ******************** default callbacks for ipo space ***************** */
 
@@ -243,8 +242,10 @@ static void graph_main_region_draw(const bContext *C, ARegion *region)
     graph_draw_curves(&ac, sipo, region, 1);
 
     /* XXX(ton): the slow way to set tot rect... but for nice sliders needed. */
+    /* Excluding handles from the calculation to save performance. This cuts the time it takes for
+     * this function to run in half which is a major performance bottleneck on heavy scenes.  */
     get_graph_keyframe_extents(
-        &ac, &v2d->tot.xmin, &v2d->tot.xmax, &v2d->tot.ymin, &v2d->tot.ymax, false, true);
+        &ac, &v2d->tot.xmin, &v2d->tot.xmax, &v2d->tot.ymin, &v2d->tot.ymax, false, false);
     /* extra offset so that these items are visible */
     v2d->tot.xmin -= 10.0f;
     v2d->tot.xmax += 10.0f;
@@ -517,10 +518,10 @@ static void graph_region_message_subscribe(const wmRegionMessageSubscribeParams 
   {
     bool use_preview = (scene->r.flag & SCER_PRV_RANGE);
     const PropertyRNA *props[] = {
-        use_preview ? &rna_Scene_frame_preview_start : &rna_Scene_frame_start,
-        use_preview ? &rna_Scene_frame_preview_end : &rna_Scene_frame_end,
-        &rna_Scene_use_preview_range,
-        &rna_Scene_frame_current,
+        use_preview ? rna_Scene_frame_preview_start : rna_Scene_frame_start,
+        use_preview ? rna_Scene_frame_preview_end : rna_Scene_frame_end,
+        rna_Scene_use_preview_range,
+        rna_Scene_frame_current,
     };
 
     PointerRNA idptr = RNA_id_pointer_create(&scene->id);
@@ -531,7 +532,7 @@ static void graph_region_message_subscribe(const wmRegionMessageSubscribeParams 
   }
 
   /* All dopesheet filter settings, etc. affect the drawing of this editor,
-   * also same applies for all animation-related datatypes that may appear here,
+   * also same applies for all animation-related data-types that may appear here,
    * so just whitelist the entire structs for updates
    */
   {
@@ -552,7 +553,6 @@ static void graph_region_message_subscribe(const wmRegionMessageSubscribeParams 
         &RNA_FModifierGenerator,
         &RNA_FModifierLimits,
         &RNA_FModifierNoise,
-        &RNA_FModifierPython,
         &RNA_FModifierStepped,
     };
 
@@ -671,6 +671,8 @@ static void graph_refresh_fcurve_colors(const bContext *C)
 
   /* loop over F-Curves, assigning colors */
   for (ale = static_cast<bAnimListElem *>(anim_data.first), i = 0; ale; ale = ale->next, i++) {
+    BLI_assert_msg(ELEM(ale->type, ANIMTYPE_FCURVE, ANIMTYPE_NLACURVE),
+                   "Expecting only FCurves when using the ANIMFILTER_FCURVESONLY filter");
     FCurve *fcu = (FCurve *)ale->data;
 
     /* set color of curve here */
@@ -813,15 +815,17 @@ static void graph_refresh(const bContext *C, ScrArea *area)
   graph_refresh_fcurve_colors(C);
 }
 
-static void graph_id_remap(ScrArea * /*area*/, SpaceLink *slink, const IDRemapper *mappings)
+static void graph_id_remap(ScrArea * /*area*/,
+                           SpaceLink *slink,
+                           const blender::bke::id::IDRemapper &mappings)
 {
   SpaceGraph *sgraph = (SpaceGraph *)slink;
   if (!sgraph->ads) {
     return;
   }
 
-  BKE_id_remapper_apply(mappings, (ID **)&sgraph->ads->filter_grp, ID_REMAP_APPLY_DEFAULT);
-  BKE_id_remapper_apply(mappings, (ID **)&sgraph->ads->source, ID_REMAP_APPLY_DEFAULT);
+  mappings.apply(reinterpret_cast<ID **>(&sgraph->ads->filter_grp), ID_REMAP_APPLY_DEFAULT);
+  mappings.apply(reinterpret_cast<ID **>(&sgraph->ads->source), ID_REMAP_APPLY_DEFAULT);
 }
 
 static void graph_foreach_id(SpaceLink *space_link, LibraryForeachIDData *data)
@@ -835,8 +839,8 @@ static void graph_foreach_id(SpaceLink *space_link, LibraryForeachIDData *data)
     return;
   }
 
-  BKE_LIB_FOREACHID_PROCESS_ID(data, sgraph->ads->source, IDWALK_CB_NOP);
-  BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, sgraph->ads->filter_grp, IDWALK_CB_NOP);
+  BKE_LIB_FOREACHID_PROCESS_ID(data, sgraph->ads->source, IDWALK_CB_DIRECT_WEAK_LINK);
+  BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, sgraph->ads->filter_grp, IDWALK_CB_DIRECT_WEAK_LINK);
 
   if (!is_readonly) {
     /* Force recalc of list of channels (i.e. including calculating F-Curve colors) to
@@ -864,11 +868,27 @@ static void graph_space_subtype_item_extend(bContext * /*C*/,
   RNA_enum_items_add(item, totitem, rna_enum_space_graph_mode_items);
 }
 
+static blender::StringRefNull graph_space_name_get(const ScrArea *area)
+{
+  SpaceGraph *sgraph = static_cast<SpaceGraph *>(area->spacedata.first);
+  const int index = RNA_enum_from_value(rna_enum_space_graph_mode_items, sgraph->mode);
+  const EnumPropertyItem item = rna_enum_space_graph_mode_items[index];
+  return item.name;
+}
+
+static int graph_space_icon_get(const ScrArea *area)
+{
+  SpaceGraph *sgraph = static_cast<SpaceGraph *>(area->spacedata.first);
+  const int index = RNA_enum_from_value(rna_enum_space_graph_mode_items, sgraph->mode);
+  const EnumPropertyItem item = rna_enum_space_graph_mode_items[index];
+  return item.icon;
+}
+
 static void graph_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl)
 {
   SpaceGraph *sipo = (SpaceGraph *)sl;
 
-  BLO_read_data_address(reader, &sipo->ads);
+  BLO_read_struct(reader, bDopeSheet, &sipo->ads);
   memset(&sipo->runtime, 0x0, sizeof(sipo->runtime));
 }
 
@@ -910,6 +930,8 @@ void ED_spacetype_ipo()
   st->space_subtype_item_extend = graph_space_subtype_item_extend;
   st->space_subtype_get = graph_space_subtype_get;
   st->space_subtype_set = graph_space_subtype_set;
+  st->space_name_get = graph_space_name_get;
+  st->space_icon_get = graph_space_icon_get;
   st->blend_read_data = graph_space_blend_read_data;
   st->blend_read_after_liblink = nullptr;
   st->blend_write = graph_space_blend_write;

@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "CLG_log.h"
+
 #include "MEM_guardedalloc.h"
 
 #include "DNA_scene_types.h"
@@ -20,27 +22,29 @@
 #include "DNA_workspace_types.h"
 
 #include "BLI_fileops.h"
+#include "BLI_function_ref.hh"
 #include "BLI_listbase.h"
 #include "BLI_path_util.h"
 #include "BLI_string.h"
 #include "BLI_system.h"
 #include "BLI_time.h"
 #include "BLI_utildefines.h"
+#include "BLI_vector_set.hh"
+
+#include "BLT_translation.hh"
 
 #include "IMB_colormanagement.hh"
 
 #include "BKE_addon.h"
 #include "BKE_appdir.hh"
-#include "BKE_blender.h"
+#include "BKE_blender.hh"
 #include "BKE_blender_version.h"
 #include "BKE_blendfile.hh"
-#include "BKE_bpath.h"
+#include "BKE_bpath.hh"
 #include "BKE_colorband.hh"
 #include "BKE_context.hh"
-#include "BKE_global.h"
+#include "BKE_global.hh"
 #include "BKE_idtype.hh"
-#include "BKE_ipo.h"
-#include "BKE_keyconfig.h"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_override.hh"
@@ -50,23 +54,25 @@
 #include "BKE_main_idmap.hh"
 #include "BKE_main_namemap.hh"
 #include "BKE_preferences.h"
-#include "BKE_report.h"
-#include "BKE_scene.h"
+#include "BKE_report.hh"
+#include "BKE_scene.hh"
 #include "BKE_screen.hh"
 #include "BKE_studiolight.h"
 #include "BKE_undo_system.hh"
-#include "BKE_workspace.h"
+#include "BKE_workspace.hh"
 
-#include "BLO_readfile.h"
+#include "BLO_read_write.hh"
+#include "BLO_readfile.hh"
+#include "BLO_userdef_default.h"
 #include "BLO_writefile.hh"
-
-#include "RNA_access.hh"
 
 #include "RE_pipeline.h"
 
 #ifdef WITH_PYTHON
 #  include "BPY_extern.h"
 #endif
+
+using namespace blender::bke;
 
 /* -------------------------------------------------------------------- */
 /** \name Blend/Library Paths
@@ -227,12 +233,12 @@ struct ReuseOldBMainData {
   /** Data generated and used by calling WM code to handle keeping WM and UI IDs as best as
    * possible across file reading.
    *
-   * \note: May be null in undo (memfile) case.. */
+   * \note May be null in undo (memfile) case. */
   BlendFileReadWMSetupData *wm_setup_data;
 
   /** Storage for all remapping rules (old_id -> new_id) required by the preservation of old IDs
    * into the new Main. */
-  IDRemapper *remapper;
+  id::IDRemapper *remapper;
   bool is_libraries_remapped;
 
   /** Used to find matching IDs by name/lib in new main, to remap ID usages of data ported over
@@ -250,25 +256,25 @@ struct ReuseOldBMainData {
  * double of a linked data as a local one, without any known relationships between them. In
  * practice, this latter case is not expected to commonly happen.
  */
-static IDRemapper *reuse_bmain_data_remapper_ensure(ReuseOldBMainData *reuse_data)
+static id::IDRemapper &reuse_bmain_data_remapper_ensure(ReuseOldBMainData *reuse_data)
 {
   if (reuse_data->is_libraries_remapped) {
-    return reuse_data->remapper;
+    return *reuse_data->remapper;
   }
 
   if (reuse_data->remapper == nullptr) {
-    reuse_data->remapper = BKE_id_remapper_create();
+    reuse_data->remapper = MEM_new<id::IDRemapper>(__func__);
   }
 
   Main *new_bmain = reuse_data->new_bmain;
   Main *old_bmain = reuse_data->old_bmain;
-  IDRemapper *remapper = reuse_data->remapper;
+  id::IDRemapper &remapper = *reuse_data->remapper;
 
   LISTBASE_FOREACH (Library *, old_lib_iter, &old_bmain->libraries) {
     /* In case newly opened `new_bmain` is a library of the `old_bmain`, remap it to null, since a
      * file should never ever have linked data from itself. */
-    if (STREQ(old_lib_iter->filepath_abs, new_bmain->filepath)) {
-      BKE_id_remapper_add(remapper, &old_lib_iter->id, nullptr);
+    if (STREQ(old_lib_iter->runtime.filepath_abs, new_bmain->filepath)) {
+      remapper.add(&old_lib_iter->id, nullptr);
       continue;
     }
 
@@ -277,23 +283,22 @@ static IDRemapper *reuse_bmain_data_remapper_ensure(ReuseOldBMainData *reuse_dat
      *  - This code is only executed once for every file reading (not on undos).
      */
     LISTBASE_FOREACH (Library *, new_lib_iter, &new_bmain->libraries) {
-      if (!STREQ(old_lib_iter->filepath_abs, new_lib_iter->filepath_abs)) {
+      if (!STREQ(old_lib_iter->runtime.filepath_abs, new_lib_iter->runtime.filepath_abs)) {
         continue;
       }
 
-      BKE_id_remapper_add(remapper, &old_lib_iter->id, &new_lib_iter->id);
+      remapper.add(&old_lib_iter->id, &new_lib_iter->id);
       break;
     }
   }
 
   reuse_data->is_libraries_remapped = true;
-  return reuse_data->remapper;
+  return *reuse_data->remapper;
 }
 
-static bool reuse_bmain_data_remapper_is_id_remapped(IDRemapper *remapper, ID *id)
+static bool reuse_bmain_data_remapper_is_id_remapped(id::IDRemapper &remapper, ID *id)
 {
-  IDRemapperApplyResult result = BKE_id_remapper_get_mapping_result(
-      remapper, id, ID_REMAP_APPLY_DEFAULT, nullptr);
+  IDRemapperApplyResult result = remapper.get_mapping_result(id, ID_REMAP_APPLY_DEFAULT, nullptr);
   if (ELEM(result, ID_REMAP_RESULT_SOURCE_REMAPPED, ID_REMAP_RESULT_SOURCE_UNASSIGNED)) {
     /* ID is already remapped to its matching ID in the new main, or explicitly remapped to null,
      * nothing else to do here. */
@@ -305,6 +310,205 @@ static bool reuse_bmain_data_remapper_is_id_remapped(IDRemapper *remapper, ID *i
   return false;
 }
 
+static bool reuse_bmain_move_id(ReuseOldBMainData *reuse_data,
+                                ID *id,
+                                Library *lib,
+                                const bool reuse_existing)
+{
+  id::IDRemapper &remapper = reuse_bmain_data_remapper_ensure(reuse_data);
+  Main *new_bmain = reuse_data->new_bmain;
+  Main *old_bmain = reuse_data->old_bmain;
+  ListBase *new_lb = which_libbase(new_bmain, GS(id->name));
+  ListBase *old_lb = which_libbase(old_bmain, GS(id->name));
+
+  if (reuse_existing) {
+    /* A 'new' version of the same data may already exist in new_bmain, in the rare case
+     * that the same asset blend file was linked explicitly into the blend file we are loading.
+     * Don't move the old linked ID, but remap its usages to the new one instead. */
+    LISTBASE_FOREACH_BACKWARD (ID *, id_iter, new_lb) {
+      if (!ELEM(id_iter->lib, id->lib, lib)) {
+        continue;
+      }
+      if (!STREQ(id_iter->name + 2, id->name + 2)) {
+        continue;
+      }
+
+      remapper.add(id, id_iter);
+      return false;
+    }
+  }
+
+  /* If ID is already in the new_bmain, this should not have been called. */
+  BLI_assert(BLI_findindex(new_lb, id) < 0);
+  BLI_assert(BLI_findindex(old_lb, id) >= 0);
+
+  /* Move from one list to another, and ensure name is valid. */
+  BLI_remlink_safe(old_lb, id);
+  BKE_main_namemap_remove_name(old_bmain, id, id->name + 2);
+
+  id->lib = lib;
+  BLI_addtail(new_lb, id);
+  BKE_id_new_name_validate(new_bmain, new_lb, id, nullptr, true);
+  BKE_lib_libblock_session_uid_renew(id);
+
+  /* Remap to itself, to avoid re-processing this ID again. */
+  remapper.add(id, id);
+  return true;
+}
+
+static Library *reuse_bmain_data_dependencies_new_library_get(ReuseOldBMainData *reuse_data,
+                                                              Library *old_lib)
+{
+  const id::IDRemapper &remapper = reuse_bmain_data_remapper_ensure(reuse_data);
+  Library *new_lib = old_lib;
+  IDRemapperApplyResult result = remapper.apply(reinterpret_cast<ID **>(&new_lib),
+                                                ID_REMAP_APPLY_DEFAULT);
+
+  switch (result) {
+    case ID_REMAP_RESULT_SOURCE_UNAVAILABLE: {
+      /* Move library to new bmain.
+       * There should be no filepath conflicts, as #reuse_bmain_data_remapper_ensure has
+       * already remapped existing libraries with matching filepath. */
+      reuse_bmain_move_id(reuse_data, &old_lib->id, nullptr, false);
+      return old_lib;
+    }
+    case ID_REMAP_RESULT_SOURCE_NOT_MAPPABLE: {
+      BLI_assert_unreachable();
+      return nullptr;
+    }
+    case ID_REMAP_RESULT_SOURCE_REMAPPED: {
+      /* Already in new bmain, only transfer flags. */
+      new_lib->runtime.tag |= old_lib->runtime.tag &
+                              (LIBRARY_ASSET_EDITABLE | LIBRARY_ASSET_FILE_WRITABLE);
+      return new_lib;
+    }
+    case ID_REMAP_RESULT_SOURCE_UNASSIGNED: {
+      /* Happens when the library is the newly opened blend file. */
+      return nullptr;
+    }
+  }
+
+  BLI_assert_unreachable();
+  return nullptr;
+}
+
+static int reuse_editable_asset_bmain_data_dependencies_process_cb(
+    LibraryIDLinkCallbackData *cb_data)
+{
+  ID *id = *cb_data->id_pointer;
+
+  if (id == nullptr) {
+    return IDWALK_RET_NOP;
+  }
+
+  if (GS(id->name) == ID_LI) {
+    /* Libraries are handled separately. */
+    return IDWALK_RET_STOP_RECURSION;
+  }
+
+  ReuseOldBMainData *reuse_data = static_cast<ReuseOldBMainData *>(cb_data->user_data);
+
+  /* First check if it has already been remapped. */
+  id::IDRemapper &remapper = reuse_bmain_data_remapper_ensure(reuse_data);
+  if (reuse_bmain_data_remapper_is_id_remapped(remapper, id)) {
+    return IDWALK_RET_STOP_RECURSION;
+  }
+
+  if (id->lib == nullptr) {
+    /* There should be no links to local datablocks from linked editable data. */
+    remapper.add(id, nullptr);
+    BLI_assert_unreachable();
+    return IDWALK_RET_STOP_RECURSION;
+  }
+
+  /* Only preserve specific datablock types. */
+  if (!ID_TYPE_SUPPORTS_ASSET_EDITABLE(GS(id->name))) {
+    remapper.add(id, nullptr);
+    return IDWALK_RET_STOP_RECURSION;
+  }
+
+  /* There may be a new library pointer in new_bmain, matching a library in old_bmain, even
+   * though pointer values are not the same. So we need to check new linked IDs in new_bmain
+   * against both potential library pointers. */
+  Library *old_id_new_lib = reuse_bmain_data_dependencies_new_library_get(reuse_data, id->lib);
+
+  /* Happens when the library is the newly opened blend file. */
+  if (old_id_new_lib == nullptr) {
+    remapper.add(id, nullptr);
+    return IDWALK_RET_STOP_RECURSION;
+  }
+
+  /* Move to new main database. */
+  return reuse_bmain_move_id(reuse_data, id, old_id_new_lib, true) ? IDWALK_RET_STOP_RECURSION :
+                                                                     IDWALK_RET_NOP;
+}
+
+static bool reuse_editable_asset_needed(ReuseOldBMainData *reuse_data)
+{
+  Main *old_bmain = reuse_data->old_bmain;
+  LISTBASE_FOREACH (Library *, lib, &old_bmain->libraries) {
+    if (lib->runtime.tag & LIBRARY_ASSET_EDITABLE) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Selectively 'import' data from old Main into new Main, provided it does not conflict with data
+ * already present in the new Main (name-wise and library-wise).
+ *
+ * Dependencies from moved over old data are also imported into the new Main, (unless, in case of
+ * linked data, a matching linked ID is already available in new Main).
+ *
+ * When a conflict is found, usages of the conflicted ID by the old data are stored in the
+ * `remapper` of `ReuseOldBMainData` to be remapped to the matching data in the new Main later.
+ *
+ * NOTE: This function will never remove any original new data from the new Main, it only moves
+ * (some of) the old data to the new Main.
+ */
+static void reuse_editable_asset_bmain_data_for_blendfile(ReuseOldBMainData *reuse_data,
+                                                          const short idcode)
+{
+  Main *new_bmain = reuse_data->new_bmain;
+  Main *old_bmain = reuse_data->old_bmain;
+
+  id::IDRemapper &remapper = reuse_bmain_data_remapper_ensure(reuse_data);
+
+  ListBase *old_lb = which_libbase(old_bmain, idcode);
+  ID *old_id_iter;
+
+  FOREACH_MAIN_LISTBASE_ID_BEGIN (old_lb, old_id_iter) {
+    /* Keep any datablocks from libraries marked as LIBRARY_ASSET_EDITABLE. */
+    if (!((ID_IS_LINKED(old_id_iter) && old_id_iter->lib->runtime.tag & LIBRARY_ASSET_EDITABLE))) {
+      continue;
+    }
+
+    Library *old_id_new_lib = reuse_bmain_data_dependencies_new_library_get(reuse_data,
+                                                                            old_id_iter->lib);
+
+    /* Happens when the library is the newly opened blend file. */
+    if (old_id_new_lib == nullptr) {
+      remapper.add(old_id_iter, nullptr);
+      continue;
+    }
+
+    if (reuse_bmain_move_id(reuse_data, old_id_iter, old_id_new_lib, true)) {
+      /* Port over dependencies of re-used ID, unless matching already existing ones in
+       * new_bmain can be found.
+       *
+       * NOTE : No pointers are remapped here, this code only moves dependencies from old_bmain
+       * to new_bmain if needed, and add necessary remapping rules to the reuse_data.remapper. */
+      BKE_library_foreach_ID_link(new_bmain,
+                                  old_id_iter,
+                                  reuse_editable_asset_bmain_data_dependencies_process_cb,
+                                  reuse_data,
+                                  IDWALK_RECURSE | IDWALK_DO_LIBRARY_POINTER);
+    }
+  }
+  FOREACH_MAIN_LISTBASE_ID_END;
+}
+
 /**
  * Does a complete replacement of data in `new_bmain` by data from `old_bmain. Original new data
  * are moved to the `old_bmain`, and will be freed together with it.
@@ -312,8 +516,9 @@ static bool reuse_bmain_data_remapper_is_id_remapped(IDRemapper *remapper, ID *i
  * WARNING: Currently only expects to work on local data, won't work properly if some of the IDs of
  * given type are linked.
  *
- * NOTE: There is no support at all for potential dependencies of the IDs moved around. This is not
- * expected to be necessary for the current use cases (UI-related IDs).
+ * NOTE: Unlike with #reuse_editable_asset_bmain_data_for_blendfile, there is no support at all for
+ * potential dependencies of the IDs moved around. This is not expected to be necessary for the
+ * current use cases (UI-related IDs).
  */
 static void swap_old_bmain_data_for_blendfile(ReuseOldBMainData *reuse_data, const short id_code)
 {
@@ -323,7 +528,7 @@ static void swap_old_bmain_data_for_blendfile(ReuseOldBMainData *reuse_data, con
   ListBase *new_lb = which_libbase(new_bmain, id_code);
   ListBase *old_lb = which_libbase(old_bmain, id_code);
 
-  IDRemapper *remapper = reuse_bmain_data_remapper_ensure(reuse_data);
+  id::IDRemapper &remapper = reuse_bmain_data_remapper_ensure(reuse_data);
 
   /* NOTE: Full swapping is only supported for ID types that are assumed to be only local
    * data-blocks (like UI-like ones). Otherwise, the swapping could fail in many funny ways. */
@@ -332,7 +537,7 @@ static void swap_old_bmain_data_for_blendfile(ReuseOldBMainData *reuse_data, con
 
   std::swap(*new_lb, *old_lb);
 
-  /* TODO: Could add per-IDType control over namemaps clearing, if this becomes a performances
+  /* TODO: Could add per-IDType control over name-maps clearing, if this becomes a performances
    * concern. */
   BKE_main_namemap_clear(old_bmain);
   BKE_main_namemap_clear(new_bmain);
@@ -350,14 +555,14 @@ static void swap_old_bmain_data_for_blendfile(ReuseOldBMainData *reuse_data, con
     const int strcmp_result = strcmp(discarded_id_iter->name + 2, reused_id_iter->name + 2);
     if (strcmp_result == 0) {
       /* Matching IDs, we can remap the discarded 'new' one to the re-used 'old' one. */
-      BKE_id_remapper_add(remapper, discarded_id_iter, reused_id_iter);
+      remapper.add(discarded_id_iter, reused_id_iter);
 
       discarded_id_iter = static_cast<ID *>(discarded_id_iter->next);
       reused_id_iter = static_cast<ID *>(reused_id_iter->next);
     }
     else if (strcmp_result < 0) {
       /* No matching reused 'old' ID for this discarded 'new' one. */
-      BKE_id_remapper_add(remapper, discarded_id_iter, nullptr);
+      remapper.add(discarded_id_iter, nullptr);
 
       discarded_id_iter = static_cast<ID *>(discarded_id_iter->next);
     }
@@ -369,7 +574,7 @@ static void swap_old_bmain_data_for_blendfile(ReuseOldBMainData *reuse_data, con
   for (; discarded_id_iter != nullptr;
        discarded_id_iter = static_cast<ID *>(discarded_id_iter->next))
   {
-    BKE_id_remapper_add(remapper, discarded_id_iter, nullptr);
+    remapper.add(discarded_id_iter, nullptr);
   }
 
   FOREACH_MAIN_LISTBASE_ID_BEGIN (new_lb, reused_id_iter) {
@@ -378,7 +583,7 @@ static void swap_old_bmain_data_for_blendfile(ReuseOldBMainData *reuse_data, con
 
     /* Ensure that the reused ID is remapped to itself, since it is known to be in the `new_bmain`.
      */
-    BKE_id_remapper_add_overwrite(remapper, reused_id_iter, reused_id_iter);
+    remapper.add_overwrite(reused_id_iter, reused_id_iter);
   }
   FOREACH_MAIN_LISTBASE_ID_END;
 }
@@ -432,8 +637,8 @@ static void swap_wm_data_for_blendfile(ReuseOldBMainData *reuse_data, const bool
      * new WM, and is responsible to free it properly. */
     reuse_data->wm_setup_data->old_wm = old_wm;
 
-    IDRemapper *remapper = reuse_bmain_data_remapper_ensure(reuse_data);
-    BKE_id_remapper_add(remapper, &old_wm->id, &new_wm->id);
+    id::IDRemapper &remapper = reuse_bmain_data_remapper_ensure(reuse_data);
+    remapper.add(&old_wm->id, &new_wm->id);
   }
   /* Current (old) WM, but no (new) one in file (should only happen when reading pre 2.5 files, no
    * WM back then), or not loading UI: Keep current WM. */
@@ -456,7 +661,7 @@ static int swap_old_bmain_data_for_blendfile_dependencies_process_cb(
   ReuseOldBMainData *reuse_data = static_cast<ReuseOldBMainData *>(cb_data->user_data);
 
   /* First check if it has already been remapped. */
-  IDRemapper *remapper = reuse_bmain_data_remapper_ensure(reuse_data);
+  id::IDRemapper &remapper = reuse_bmain_data_remapper_ensure(reuse_data);
   if (reuse_bmain_data_remapper_is_id_remapped(remapper, id)) {
     return IDWALK_RET_NOP;
   }
@@ -465,7 +670,7 @@ static int swap_old_bmain_data_for_blendfile_dependencies_process_cb(
   BLI_assert(id_map != nullptr);
 
   ID *id_new = BKE_main_idmap_lookup_id(id_map, id);
-  BKE_id_remapper_add(remapper, id, id_new);
+  remapper.add(id, id_new);
 
   return IDWALK_RET_NOP;
 }
@@ -640,10 +845,14 @@ static void wm_data_consistency_ensure(wmWindowManager *curwm,
 }
 
 /**
- * Context matching, handle no-UI case.
+ * This function runs after loading blend-file data and is responsible
+ * for setting up the context (the active view-layer, scene & work-space).
  *
- * \note this is called on Undo so any slow conversion functions here
- * should be avoided or check (mode != LOAD_UNDO).
+ * When loading a blend-file without it's UI (#G_FILE_NO_UI),
+ * the existing screen-data needs to point to the newly loaded blend-file data.
+ *
+ * \note this is called on undo so any slow conversion functions here
+ * should be avoided or check `mode != LOAD_UNDO`.
  *
  * \param bfd: Blend file data, freed by this function on exit.
  */
@@ -655,7 +864,6 @@ static void setup_app_data(bContext *C,
 {
   Main *bmain = G_MAIN;
   const bool recover = (G.fileflags & G_FILE_RECOVER_READ) != 0;
-  const bool is_startup = params->is_startup;
   enum {
     LOAD_UI = 1,
     LOAD_UI_OFF,
@@ -666,8 +874,20 @@ static void setup_app_data(bContext *C,
     BLI_assert(bfd->curscene != nullptr);
     mode = LOAD_UNDO;
   }
-  /* may happen with library files - UNDO file should never have nullptr curscene (but may have a
-   * nullptr curscreen)... */
+  else if (bfd->fileflags & G_FILE_ASSET_EDIT_FILE) {
+    BKE_report(reports->reports,
+               RPT_WARNING,
+               "This file is managed by the asset system, you cannot overwrite it (using \"Save "
+               "As\" is possible)");
+    /* From now on the file in memory is a normal file, further saving it will contain a
+     * window-manager, scene, ... and potentially user created data. Use #Main.is_asset_edit_file
+     * to detect if saving this file needs extra protections. */
+    bfd->fileflags &= ~G_FILE_ASSET_EDIT_FILE;
+    BLI_assert(bfd->main->is_asset_edit_file);
+    mode = LOAD_UI_OFF;
+  }
+  /* May happen with library files, loading undo-data should never have a null `curscene`
+   * (but may have a null `curscreen`). */
   else if (ELEM(nullptr, bfd->curscreen, bfd->curscene)) {
     BKE_report(reports->reports, RPT_WARNING, "Library file, loading empty scene");
     mode = LOAD_UI_OFF;
@@ -684,15 +904,15 @@ static void setup_app_data(bContext *C,
     RE_FreeAllRenderResults();
   }
 
-  /* Only make filepaths compatible when loading for real (not undo) */
+  /* Only make file-paths compatible when loading for real (not undo). */
   if (mode != LOAD_UNDO) {
     clean_paths(bfd->main);
   }
 
   BLI_assert(BKE_main_namemap_validate(bfd->main));
 
-  /* Temp data to handle swapping around IDs between old and new mains, and accumulate the
-   * required remapping accordingly. */
+  /* Temporary data to handle swapping around IDs between old and new mains,
+   * and accumulate the required remapping accordingly. */
   ReuseOldBMainData reuse_data = {nullptr};
   reuse_data.new_bmain = bfd->main;
   reuse_data.old_bmain = bmain;
@@ -723,13 +943,25 @@ static void setup_app_data(bContext *C,
     }
 
     BKE_main_idmap_destroy(reuse_data.id_map);
+
+    if (!params->is_factory_settings && reuse_editable_asset_needed(&reuse_data)) {
+      /* Keep linked brush asset data, similar to UI data. Only does a known
+       * subset know. Could do everything, but that risks dragging along more
+       * scene data than we want. */
+      for (short idtype_index = 0; idtype_index < INDEX_ID_MAX; idtype_index++) {
+        const IDTypeInfo *idtype_info = BKE_idtype_get_info_from_idtype_index(idtype_index);
+        if (ID_TYPE_SUPPORTS_ASSET_EDITABLE(idtype_info->id_code)) {
+          reuse_editable_asset_bmain_data_for_blendfile(&reuse_data, idtype_info->id_code);
+        }
+      }
+    }
   }
 
   /* Logic for 'track_undo_scene' is to keep using the scene which the active screen has, as long
    * as the scene associated with the undo operation is visible in one of the open windows.
    *
-   * - 'curscreen->scene' - scene the user is currently looking at.
-   * - 'bfd->curscene' - scene undo-step was created in.
+   * - 'curscreen->scene': Scene the user is currently looking at.
+   * - 'bfd->curscene': Scene undo-step was created in.
    *
    * This means that users can have 2 or more windows open and undo in both without screens
    * switching. But if they close one of the screens, undo will ensure that the scene being
@@ -757,8 +989,8 @@ static void setup_app_data(bContext *C,
     cur_view_layer = BKE_view_layer_default_view(curscene);
   }
 
-  /* If UI is not loaded when opening actual .blend file, and always in case of undo memfile
-   * reading. */
+  /* If UI is not loaded when opening actual `.blend` file,
+   * and always in case of undo MEMFILE reading. */
   if (mode != LOAD_UI) {
     /* Re-use current window and screen. */
     win = CTX_wm_window(C);
@@ -771,8 +1003,8 @@ static void setup_app_data(bContext *C,
        * matching new scene if available, or null otherwise, in which case
        * #wm_data_consistency_ensure will define `curscene` as the active one. */
     }
-    /* Enforce curscene to be in current screen. */
-    else if (win) { /* The window may be nullptr in background-mode. */
+    /* Enforce `curscene` to be in current screen. */
+    else if (win) { /* The window may be null in background-mode. */
       win->scene = curscene;
     }
   }
@@ -782,22 +1014,22 @@ static void setup_app_data(bContext *C,
   /* Apply remapping of ID pointers caused by re-using part of the data from the 'old' main into
    * the new one. */
   if (reuse_data.remapper != nullptr) {
-    /* In undo case all 'keeping old data' and remapping logic is now handled in readfile code
-     * itself, so there should never be any remapping to do here. */
+    /* In undo case all "keeping old data" and remapping logic is now handled
+     * in file reading code itself, so there should never be any remapping to do here. */
     BLI_assert(mode != LOAD_UNDO);
 
     /* Handle all pending remapping from swapping old and new IDs around. */
     BKE_libblock_remap_multiple_raw(bfd->main,
-                                    reuse_data.remapper,
+                                    *reuse_data.remapper,
                                     (ID_REMAP_FORCE_UI_POINTERS | ID_REMAP_SKIP_USER_REFCOUNT |
                                      ID_REMAP_SKIP_UPDATE_TAGGING | ID_REMAP_SKIP_USER_CLEAR));
 
     /* Fix potential invalid usages of now-locale-data created by remapping above. Should never
-     * be needed in undo case, this is to address cases like 'opening a blendfile that was a
-     * library of the previous opened blendfile'. */
+     * be needed in undo case, this is to address cases like:
+     * "opening a blend-file that was a library of the previous opened blend-file". */
     reuse_bmain_data_invalid_local_usages_fix(&reuse_data);
 
-    BKE_id_remapper_free(reuse_data.remapper);
+    MEM_delete(reuse_data.remapper);
     reuse_data.remapper = nullptr;
 
     wm_data_consistency_ensure(CTX_wm_manager(C), curscene, cur_view_layer);
@@ -855,14 +1087,14 @@ static void setup_app_data(bContext *C,
 
   /* These context data should remain valid if old UI is being re-used. */
   if (mode == LOAD_UI) {
-    /* Setting WindowManager in context clears all other Context UI data (window, area, etc.). So
-     * only do it when effectively loading a new WM, otherwise just assert that the WM from context
-     * is still the same as in `new_bmain`. */
+    /* Setting a window-manger clears all other windowing members (window, screen, area, etc).
+     * So only do it when effectively loading a new #wmWindowManager
+     * otherwise just assert that the WM from context is still the same as in `new_bmain`. */
     CTX_wm_manager_set(C, static_cast<wmWindowManager *>(bmain->wm.first));
     CTX_wm_screen_set(C, bfd->curscreen);
     CTX_wm_area_set(C, nullptr);
     CTX_wm_region_set(C, nullptr);
-    CTX_wm_menu_set(C, nullptr);
+    CTX_wm_region_popup_set(C, nullptr);
   }
   BLI_assert(CTX_wm_manager(C) == static_cast<wmWindowManager *>(bmain->wm.first));
 
@@ -870,7 +1102,7 @@ static void setup_app_data(bContext *C,
   const int fileflags_keep = G_FILE_FLAG_ALL_RUNTIME;
   G.fileflags = (G.fileflags & fileflags_keep) | (bfd->fileflags & ~fileflags_keep);
 
-  /* special cases, override loaded flags: */
+  /* Special cases, override any #G_FLAG_ALL_READFILE flags from the blend-file. */
   if (G.f != bfd->globalf) {
     const int flags_keep = G_FLAG_ALL_RUNTIME;
     bfd->globalf &= G_FLAG_ALL_READFILE;
@@ -887,30 +1119,29 @@ static void setup_app_data(bContext *C,
 #endif
 
   if (mode != LOAD_UNDO) {
-    /* Perform complex versioning that involves adding or removing IDs, and/or needs to operate
-     * over the whole Main data-base (versioning done in readfile code only operates on a
-     * per-library basis). */
+    /* Perform complex versioning that involves adding or removing IDs,
+     * and/or needs to operate over the whole Main data-base
+     * (versioning done in file reading code only operates on a per-library basis). */
     BLO_read_do_version_after_setup(bmain, reports);
   }
 
   bmain->recovered = false;
 
-  /* startup.blend or recovered startup */
-  if (is_startup) {
+  /* `startup.blend` or recovered startup. */
+  if (params->is_startup) {
     bmain->filepath[0] = '\0';
   }
   else if (recover) {
-    /* In case of auto-save or quit.blend, use original filepath instead (see also #read_global in
-     * `readfile.cc`). */
+    /* In case of auto-save or `quit.blend`, use original file-path instead
+     * (see also #read_global in `readfile.cc`). */
     bmain->recovered = true;
     STRNCPY(bmain->filepath, bfd->filepath);
   }
 
   /* Base-flags, groups, make depsgraph, etc. */
-  /* first handle case if other windows have different scenes visible */
+  /* first handle case if other windows have different scenes visible. */
   if (mode == LOAD_UI) {
     wmWindowManager *wm = static_cast<wmWindowManager *>(bmain->wm.first);
-
     if (wm) {
       LISTBASE_FOREACH (wmWindow *, win, &wm->windows) {
         if (win->scene && win->scene != curscene) {
@@ -920,10 +1151,9 @@ static void setup_app_data(bContext *C,
     }
   }
 
-  /* Setting scene might require having a dependency graph, with copy on write
+  /* Setting scene might require having a dependency graph, with copy-on-eval
    * we need to make sure we ensure scene has correct color management before
-   * constructing dependency graph.
-   */
+   * constructing dependency graph. */
   if (mode != LOAD_UNDO) {
     IMB_colormanagement_check_file_config(bmain);
   }
@@ -931,7 +1161,7 @@ static void setup_app_data(bContext *C,
   BKE_scene_set_background(bmain, curscene);
 
   if (mode != LOAD_UNDO) {
-    /* TODO(sergey): Can this be also move above? */
+    /* TODO(@sergey): Can this be also move above? */
     RE_FreeAllPersistentData();
   }
 
@@ -942,7 +1172,7 @@ static void setup_app_data(bContext *C,
   BLI_assert(BKE_main_namemap_validate(bmain));
 
   if (mode != LOAD_UNDO && !USER_EXPERIMENTAL_TEST(&U, no_override_auto_resync)) {
-    reports->duration.lib_overrides_resync = BLI_check_seconds_timer();
+    reports->duration.lib_overrides_resync = BLI_time_now_seconds();
 
     BKE_lib_override_library_main_resync(
         bmain,
@@ -950,11 +1180,34 @@ static void setup_app_data(bContext *C,
         bfd->cur_view_layer ? bfd->cur_view_layer : BKE_view_layer_default_view(curscene),
         reports);
 
-    reports->duration.lib_overrides_resync = BLI_check_seconds_timer() -
+    reports->duration.lib_overrides_resync = BLI_time_now_seconds() -
                                              reports->duration.lib_overrides_resync;
 
     /* We need to rebuild some of the deleted override rules (for UI feedback purpose). */
     BKE_lib_override_library_main_operations_create(bmain, true, nullptr);
+  }
+
+  /* Now that liboverrides have been resynced and 'irrelevant' missing linked IDs has been removed,
+   * report actual missing linked data. */
+  if (mode != LOAD_UNDO) {
+    ID *id_iter;
+    int missing_linked_ids_num = 0;
+    FOREACH_MAIN_ID_BEGIN (bmain, id_iter) {
+      if (ID_IS_LINKED(id_iter) && (id_iter->tag & LIB_TAG_MISSING)) {
+        missing_linked_ids_num++;
+        BLO_reportf_wrap(reports,
+                         RPT_INFO,
+                         RPT_("LIB: %s: '%s' missing from '%s', parent '%s'"),
+                         BKE_idtype_idcode_to_name(GS(id_iter->name)),
+                         id_iter->name + 2,
+                         id_iter->lib->runtime.filepath_abs,
+                         id_iter->lib->runtime.parent ?
+                             id_iter->lib->runtime.parent->runtime.filepath_abs :
+                             "<direct>");
+      }
+    }
+    FOREACH_MAIN_ID_END;
+    reports->count.missing_linked_id = missing_linked_ids_num;
   }
 }
 
@@ -1024,7 +1277,9 @@ BlendFileData *BKE_blendfile_read(const char *filepath,
 {
   /* Don't print startup file loading. */
   if (params->is_startup == false) {
-    printf("Read blend: \"%s\"\n", filepath);
+    if (!G.quiet) {
+      printf("Read blend: \"%s\"\n", filepath);
+    }
   }
 
   BlendFileData *bfd = BLO_read_from_file(filepath, eBLOReadSkip(params->skip_flags), reports);
@@ -1041,13 +1296,13 @@ BlendFileData *BKE_blendfile_read(const char *filepath,
   return bfd;
 }
 
-BlendFileData *BKE_blendfile_read_from_memory(const void *filebuf,
-                                              int filelength,
+BlendFileData *BKE_blendfile_read_from_memory(const void *file_buf,
+                                              int file_buf_size,
                                               const BlendFileReadParams *params,
                                               ReportList *reports)
 {
   BlendFileData *bfd = BLO_read_from_memory(
-      filebuf, filelength, eBLOReadSkip(params->skip_flags), reports);
+      file_buf, file_buf_size, eBLOReadSkip(params->skip_flags), reports);
   if (bfd && bfd->main->is_read_invalid) {
     BLO_blendfiledata_free(bfd);
     bfd = nullptr;
@@ -1145,15 +1400,15 @@ UserDef *BKE_blendfile_userdef_read(const char *filepath, ReportList *reports)
   return userdef;
 }
 
-UserDef *BKE_blendfile_userdef_read_from_memory(const void *filebuf,
-                                                int filelength,
+UserDef *BKE_blendfile_userdef_read_from_memory(const void *file_buf,
+                                                int file_buf_size,
                                                 ReportList *reports)
 {
   BlendFileData *bfd;
   UserDef *userdef = nullptr;
 
   bfd = BLO_read_from_memory(
-      filebuf, filelength, BLO_READ_SKIP_ALL & ~BLO_READ_SKIP_USERDEF, reports);
+      file_buf, file_buf_size, BLO_READ_SKIP_ALL & ~BLO_READ_SKIP_USERDEF, reports);
   if (bfd) {
     if (bfd->user) {
       userdef = bfd->user;
@@ -1178,11 +1433,9 @@ UserDef *BKE_blendfile_userdef_from_defaults()
     const char *addons[] = {
         "io_anim_bvh",
         "io_curve_svg",
-        "io_mesh_stl",
         "io_mesh_uv_layout",
         "io_scene_fbx",
         "io_scene_gltf2",
-        "io_scene_x3d",
         "cycles",
         "pose_library",
     };
@@ -1227,6 +1480,17 @@ UserDef *BKE_blendfile_userdef_from_defaults()
   BKE_studiolight_default(userdef->light_param, userdef->light_ambient);
 
   BKE_preferences_asset_library_default_add(userdef);
+
+  BKE_preferences_extension_repo_add_defaults_all(userdef);
+
+  {
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "VIEW3D_AST_brush_sculpt", "Brushes/Mesh/Sculpt/Cloth");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "VIEW3D_AST_brush_sculpt", "Brushes/Mesh/Sculpt/General");
+    BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(
+        userdef, "VIEW3D_AST_brush_sculpt", "Brushes/Mesh/Sculpt/Painting");
+  }
 
   return userdef;
 }
@@ -1279,8 +1543,9 @@ bool BKE_blendfile_userdef_write_all(ReportList *reports)
   if ((cfgdir = BKE_appdir_folder_id_create(BLENDER_USER_CONFIG, nullptr))) {
     bool ok_write;
     BLI_path_join(filepath, sizeof(filepath), cfgdir->c_str(), BLENDER_USERPREF_FILE);
-
-    printf("Writing userprefs: \"%s\" ", filepath);
+    if (!G.quiet) {
+      printf("Writing userprefs: \"%s\" ", filepath);
+    }
     if (use_template_userpref) {
       ok_write = BKE_blendfile_userdef_write_app_template(filepath, reports);
     }
@@ -1289,11 +1554,15 @@ bool BKE_blendfile_userdef_write_all(ReportList *reports)
     }
 
     if (ok_write) {
-      printf("ok\n");
+      if (!G.quiet) {
+        printf("ok\n");
+      }
       BKE_report(reports, RPT_INFO, "Preferences saved");
     }
     else {
-      printf("fail\n");
+      if (!G.quiet) {
+        printf("fail\n");
+      }
       ok = false;
       BKE_report(reports, RPT_ERROR, "Saving preferences failed");
     }
@@ -1307,12 +1576,18 @@ bool BKE_blendfile_userdef_write_all(ReportList *reports)
       /* Also save app-template preferences. */
       BLI_path_join(filepath, sizeof(filepath), cfgdir->c_str(), BLENDER_USERPREF_FILE);
 
-      printf("Writing userprefs app-template: \"%s\" ", filepath);
+      if (!G.quiet) {
+        printf("Writing userprefs app-template: \"%s\" ", filepath);
+      }
       if (BKE_blendfile_userdef_write(filepath, reports) != 0) {
-        printf("ok\n");
+        if (!G.quiet) {
+          printf("ok\n");
+        }
       }
       else {
-        printf("fail\n");
+        if (!G.quiet) {
+          printf("fail\n");
+        }
         ok = false;
       }
     }
@@ -1335,8 +1610,8 @@ bool BKE_blendfile_userdef_write_all(ReportList *reports)
  * \{ */
 
 WorkspaceConfigFileData *BKE_blendfile_workspace_config_read(const char *filepath,
-                                                             const void *filebuf,
-                                                             int filelength,
+                                                             const void *file_buf,
+                                                             int file_buf_size,
                                                              ReportList *reports)
 {
   BlendFileData *bfd;
@@ -1348,7 +1623,7 @@ WorkspaceConfigFileData *BKE_blendfile_workspace_config_read(const char *filepat
     bfd = BLO_read_from_file(filepath, BLO_READ_SKIP_USERDEF, &blend_file_read_reports);
   }
   else {
-    bfd = BLO_read_from_memory(filebuf, filelength, BLO_READ_SKIP_USERDEF, reports);
+    bfd = BLO_read_from_memory(file_buf, file_buf_size, BLO_READ_SKIP_USERDEF, reports);
   }
 
   if (bfd) {
@@ -1367,29 +1642,6 @@ WorkspaceConfigFileData *BKE_blendfile_workspace_config_read(const char *filepat
   return workspace_config;
 }
 
-bool BKE_blendfile_workspace_config_write(Main *bmain, const char *filepath, ReportList *reports)
-{
-  const int fileflags = G.fileflags & ~G_FILE_NO_UI;
-  bool retval = false;
-
-  BKE_blendfile_write_partial_begin(bmain);
-
-  for (WorkSpace *workspace = static_cast<WorkSpace *>(bmain->workspaces.first); workspace;
-       workspace = static_cast<WorkSpace *>(workspace->id.next))
-  {
-    BKE_blendfile_write_partial_tag_ID(&workspace->id, true);
-  }
-
-  if (BKE_blendfile_write_partial(bmain, filepath, fileflags, BLO_WRITE_PATH_REMAP_NONE, reports))
-  {
-    retval = true;
-  }
-
-  BKE_blendfile_write_partial_end(bmain);
-
-  return retval;
-}
-
 void BKE_blendfile_workspace_config_data_free(WorkspaceConfigFileData *workspace_config)
 {
   BKE_main_free(workspace_config->main);
@@ -1401,6 +1653,484 @@ void BKE_blendfile_workspace_config_data_free(WorkspaceConfigFileData *workspace
 /* -------------------------------------------------------------------- */
 /** \name Blend File Write (Partial)
  * \{ */
+
+static CLG_LogRef LOG_PARTIALWRITE = {"bke.blendfile.partial_write"};
+
+namespace blender::bke::blendfile {
+
+PartialWriteContext::PartialWriteContext(StringRefNull reference_root_filepath)
+    : reference_root_filepath_(reference_root_filepath)
+{
+  BKE_main_init(this->bmain);
+  if (!reference_root_filepath_.empty()) {
+    STRNCPY(this->bmain.filepath, reference_root_filepath_.c_str());
+  }
+  /* Only for IDs matching existing data in current G_MAIN. */
+  matching_uid_map_ = BKE_main_idmap_create(&this->bmain, false, nullptr, MAIN_IDMAP_TYPE_UID);
+  /* For all IDs existing in the context. */
+  this->bmain.id_map = BKE_main_idmap_create(
+      &this->bmain, false, nullptr, MAIN_IDMAP_TYPE_UID | MAIN_IDMAP_TYPE_NAME);
+};
+
+PartialWriteContext::~PartialWriteContext()
+{
+  BKE_main_idmap_destroy(matching_uid_map_);
+
+  BLI_assert(this->bmain.next == nullptr);
+  BKE_main_destroy(this->bmain);
+};
+
+void PartialWriteContext::preempt_session_uid(ID *ctx_id, uint session_uid)
+{
+  /* If there is already an existing ID in the 'matching' set with that UID, it should be the same
+   * as the given ctx_id. */
+  ID *matching_ctx_id = BKE_main_idmap_lookup_uid(matching_uid_map_, session_uid);
+  if (matching_ctx_id == ctx_id) {
+    /* That ID has already been added to the context, nothing to do. */
+    BLI_assert(matching_ctx_id->session_uid == session_uid);
+    return;
+  }
+  if (matching_ctx_id != nullptr) {
+    /* Another ID in the context, who has a matching ID in current G_MAIN, is sharing the same
+     * session UID. This marks a critical corruption somewhere! */
+    CLOG_FATAL(
+        &LOG_PARTIALWRITE,
+        "Different matching IDs sharing the same session UID in the partial write context.");
+    return;
+  }
+  /* No ID with this session UID in the context, who's matching a current ID in G_MAIN. Check if a
+   * non-matching context ID is already using that UID, if yes, regenerate a new one for it, such
+   * that given `ctx_id` can use the desired UID. */
+  /* NOTE: In theory, there should never be any session uid collision currently, since these are
+   * generated session-wide, regardless of the type/source of the IDs. */
+  matching_ctx_id = BKE_main_idmap_lookup_uid(this->bmain.id_map, session_uid);
+  BLI_assert(matching_ctx_id != ctx_id);
+  if (matching_ctx_id) {
+    CLOG_INFO(&LOG_PARTIALWRITE,
+              3,
+              "Non-matching IDs sharing the same session UID in the partial write context.");
+    BKE_main_idmap_remove_id(this->bmain.id_map, matching_ctx_id);
+    /* FIXME: Allow #BKE_lib_libblock_session_uid_renew to work with temp IDs? */
+    matching_ctx_id->tag &= ~LIB_TAG_TEMP_MAIN;
+    BKE_lib_libblock_session_uid_renew(matching_ctx_id);
+    matching_ctx_id->tag |= LIB_TAG_TEMP_MAIN;
+    BKE_main_idmap_insert_id(this->bmain.id_map, matching_ctx_id);
+    BLI_assert(BKE_main_idmap_lookup_uid(this->bmain.id_map, session_uid) == nullptr);
+  }
+  ctx_id->session_uid = session_uid;
+}
+
+void PartialWriteContext::ensure_id_user(ID *ctx_id, const bool set_fake_user)
+{
+  if (set_fake_user) {
+    id_fake_user_set(ctx_id);
+  }
+  else {
+    /* NOTE: Using this tag will ensure that this ID is written on disk in current state (current
+     * context session). However, reloading the blendfile will clear this tag. */
+    id_us_ensure_real(ctx_id);
+  }
+}
+
+ID *PartialWriteContext::id_add_copy(const ID *id, const bool regenerate_session_uid)
+{
+  ID *ctx_root_id = nullptr;
+  BLI_assert(BKE_main_idmap_lookup_uid(matching_uid_map_, id->session_uid) == nullptr);
+  ctx_root_id = BKE_id_copy_in_lib(nullptr,
+                                   id->lib,
+                                   id,
+                                   nullptr,
+                                   nullptr,
+                                   (LIB_ID_CREATE_NO_MAIN | LIB_ID_CREATE_NO_USER_REFCOUNT));
+  ctx_root_id->tag |= LIB_TAG_TEMP_MAIN;
+  if (regenerate_session_uid) {
+    /* Calling #BKE_lib_libblock_session_uid_renew is not needed here, copying already generated a
+     * new one. */
+    BLI_assert(BKE_main_idmap_lookup_uid(matching_uid_map_, id->session_uid) == nullptr);
+  }
+  else {
+    this->preempt_session_uid(ctx_root_id, id->session_uid);
+    BKE_main_idmap_insert_id(matching_uid_map_, ctx_root_id);
+  }
+  BKE_main_idmap_insert_id(this->bmain.id_map, ctx_root_id);
+  BKE_libblock_management_main_add(&this->bmain, ctx_root_id);
+  /* Note: remapping of external file relative paths is done as part of the 'write' process. */
+  return ctx_root_id;
+}
+
+void PartialWriteContext::make_local(ID *ctx_id, const int make_local_flags)
+{
+  /* Making an ID local typically resets its session UID, here we want to keep the same value. */
+  const uint ctx_id_session_uid = ctx_id->session_uid;
+  BKE_main_idmap_remove_id(this->bmain.id_map, ctx_id);
+  BKE_main_idmap_insert_id(matching_uid_map_, ctx_id);
+
+  BKE_lib_id_make_local(&this->bmain, ctx_id, make_local_flags);
+
+  this->preempt_session_uid(ctx_id, ctx_id_session_uid);
+  BKE_main_idmap_insert_id(this->bmain.id_map, ctx_id);
+  BKE_main_idmap_insert_id(matching_uid_map_, ctx_id);
+}
+
+Library *PartialWriteContext::ensure_library(ID *ctx_id)
+{
+  if (!ID_IS_LINKED(ctx_id)) {
+    return nullptr;
+  }
+  blender::StringRefNull lib_path = ctx_id->lib->runtime.filepath_abs;
+  Library *ctx_lib = this->libraries_map_.lookup_default(lib_path, nullptr);
+  if (!ctx_lib) {
+    ctx_lib = reinterpret_cast<Library *>(id_add_copy(&ctx_id->lib->id, true));
+    this->libraries_map_.add(lib_path, ctx_lib);
+  }
+  ctx_id->lib = ctx_lib;
+  return ctx_lib;
+}
+Library *PartialWriteContext::ensure_library(blender::StringRefNull library_absolute_path)
+{
+  Library *ctx_lib = this->libraries_map_.lookup_default(library_absolute_path, nullptr);
+  if (!ctx_lib) {
+    const char *library_name = BLI_path_basename(library_absolute_path.c_str());
+    ctx_lib = static_cast<Library *>(
+        BKE_id_new_in_lib(&this->bmain, nullptr, ID_LI, library_name));
+    ctx_lib->id.tag |= LIB_TAG_TEMP_MAIN;
+    id_us_min(&ctx_lib->id);
+    this->libraries_map_.add(library_absolute_path, ctx_lib);
+  }
+  return ctx_lib;
+}
+
+ID *PartialWriteContext::id_add(
+    const ID *id,
+    PartialWriteContext::IDAddOptions options,
+    blender::FunctionRef<PartialWriteContext::IDAddOperations(
+        LibraryIDLinkCallbackData *cb_data, PartialWriteContext::IDAddOptions options)>
+        dependencies_filter_cb)
+{
+  constexpr int make_local_flags = (LIB_ID_MAKELOCAL_INDIRECT | LIB_ID_MAKELOCAL_FORCE_LOCAL |
+                                    LIB_ID_MAKELOCAL_LIBOVERRIDE_CLEAR);
+
+  const bool set_fake_user = (options.operations & SET_FAKE_USER) != 0;
+  const bool add_dependencies = (options.operations & ADD_DEPENDENCIES) != 0;
+  const bool clear_dependencies = (options.operations & CLEAR_DEPENDENCIES) != 0;
+  const bool duplicate_dependencies = (options.operations & DUPLICATE_DEPENDENCIES) != 0;
+  BLI_assert(clear_dependencies || add_dependencies);
+  BLI_assert(!clear_dependencies || !(add_dependencies || duplicate_dependencies));
+  UNUSED_VARS_NDEBUG(add_dependencies, clear_dependencies, duplicate_dependencies);
+
+  /* Do not directly add an embedded ID. Add its owner instead. */
+  if (id->flag & LIB_EMBEDDED_DATA) {
+    id = BKE_id_owner_get(const_cast<ID *>(id), true);
+  }
+
+  /* The given ID may have already been added (either explicitly or as a dependency) before. */
+  ID *ctx_root_id = BKE_main_idmap_lookup_uid(matching_uid_map_, id->session_uid);
+  if (ctx_root_id) {
+    /* If the root orig ID is already in the context, assume all of its dependencies are as well.
+     */
+    BLI_assert(ctx_root_id->session_uid == id->session_uid);
+    this->ensure_id_user(ctx_root_id, set_fake_user);
+    return ctx_root_id;
+  }
+
+  /* Local mapping, such that even in case dependencies are duplicated for this specific added ID,
+   * once a dependency has been duplicated, it can be re-used for other ID usages within the
+   * dependencies of the added ID. */
+  blender::Map<const ID *, ID *> local_ctx_id_map;
+  /* A list of IDs to post-process. Only contains IDs that were actually added to the context (not
+   * the ones that were already there and were re-used). The #IDAddOperations item of the pair
+   * stores the returned value from the given #dependencies_filter_cb (or given global #options
+   * parameter otherwise). */
+  blender::Vector<std::pair<ID *, PartialWriteContext::IDAddOperations>> post_process_ids_todo;
+
+  ctx_root_id = id_add_copy(id, false);
+  BLI_assert(ctx_root_id->session_uid == id->session_uid);
+  local_ctx_id_map.add(id, ctx_root_id);
+  post_process_ids_todo.append({ctx_root_id, options.operations});
+  this->ensure_id_user(ctx_root_id, set_fake_user);
+
+  blender::VectorSet<ID *> ids_to_process{ctx_root_id};
+  auto dependencies_cb = [this,
+                          options,
+                          &local_ctx_id_map,
+                          &ids_to_process,
+                          &post_process_ids_todo,
+                          dependencies_filter_cb](LibraryIDLinkCallbackData *cb_data) -> int {
+    constexpr PartialWriteContext::IDAddOperations per_id_operations_filter =
+        PartialWriteContext::IDAddOperations(MAKE_LOCAL | SET_FAKE_USER | CLEAR_DEPENDENCIES |
+                                             DUPLICATE_DEPENDENCIES);
+    ID **id_ptr = cb_data->id_pointer;
+    const ID *orig_deps_id = *id_ptr;
+
+    if (cb_data->cb_flag & (IDWALK_CB_EMBEDDED | IDWALK_CB_EMBEDDED_NOT_OWNING)) {
+      return IDWALK_RET_NOP;
+    }
+    if (!orig_deps_id) {
+      return IDWALK_RET_NOP;
+    }
+
+    if (cb_data->cb_flag & IDWALK_CB_INTERNAL) {
+      /* Cleanup internal ID pointers. */
+      *id_ptr = nullptr;
+      return IDWALK_RET_NOP;
+    }
+
+    PartialWriteContext::IDAddOperations operations_final = options.operations;
+    if (dependencies_filter_cb) {
+      PartialWriteContext::IDAddOperations operations_per_id = dependencies_filter_cb(cb_data,
+                                                                                      options);
+      operations_final = PartialWriteContext::IDAddOperations(
+          (operations_per_id & per_id_operations_filter) |
+          (options.operations & ~per_id_operations_filter));
+    }
+
+    const bool set_fake_user = (operations_final & SET_FAKE_USER) != 0;
+    const bool add_dependencies = (operations_final & ADD_DEPENDENCIES) != 0;
+    const bool clear_dependencies = (operations_final & CLEAR_DEPENDENCIES) != 0;
+    const bool duplicate_dependencies = (operations_final & DUPLICATE_DEPENDENCIES) != 0;
+    BLI_assert(clear_dependencies || add_dependencies);
+    BLI_assert(!clear_dependencies || !(add_dependencies || duplicate_dependencies));
+    UNUSED_VARS_NDEBUG(add_dependencies);
+
+    if (clear_dependencies) {
+      if (cb_data->cb_flag & IDWALK_CB_NEVER_NULL) {
+        CLOG_WARN(&LOG_PARTIALWRITE,
+                  "Clearing a 'never null' ID usage of '%s' by '%s', this is likely not a "
+                  "desired action",
+                  (*id_ptr)->name,
+                  cb_data->owner_id->name);
+      }
+      /* Owner ID should be a 'context-main' duplicate of a real Main ID, as such there should be
+       * no need to decrease ID usages refcount here. */
+      *id_ptr = nullptr;
+      return IDWALK_RET_NOP;
+    }
+    /* else if (add_dependencies) */
+    /* The given ID may have already been added (either explicitly or as a dependency) before. */
+    ID *ctx_deps_id = nullptr;
+    if (duplicate_dependencies) {
+      ctx_deps_id = local_ctx_id_map.lookup(orig_deps_id);
+    }
+    else {
+      ctx_deps_id = BKE_main_idmap_lookup_uid(matching_uid_map_, orig_deps_id->session_uid);
+    }
+    if (!ctx_deps_id) {
+      if (cb_data->cb_flag & IDWALK_CB_LOOPBACK) {
+        /* Do not follow 'loop back' pointers. */
+        /* NOTE: Not sure whether this should be considered an error or not. Typically hitting such
+         * a case is bad practice. On the other hand, some of these pointers are present in
+         * 'normal' IDs, like e.g. the parent collections ones. This implies that currently, all
+         * attempt to adding a collection to a partial write context should make usage of a custom
+         * `dependencies_filter_cb` function to explicitly clear these pointers. */
+        CLOG_ERROR(&LOG_PARTIALWRITE,
+                   "First dependency to ID '%s' found through a 'loopback' usage from ID '%s', "
+                   "this should never happen",
+                   (*id_ptr)->name,
+                   cb_data->owner_id->name);
+        *id_ptr = nullptr;
+        return IDWALK_RET_NOP;
+      }
+      ctx_deps_id = this->id_add_copy(orig_deps_id, duplicate_dependencies);
+      local_ctx_id_map.add(orig_deps_id, ctx_deps_id);
+      ids_to_process.add(ctx_deps_id);
+      post_process_ids_todo.append({ctx_deps_id, operations_final});
+    }
+    if (duplicate_dependencies) {
+      BLI_assert(ctx_deps_id->session_uid != orig_deps_id->session_uid);
+    }
+    else {
+      BLI_assert(ctx_deps_id->session_uid == orig_deps_id->session_uid);
+    }
+    this->ensure_id_user(ctx_deps_id, set_fake_user);
+    /* In-place remapping. */
+    *id_ptr = ctx_deps_id;
+    return IDWALK_RET_NOP;
+  };
+  while (!ids_to_process.is_empty()) {
+    ID *ctx_id = ids_to_process.pop();
+    BKE_library_foreach_ID_link(
+        &this->bmain, ctx_id, dependencies_cb, &options, IDWALK_DO_INTERNAL_RUNTIME_POINTERS);
+  }
+
+  /* Post process all newly added IDs in the context:
+   *   - Make them local or ensure that their library reference is also in the context.
+   */
+  for (auto [ctx_id, options_final] : post_process_ids_todo) {
+    const bool do_make_local = (options_final & MAKE_LOCAL) != 0;
+    if (do_make_local) {
+      this->make_local(ctx_id, make_local_flags);
+    }
+    else {
+      this->ensure_library(ctx_id);
+    }
+  }
+
+  return ctx_root_id;
+}
+
+ID *PartialWriteContext::id_create(const short id_type,
+                                   const blender::StringRefNull id_name,
+                                   Library *library,
+                                   PartialWriteContext::IDAddOptions options)
+{
+  const bool set_fake_user = (options.operations & SET_FAKE_USER) != 0;
+
+  Library *ctx_library = nullptr;
+  if (library) {
+    ctx_library = this->ensure_library(library->runtime.filepath_abs);
+  }
+  ID *ctx_id = static_cast<ID *>(
+      BKE_id_new_in_lib(&this->bmain, ctx_library, id_type, id_name.c_str()));
+  ctx_id->tag |= LIB_TAG_TEMP_MAIN;
+  id_us_min(ctx_id);
+  this->ensure_id_user(ctx_id, set_fake_user);
+  /* See function doc about why handling of #matching_uid_map_ can be skipped here. */
+  BKE_main_idmap_insert_id(this->bmain.id_map, ctx_id);
+  return ctx_id;
+}
+
+void PartialWriteContext::id_delete(const ID *id)
+{
+  if (ID *ctx_id = BKE_main_idmap_lookup_uid(matching_uid_map_, id->session_uid)) {
+    BKE_main_idmap_remove_id(matching_uid_map_, ctx_id);
+    BKE_id_delete(&this->bmain, ctx_id);
+  }
+}
+
+void PartialWriteContext::remove_unused(const bool clear_extra_user)
+{
+  LibQueryUnusedIDsData parameters;
+  parameters.do_local_ids = true;
+  parameters.do_linked_ids = true;
+  parameters.do_recursive = true;
+
+  if (clear_extra_user) {
+    ID *id_iter;
+    FOREACH_MAIN_ID_BEGIN (&this->bmain, id_iter) {
+      id_us_clear_real(id_iter);
+    }
+    FOREACH_MAIN_ID_END;
+  }
+  BKE_lib_query_unused_ids_tag(&this->bmain, LIB_TAG_DOIT, parameters);
+
+  CLOG_INFO(&LOG_PARTIALWRITE,
+            3,
+            "Removing %d unused IDs from current partial write context",
+            parameters.num_total[INDEX_ID_NULL]);
+  ID *id_iter;
+  FOREACH_MAIN_ID_BEGIN (&this->bmain, id_iter) {
+    if ((id_iter->tag & LIB_TAG_DOIT) != 0) {
+      BKE_main_idmap_remove_id(matching_uid_map_, id_iter);
+    }
+  }
+  FOREACH_MAIN_ID_END;
+  BKE_id_multi_tagged_delete(&this->bmain);
+}
+
+void PartialWriteContext::clear()
+{
+  BKE_main_idmap_clear(*matching_uid_map_);
+  BKE_main_clear(this->bmain);
+}
+
+bool PartialWriteContext::is_valid()
+{
+  blender::Set<ID *> ids_in_context;
+  blender::Set<uint> session_uids_in_context;
+  bool is_valid = true;
+
+  ID *id_iter;
+
+  /* Fill `ids_in_context`, check uniqueness of session_uid's. */
+  FOREACH_MAIN_ID_BEGIN (&this->bmain, id_iter) {
+    ids_in_context.add(id_iter);
+    if (session_uids_in_context.contains(id_iter->session_uid)) {
+      CLOG_ERROR(&LOG_PARTIALWRITE, "ID %s does not have a unique session_uid", id_iter->name);
+      is_valid = false;
+    }
+    else {
+      session_uids_in_context.add(id_iter->session_uid);
+    }
+  }
+  FOREACH_MAIN_ID_END;
+
+  /* Check that no ID uses IDs from outside this context. */
+  auto id_validate_dependencies_cb = [&ids_in_context,
+                                      &is_valid](LibraryIDLinkCallbackData *cb_data) -> int {
+    ID **id_p = cb_data->id_pointer;
+    ID *owner_id = cb_data->owner_id;
+    ID *self_id = cb_data->self_id;
+
+    /* By definition, embedded IDs are not in Main, so they are not listed in this context either.
+     */
+    if (cb_data->cb_flag & (IDWALK_CB_EMBEDDED | IDWALK_CB_EMBEDDED_NOT_OWNING)) {
+      return IDWALK_RET_NOP;
+    }
+
+    if (*id_p && !ids_in_context.contains(*id_p)) {
+      if (owner_id != self_id) {
+        CLOG_ERROR(
+            &LOG_PARTIALWRITE,
+            "ID %s (used by ID '%s', embedded ID '%s') is not in current partial write context",
+            (*id_p)->name,
+            owner_id->name,
+            self_id->name);
+      }
+      else {
+        CLOG_ERROR(&LOG_PARTIALWRITE,
+                   "ID %s (used by ID '%s') is not in current partial write context",
+                   (*id_p)->name,
+                   owner_id->name);
+      }
+      is_valid = false;
+    }
+    return IDWALK_RET_NOP;
+  };
+  FOREACH_MAIN_ID_BEGIN (&this->bmain, id_iter) {
+    BKE_library_foreach_ID_link(
+        &this->bmain, id_iter, id_validate_dependencies_cb, nullptr, IDWALK_READONLY);
+  }
+  FOREACH_MAIN_ID_END;
+
+  return is_valid;
+}
+
+bool PartialWriteContext::write(const char *write_filepath,
+                                const int write_flags,
+                                const int remap_mode,
+                                ReportList &reports)
+{
+  BLI_assert_msg(write_filepath != reference_root_filepath_,
+                 "A library blendfile should not overwrite currently edited blendfile");
+
+  /* In case the write path is the same as one of the libraries used by this context, make this
+   * library local, and delete it (and all of its potentially remaining linked data). */
+  Library *make_local_lib = nullptr;
+  LISTBASE_FOREACH (Library *, library, &this->bmain.libraries) {
+    if (STREQ(write_filepath, library->runtime.filepath_abs)) {
+      make_local_lib = library;
+    }
+  }
+  if (make_local_lib) {
+    BKE_library_make_local(&this->bmain, make_local_lib, nullptr, false, false, false);
+    BKE_id_delete(&this->bmain, make_local_lib);
+    make_local_lib = nullptr;
+  }
+
+  BLI_assert(this->is_valid());
+
+  BlendFileWriteParams blend_file_write_params{};
+  blend_file_write_params.remap_mode = eBLO_WritePathRemap(remap_mode);
+  return BLO_write_file(
+      &this->bmain, write_filepath, write_flags, &blend_file_write_params, &reports);
+}
+
+bool PartialWriteContext::write(const char *write_filepath, ReportList &reports)
+{
+  return this->write(write_filepath, 0, BLO_WRITE_PATH_REMAP_RELATIVE, reports);
+}
+
+}  // namespace blender::bke::blendfile
 
 static void blendfile_write_partial_clear_flags(Main *bmain_src)
 {
@@ -1464,8 +2194,7 @@ bool BKE_blendfile_write_partial(Main *bmain_src,
    * (otherwise `main->filepath` will not be set at read time). */
   STRNCPY(bmain_dst->filepath, bmain_src->filepath);
 
-  BLO_main_expander(blendfile_write_partial_cb);
-  BLO_expand_main(nullptr, bmain_src);
+  BLO_expand_main(nullptr, bmain_src, blendfile_write_partial_cb);
 
   /* move over all tagged blocks */
   set_listbasepointers(bmain_src, lbarray_src);

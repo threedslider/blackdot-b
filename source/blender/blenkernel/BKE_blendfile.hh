@@ -7,17 +7,32 @@
  * \ingroup bke
  */
 
+#include "BKE_main.hh"
+
+#include "BLI_function_ref.hh"
+#include "BLI_map.hh"
+#include "BLI_utility_mixins.hh"
+
+#include <string>
+
 struct bContext;
 struct BlendFileData;
 struct BlendFileReadParams;
 struct BlendFileReadReport;
 struct BlendFileReadWMSetupData;
 struct ID;
-struct Main;
+struct IDNameLib_Map;
+struct Library;
+struct LibraryIDLinkCallbackData;
 struct MemFile;
 struct ReportList;
 struct UserDef;
 struct WorkspaceConfigFileData;
+
+/**
+ * The suffix used for blend-files managed by the asset system.
+ */
+#define BLENDER_ASSET_FILE_SUFFIX ".asset.blend"
 
 /**
  * Check whether given path ends with a blend file compatible extension
@@ -88,8 +103,8 @@ BlendFileData *BKE_blendfile_read(const char *filepath,
  * \return Blend file data, this must be passed to
  * #BKE_blendfile_read_setup_readfile/#BKE_blendfile_read_setup_undo when non-NULL.
  */
-BlendFileData *BKE_blendfile_read_from_memory(const void *filebuf,
-                                              int filelength,
+BlendFileData *BKE_blendfile_read_from_memory(const void *file_buf,
+                                              int file_buf_size,
                                               const BlendFileReadParams *params,
                                               ReportList *reports);
 
@@ -113,8 +128,8 @@ void BKE_blendfile_read_make_empty(bContext *C);
  * Only read the #UserDef from a .blend.
  */
 UserDef *BKE_blendfile_userdef_read(const char *filepath, ReportList *reports);
-UserDef *BKE_blendfile_userdef_read_from_memory(const void *filebuf,
-                                                int filelength,
+UserDef *BKE_blendfile_userdef_read_from_memory(const void *file_buf,
+                                                int file_buf_size,
                                                 ReportList *reports);
 UserDef *BKE_blendfile_userdef_from_defaults();
 
@@ -135,13 +150,250 @@ bool BKE_blendfile_userdef_write_app_template(const char *filepath, ReportList *
 bool BKE_blendfile_userdef_write_all(ReportList *reports);
 
 WorkspaceConfigFileData *BKE_blendfile_workspace_config_read(const char *filepath,
-                                                             const void *filebuf,
-                                                             int filelength,
+                                                             const void *file_buf,
+                                                             int file_buf_size,
                                                              ReportList *reports);
-bool BKE_blendfile_workspace_config_write(Main *bmain, const char *filepath, ReportList *reports);
 void BKE_blendfile_workspace_config_data_free(WorkspaceConfigFileData *workspace_config);
 
-/* Partial blend file writing. */
+namespace blender::bke::blendfile {
+
+/**
+ * Partial blendfile writing.
+ *
+ * This wrapper around the Main struct is designed to have a very short life span, during which it
+ * will contain independent copies of the IDs that are added to it.
+ *
+ * In general, the #G_MAIN data should not change while such a context exists, otherwise mapping
+ * info between the context content and the G_MAIN content cannot be kept up-to-date.
+ *
+ * The context can then be written to disk, and destroyed.
+ *
+ * It also has advanced ways to handle ID dependencies (and libraries for linked IDs), by allowing
+ * specific handling for each dependency individually. By using the `dependencies_filter_cb`
+ * optional parameter of #id_add, it is possible to skip (ignore) certain dependencies, or make
+ * linked ones local in the context, etc.
+ *
+ * Design task: #122061
+ */
+class PartialWriteContext : NonCopyable, NonMovable {
+ public:
+  /** The temp Main itself, storing all IDs copied into this partial write context. */
+  Main bmain = {};
+
+ private:
+  /**
+   * The filepath that should be used as root for IDs _added_ to the context, when handling
+   * remapping of their relative filepaths.
+   *
+   * Typically, the current G_MAIN's filepath.
+   *
+   * \note Currently always also copied into the temp `bmain.filepath`,
+   * as this simplifies remapping of relative file-paths.
+   * This may change in the future, if context can be loaded from external blend-files.
+   */
+  std::string reference_root_filepath_;
+  /**
+   * This mapping only contains entries for IDs in the context which have a known matching ID in
+   * current G_MAIN.
+   *
+   * It is used to avoid adding several time a same ID (e.g. as a dependency of several other added
+   * IDs).
+   */
+  IDNameLib_Map *matching_uid_map_;
+
+  /** A mapping from the absolute library paths to the #Library IDs in the context. */
+  blender::Map<std::string, Library *> libraries_map_;
+
+  /**
+   * In case an explicitly added ID has the same session_uid as an existing one in current
+   * context, the added one should be able to 'steal' that session_uid in the context, and
+   * re-assign a new one to the other ID.
+   */
+  void preempt_session_uid(ID *ctx_id, unsigned int session_uid);
+  /**
+   * Ensures that given ID will be written on disk (within current context).
+   *
+   * This is achieved either by setting the 'fake user' flag, or the (runtime-only, cleared on next
+   * file load) 'extra user' tag. */
+  void ensure_id_user(ID *ctx_id, bool set_fake_user);
+  /**
+   * Utils for #PartialWriteContext::id_add, only adds (duplicate) the given source ID into
+   * current context.
+   */
+  ID *id_add_copy(const ID *id, bool regenerate_session_uid);
+  /** Make given context ID local to the context. */
+  void make_local(ID *ctx_id, int make_local_flags);
+  /**
+   * Ensure that the given ID's library has a matching Library ID in the context, copying the
+   * current `ctx_id->lib` one if needed.
+   */
+  Library *ensure_library(ID *ctx_id);
+  /**
+   * Ensure that the given library path has a matching Library ID in the context, creating a new
+   * one if needed.
+   */
+  Library *ensure_library(StringRefNull library_absolute_path);
+
+ public:
+  /* Passing a reference root filepath is mandatory, for remapping of relative paths to work as
+   * expected. */
+  PartialWriteContext() = delete;
+  PartialWriteContext(StringRefNull reference_root_filepath);
+  ~PartialWriteContext();
+
+  /**
+   * Control how to handle IDs and their dependencies when they are added to this context.
+   *
+   * \note For linked IDs, if #MAKE_LOCAL is not used, the library ID pointer is _not_ considered
+   * nor handled as a regular dependency. Instead, the library is _always_ added to the context
+   * data, and never duplicated. Also, library matching always happens based on absolute filepath.
+   *
+   * \warning Heterogeneous usages of these operations flags during a same PartialWriteContext
+   * session may not generate expected results. Typically, once an ID has been added to the context
+   * as 'matching' counterpart of the source Main (i.e. sharing the same session UID), it will not
+   * be re-processed further if found again as dependency of another ID, or added explicitly as
+   * root ID.
+   * So e.g. if an ID is added (explicitly or implicitly) but none of its dependencies are (using
+   * `CLEAR_DEPENDENCIES`), re-adding the same ID (explicitly or implicitly) with e.g.
+   * `ADD_DEPENDENCIES` set will __not__ add its dependencies.
+   * This is not expected to be an issue in current use-cases.
+   */
+  enum IDAddOperations {
+    NOP = 0,
+    /**
+     * Do not keep linked info (library and/or liboverride references).
+     *
+     * \warning By default, when #ADD_DEPENDENCIES is defined, this will also apply to all
+     * dependencies as well.
+     */
+    MAKE_LOCAL = 1 << 0,
+    /**
+     * Set the 'fake user' flag to added ID. Ensures that it is never auto-removed from the
+     * context, and always written to disk.
+     */
+    SET_FAKE_USER = 1 << 1,
+    /**
+     * Clear all dependency IDs that are not in the partial write context. Mutually exclusive with
+     * #ADD_DEPENDENCIES.
+     *
+     * WARNING: This also means that dependencies like obdata, shape-keys or actions are not
+     * duplicated either.
+     */
+    CLEAR_DEPENDENCIES = 1 << 8,
+    /**
+     * Also add (or reuse if already there) dependency IDs into the partial write context. Mutually
+     * exclusive with #CLEAR_DEPENDENCIES.
+     */
+    ADD_DEPENDENCIES = 1 << 9,
+    /**
+     * For each explicitly added IDs (i.e. these with a fake user), ensure all of their
+     * dependencies are independent copies, instead of being shared with other explicitly added
+     * IDs. Only relevant with #ADD_DEPENDENCIES.
+     *
+     * \warning Implies that the `session_uid` of these duplicated dependencies will be different
+     * than their source data.
+     */
+    DUPLICATE_DEPENDENCIES = 1 << 10,
+  };
+  /**
+   * Options passed to the #id_add method.
+   */
+  struct IDAddOptions {
+    IDAddOperations operations;
+  };
+  /**
+   * Add a copy of the given ID to the partial write context.
+   *
+   * \note The duplicated ID will have the same session_uid as its source. In case a matching ID
+   * already exists in the context, it is returned instead of duplicating it again.
+   *
+   * \param options: Control how the added ID (and its dependencies) are handled. See
+   *                 #IDAddOptions and #IDAddOperations above for details.
+   * \param dependencies_filter_cb: optional, a callback called for each ID usages. Currently, only
+   *                                accepted return values are #MAKE_LOCAL, #SET_FAKE_USER, and
+   *                                #ADD_DEPENDENCIES or #CLEAR_DEPENDENCIES.
+   *
+   * \return The pointer to the duplicated ID in the partial write context.
+   */
+  ID *id_add(const ID *id,
+             IDAddOptions options,
+             blender::FunctionRef<IDAddOperations(LibraryIDLinkCallbackData *cb_data,
+                                                  IDAddOptions options)> dependencies_filter_cb =
+                 nullptr);
+
+  /**
+   * Add and return a new ID into the partial write context.
+   *
+   * NOTE: Since this ID is _created_ in the partial write buffer, by definition it has no matching
+   * counterpart in the current G_MAIN. Therefore, there is no need to add it to
+   * #matching_uid_map_, and its `session_uid` is not guaranteed to be constant (as it may be
+   * preempted later by another ID added from the current G_MAIN).
+   *
+   * \param options: Control how the added ID (and its dependencies) are handled. See
+   *                 #IDAddOptions and #IDAddOperations above for details, note that only
+   *                 relevant operation currently is the #SET_FAKE_USER one.
+   */
+  ID *id_create(short id_type, StringRefNull id_name, Library *library, IDAddOptions options);
+
+  /**
+   * Delete the copy of the given ID from the partial write context.
+   *
+   * \note The search is based on the #ID.session_uid of the given ID. This means that if
+   * `duplicate_depencies` option was used when adding the ID, these independent dependencies
+   * duplicates cannot be removed directly from the context. Use #remove_unused for this.
+   *
+   * \note No dependencies will be removed. Use #remove_unused to remove all unused IDs from the
+   * current context.
+   */
+  void id_delete(const ID *id);
+
+  /**
+   * Remove all unused IDs from the current context.
+   *
+   * \param clear_extra_user: If `true`, the runtime tag ensuring that IDs are written on disk will
+   *                          be cleared. In other words, only IDs flagged with 'fake user' and
+   *                          their dependencies will be kept.
+   *                          Allows to also remove IDs that were added to this context during the
+   *                          same editing session, and were not flagged as 'fake user'.
+   */
+  void remove_unused(bool clear_extra_user = false);
+
+  /**
+   * Fully empty the partial write context.
+   */
+  void clear();
+
+  /**
+   * Debug: Check if the current partial write context is fully valid.
+   *
+   * Currently, check if any ID in the context still has relations to IDs not in the context.
+   *
+   * \return false if the context is invalid.
+   */
+  bool is_valid();
+
+  /**
+   * Write the content of the current context as a blendfile on disk.
+   *
+   * \return `true` on success.
+   */
+  bool write(const char *filepath, int write_flags, int remap_mode, ReportList &reports);
+  bool write(const char *filepath, ReportList &reports);
+
+  /* TODO: To allow editing an existing external blendfile:
+   *   - API to load a context from a blendfile.
+   *   - API to 'match' a context's content with another Main database's content (based on ID
+   *     names and libraries).
+   *   - API to replace the matching context IDs by a 'new version' (similar to 'add_id', but
+   *     ensuring that the context ID, if it already exists, is a pristine copy of the given source
+   *     one).
+   *   - Rework the remapping of relative filepaths, since data already existing in the
+   *     loaded-from-disk temp context will have different root-path than the data from current
+   *     G_MAIN.
+   */
+};
+
+}  // namespace blender::bke::blendfile
 
 void BKE_blendfile_write_partial_tag_ID(ID *id, bool set);
 void BKE_blendfile_write_partial_begin(Main *bmain_src);

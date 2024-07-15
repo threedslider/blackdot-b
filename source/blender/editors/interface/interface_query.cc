@@ -24,6 +24,8 @@
 
 #include "interface_intern.hh"
 
+#include "UI_abstract_view.hh"
+
 #include "WM_api.hh"
 #include "WM_types.hh"
 
@@ -63,10 +65,12 @@ bool ui_but_is_toggle(const uiBut *but)
 bool ui_but_is_interactive_ex(const uiBut *but, const bool labeledit, const bool for_tooltip)
 {
   /* NOTE: #UI_BTYPE_LABEL is included for highlights, this allows drags. */
-  if (but->type == UI_BTYPE_LABEL) {
+  if (ELEM(but->type, UI_BTYPE_LABEL, UI_BTYPE_PREVIEW_TILE)) {
     if (for_tooltip) {
       /* It's important labels are considered interactive for the purpose of showing tooltip. */
-      if (!ui_but_drag_is_draggable(but) && but->tip_func == nullptr) {
+      if (!ui_but_drag_is_draggable(but) && but->tip_func == nullptr &&
+          (but->tip == nullptr || but->tip[0] == '\0'))
+      {
         return false;
       }
     }
@@ -96,7 +100,7 @@ bool ui_but_is_interactive_ex(const uiBut *but, const bool labeledit, const bool
   }
   if (but->type == UI_BTYPE_VIEW_ITEM) {
     const uiButViewItem *but_item = static_cast<const uiButViewItem *>(but);
-    return UI_view_item_is_interactive(but_item->view_item);
+    return but_item->view_item->is_interactive();
   }
 
   return true;
@@ -499,12 +503,27 @@ static bool ui_but_is_active_view_item(const uiBut *but, const void * /*customda
   }
 
   const uiButViewItem *view_item_but = (const uiButViewItem *)but;
-  return UI_view_item_is_active(view_item_but->view_item);
+  return view_item_but->view_item->is_active();
 }
 
 uiBut *ui_view_item_find_active(const ARegion *region)
 {
   return ui_but_find(region, ui_but_is_active_view_item, nullptr);
+}
+
+uiBut *ui_view_item_find_search_highlight(const ARegion *region)
+{
+  return ui_but_find(
+      region,
+      [](const uiBut *but, const void * /*find_custom_data*/) {
+        if (but->type != UI_BTYPE_VIEW_ITEM) {
+          return false;
+        }
+
+        const uiButViewItem *view_item_but = static_cast<const uiButViewItem *>(but);
+        return view_item_but->view_item->is_search_highlight();
+      },
+      nullptr);
 }
 
 /** \} */
@@ -644,7 +663,7 @@ bool ui_block_is_popover(const uiBlock *block)
 
 bool ui_block_is_pie_menu(const uiBlock *block)
 {
-  return ((block->flag & UI_BLOCK_RADIAL) != 0);
+  return ((block->flag & UI_BLOCK_PIE_MENU) != 0);
 }
 
 bool ui_block_is_popup_any(const uiBlock *block)
@@ -688,6 +707,16 @@ bool UI_block_can_add_separator(const uiBlock *block)
     return (but && !ELEM(but->type, UI_BTYPE_SEPR_LINE, UI_BTYPE_SEPR));
   }
   return true;
+}
+
+bool UI_block_has_active_default_button(const uiBlock *block)
+{
+  LISTBASE_FOREACH (const uiBut *, but, &block->buttons) {
+    if ((but->flag & UI_BUT_ACTIVE_DEFAULT) && ((but->flag & UI_HIDDEN) == 0)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** \} */

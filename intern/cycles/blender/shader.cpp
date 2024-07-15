@@ -23,7 +23,7 @@
 #include "util/string.h"
 #include "util/task.h"
 
-#include "BKE_duplilist.h"
+#include "BKE_duplilist.hh"
 
 CCL_NAMESPACE_BEGIN
 
@@ -667,6 +667,9 @@ static ShaderNode *add_node(Scene *scene,
   else if (b_node.is_a(&RNA_ShaderNodeBsdfTransparent)) {
     node = graph->create_node<TransparentBsdfNode>();
   }
+  else if (b_node.is_a(&RNA_ShaderNodeBsdfRayPortal)) {
+    node = graph->create_node<RayPortalBsdfNode>();
+  }
   else if (b_node.is_a(&RNA_ShaderNodeBsdfSheen)) {
     BL::ShaderNodeBsdfSheen b_sheen_node(b_node);
     SheenBsdfNode *sheen = graph->create_node<SheenBsdfNode>();
@@ -942,6 +945,14 @@ static ShaderNode *add_node(Scene *scene,
     get_tex_mapping(noise, b_texture_mapping);
     node = noise;
   }
+  else if (b_node.is_a(&RNA_ShaderNodeTexGabor)) {
+    BL::ShaderNodeTexGabor b_gabor_node(b_node);
+    GaborTextureNode *gabor = graph->create_node<GaborTextureNode>();
+    gabor->set_type((NodeGaborType)b_gabor_node.gabor_type());
+    BL::TexMapping b_texture_mapping(b_gabor_node.texture_mapping());
+    get_tex_mapping(gabor, b_texture_mapping);
+    node = gabor;
+  }
   else if (b_node.is_a(&RNA_ShaderNodeTexCoord)) {
     BL::ShaderNodeTexCoord b_tex_coord_node(b_node);
     TextureCoordinateNode *tex_coord = graph->create_node<TextureCoordinateNode>();
@@ -1064,7 +1075,7 @@ static ShaderNode *add_node(Scene *scene,
   else if (b_node.is_a(&RNA_ShaderNodeOutputAOV)) {
     BL::ShaderNodeOutputAOV b_aov_node(b_node);
     OutputAOVNode *aov = graph->create_node<OutputAOVNode>();
-    aov->set_name(ustring(b_aov_node.name()));
+    aov->set_name(ustring(b_aov_node.aov_name()));
     node = aov;
   }
 
@@ -1592,7 +1603,7 @@ void BlenderSync::sync_world(BL::Depsgraph &b_depsgraph, BL::SpaceView3D &b_v3d,
   Integrator *integrator = scene->integrator;
   PointerRNA cscene = RNA_pointer_get(&b_scene.ptr, "cycles");
 
-  BL::World b_world = b_scene.world();
+  BL::World b_world = view_layer.world_override ? view_layer.world_override : b_scene.world();
 
   BlenderViewportParameters new_viewport_parameters(b_v3d, use_developer_ui);
 

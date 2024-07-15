@@ -30,6 +30,7 @@
 
 #include "BLI_blenlib.h"
 #include "BLI_math_color.h"
+#include "BLI_math_color.hh"
 #include "BLI_rect.h"
 #include "BLI_string.h"
 #include "BLI_task.h"
@@ -39,17 +40,19 @@
 #include "BKE_appdir.hh"
 #include "BKE_colortools.hh"
 #include "BKE_context.hh"
-#include "BKE_image.h"
+#include "BKE_global.hh"
 #include "BKE_image_format.h"
 #include "BKE_main.hh"
 
-#include "GPU_capabilities.h"
+#include "GPU_capabilities.hh"
 
 #include "RNA_define.hh"
 
 #include "SEQ_iterator.hh"
 
 #include <ocio_capi.h>
+
+using blender::float3x3;
 
 /* -------------------------------------------------------------------- */
 /** \name Global declarations
@@ -195,6 +198,8 @@ struct ColormanageCacheViewSettings {
   float exposure;
   float gamma;
   float dither;
+  float temperature;
+  float tint;
   CurveMapping *curve_mapping;
 };
 
@@ -213,6 +218,8 @@ struct ColormanageCacheData {
   float exposure;              /* exposure value cached buffer is calculated with */
   float gamma;                 /* gamma value cached buffer is calculated with */
   float dither;                /* dither value cached buffer is calculated with */
+  float temperature;           /* temperature value cached buffer is calculated with */
+  float tint;                  /* tint value cached buffer is calculated with */
   CurveMapping *curve_mapping; /* curve mapping used for cached buffer */
   int curve_mapping_timestamp; /* time stamp of curve mapping used for cached buffer */
 };
@@ -299,6 +306,8 @@ static void colormanage_view_settings_to_cache(ImBuf *ibuf,
   cache_view_settings->exposure = view_settings->exposure;
   cache_view_settings->gamma = view_settings->gamma;
   cache_view_settings->dither = ibuf->dither;
+  cache_view_settings->temperature = view_settings->temperature;
+  cache_view_settings->tint = view_settings->tint;
   cache_view_settings->flag = view_settings->flag;
   cache_view_settings->curve_mapping = view_settings->curve_mapping;
 }
@@ -363,7 +372,6 @@ static uchar *colormanage_cache_get(ImBuf *ibuf,
   cache_ibuf = colormanage_cache_get_ibuf(ibuf, &key, cache_handle);
 
   if (cache_ibuf) {
-    ColormanageCacheData *cache_data;
 
     BLI_assert(cache_ibuf->x == ibuf->x && cache_ibuf->y == ibuf->y);
 
@@ -374,12 +382,14 @@ static uchar *colormanage_cache_get(ImBuf *ibuf,
      * check here which exposure/gamma/curve was used for cached buffer and if they're
      * different from requested buffer should be re-generated
      */
-    cache_data = colormanage_cachedata_get(cache_ibuf);
+    const ColormanageCacheData *cache_data = colormanage_cachedata_get(cache_ibuf);
 
     if (cache_data->look != view_settings->look ||
         cache_data->exposure != view_settings->exposure ||
         cache_data->gamma != view_settings->gamma || cache_data->dither != view_settings->dither ||
-        cache_data->flag != view_settings->flag || cache_data->curve_mapping != curve_mapping ||
+        cache_data->temperature != view_settings->temperature ||
+        cache_data->tint != view_settings->tint || cache_data->flag != view_settings->flag ||
+        cache_data->curve_mapping != curve_mapping ||
         cache_data->curve_mapping_timestamp != curve_mapping_timestamp)
     {
       *cache_handle = nullptr;
@@ -425,6 +435,8 @@ static void colormanage_cache_put(ImBuf *ibuf,
   cache_data->exposure = view_settings->exposure;
   cache_data->gamma = view_settings->gamma;
   cache_data->dither = view_settings->dither;
+  cache_data->temperature = view_settings->temperature;
+  cache_data->tint = view_settings->tint;
   cache_data->flag = view_settings->flag;
   cache_data->curve_mapping = curve_mapping;
   cache_data->curve_mapping_timestamp = curve_mapping_timestamp;
@@ -468,7 +480,9 @@ static bool colormanage_role_color_space_name_get(OCIO_ConstConfigRcPtr *config,
   }
 
   if (ociocs == nullptr) {
-    printf("Color management: Error, could not find role \"%s\"\n", role);
+    if (!G.quiet) {
+      printf("Color management: Error, could not find role \"%s\"\n", role);
+    }
     return false;
   }
 
@@ -554,11 +568,15 @@ static bool colormanage_load_config(OCIO_ConstConfigRcPtr *config)
 
   global_tot_display = tot_display;
   if (global_tot_display == 0) {
-    printf("Color management: Error, could not find any displays\n");
+    if (!G.quiet) {
+      printf("Color management: Error, could not find any displays\n");
+    }
     ok = false;
   }
   else if (global_tot_view == 0) {
-    printf("Color management: Error, could not find any views\n");
+    if (!G.quiet) {
+      printf("Color management: Error, could not find any views\n");
+    }
     ok = false;
   }
 
@@ -660,21 +678,24 @@ void colormanagement_init()
   if (ocio_env && ocio_env[0] != '\0') {
     config = OCIO_configCreateFromEnv();
     if (config != nullptr) {
-      printf("Color management: Using %s as a configuration file\n", ocio_env);
-
+      if (!G.quiet) {
+        printf("Color management: Using %s as a configuration file\n", ocio_env);
+      }
       OCIO_setCurrentConfig(config);
       const bool ok = colormanage_load_config(config);
       OCIO_configRelease(config);
 
       if (!ok) {
-        printf("Color management: Failed to load config from environment\n");
+        if (!G.quiet) {
+          printf("Color management: Failed to load config from environment\n");
+        }
         colormanage_free_config();
         config = nullptr;
       }
     }
   }
 
-  /* Then try bunded config file. */
+  /* Then try bundled configuration file. */
   if (config == nullptr) {
     const std::optional<std::string> configdir = BKE_appdir_folder_id(BLENDER_DATAFILES,
                                                                       "colormanagement");
@@ -690,7 +711,9 @@ void colormanagement_init()
         OCIO_configRelease(config);
 
         if (!ok) {
-          printf("Color management: Failed to load bundled config\n");
+          if (!G.quiet) {
+            printf("Color management: Failed to load bundled config\n");
+          }
           colormanage_free_config();
           config = nullptr;
         }
@@ -700,7 +723,9 @@ void colormanagement_init()
 
   /* Then use fallback. */
   if (config == nullptr) {
-    printf("Color management: Using fallback mode for management\n");
+    if (!G.quiet) {
+      printf("Color management: Using fallback mode for management\n");
+    }
     config = OCIO_configCreateFallback();
     colormanage_load_config(config);
   }
@@ -862,8 +887,11 @@ static ColorSpace *display_transform_get_colorspace(
 static OCIO_ConstCPUProcessorRcPtr *create_display_buffer_processor(const char *look,
                                                                     const char *view_transform,
                                                                     const char *display,
-                                                                    float exposure,
-                                                                    float gamma,
+                                                                    const float exposure,
+                                                                    const float gamma,
+                                                                    const float temperature,
+                                                                    const float tint,
+                                                                    const bool use_white_balance,
                                                                     const char *from_colorspace)
 {
   OCIO_ConstConfigRcPtr *config = OCIO_getCurrentConfig();
@@ -878,6 +906,9 @@ static OCIO_ConstCPUProcessorRcPtr *create_display_buffer_processor(const char *
                                                                     (use_look) ? look : "",
                                                                     scale,
                                                                     exponent,
+                                                                    temperature,
+                                                                    tint,
+                                                                    use_white_balance,
                                                                     false);
 
   OCIO_configRelease(config);
@@ -970,6 +1001,9 @@ static OCIO_ConstCPUProcessorRcPtr *display_from_scene_linear_processor(
                                                 nullptr,
                                                 1.0f,
                                                 1.0f,
+                                                0.0f,
+                                                0.0f,
+                                                false,
                                                 false);
 
         OCIO_configRelease(config);
@@ -999,8 +1033,17 @@ static OCIO_ConstCPUProcessorRcPtr *display_to_scene_linear_processor(ColorManag
       OCIO_ConstProcessorRcPtr *processor = nullptr;
 
       if (view_name && config) {
-        processor = OCIO_createDisplayProcessor(
-            config, global_role_scene_linear, view_name, display->name, nullptr, 1.0f, 1.0f, true);
+        processor = OCIO_createDisplayProcessor(config,
+                                                global_role_scene_linear,
+                                                view_name,
+                                                display->name,
+                                                nullptr,
+                                                1.0f,
+                                                1.0f,
+                                                0.0f,
+                                                0.0f,
+                                                false,
+                                                true);
 
         OCIO_configRelease(config);
       }
@@ -1044,10 +1087,14 @@ void IMB_colormanagement_init_default_view_settings(
   view_settings->flag = 0;
   view_settings->gamma = 1.0f;
   view_settings->exposure = 0.0f;
+  view_settings->temperature = 6500.0f;
+  view_settings->tint = 10.0f;
   view_settings->curve_mapping = nullptr;
 }
 
-static void curve_mapping_apply_pixel(CurveMapping *curve_mapping, float *pixel, int channels)
+static void curve_mapping_apply_pixel(const CurveMapping *curve_mapping,
+                                      float *pixel,
+                                      int channels)
 {
   if (channels == 1) {
     pixel[0] = BKE_curvemap_evaluateF(curve_mapping, curve_mapping->cm, pixel[0]);
@@ -1121,11 +1168,14 @@ static void colormanage_check_display_settings(ColorManagedDisplaySettings *disp
     ColorManagedDisplay *display = colormanage_display_get_named(display_settings->display_device);
 
     if (!display) {
-      printf(
-          "Color management: display \"%s\" used by %s not found, setting to default (\"%s\").\n",
-          display_settings->display_device,
-          what,
-          default_display->name);
+      if (!G.quiet) {
+        printf(
+            "Color management: display \"%s\" used by %s not found, setting to default "
+            "(\"%s\").\n",
+            display_settings->display_device,
+            what,
+            default_display->name);
+      }
 
       STRNCPY(display_settings->display_device, default_display->name);
     }
@@ -1162,10 +1212,12 @@ static void colormanage_check_view_settings(ColorManagedDisplaySettings *display
       }
 
       if (default_view) {
-        printf("Color management: %s view \"%s\" not found, setting default \"%s\".\n",
-               what,
-               view_settings->view_transform,
-               default_view->name);
+        if (!G.quiet) {
+          printf("Color management: %s view \"%s\" not found, setting default \"%s\".\n",
+                 what,
+                 view_settings->view_transform,
+                 default_view->name);
+        }
 
         STRNCPY(view_settings->view_transform, default_view->name);
       }
@@ -1178,21 +1230,25 @@ static void colormanage_check_view_settings(ColorManagedDisplaySettings *display
   else {
     ColorManagedLook *look = colormanage_look_get_named(view_settings->look);
     if (look == nullptr) {
-      printf("Color management: %s look \"%s\" not found, setting default \"%s\".\n",
-             what,
-             view_settings->look,
-             default_look_name);
+      if (!G.quiet) {
+        printf("Color management: %s look \"%s\" not found, setting default \"%s\".\n",
+               what,
+               view_settings->look,
+               default_look_name);
+      }
 
       STRNCPY(view_settings->look, default_look_name);
     }
     else if (!colormanage_compatible_look(look, view_settings->view_transform)) {
-      printf(
-          "Color management: %s look \"%s\" is not compatible with view \"%s\", setting default "
-          "\"%s\".\n",
-          what,
-          view_settings->look,
-          view_settings->view_transform,
-          default_look_name);
+      if (!G.quiet) {
+        printf(
+            "Color management: %s look \"%s\" is not compatible with view \"%s\", setting default "
+            "\"%s\".\n",
+            what,
+            view_settings->look,
+            view_settings->view_transform,
+            default_look_name);
+      }
 
       STRNCPY(view_settings->look, default_look_name);
     }
@@ -1215,9 +1271,11 @@ static void colormanage_check_colorspace_settings(
     ColorSpace *colorspace = colormanage_colorspace_get_named(colorspace_settings->name);
 
     if (!colorspace) {
-      printf("Color management: %s colorspace \"%s\" not found, will use default instead.\n",
-             what,
-             colorspace_settings->name);
+      if (!G.quiet) {
+        printf("Color management: %s colorspace \"%s\" not found, will use default instead.\n",
+               what,
+               colorspace_settings->name);
+      }
 
       STRNCPY(colorspace_settings->name, "");
     }
@@ -1313,7 +1371,9 @@ const char *IMB_colormanagement_role_colorspace_name_get(int role)
     case COLOR_ROLE_DEFAULT_BYTE:
       return global_role_default_byte;
     default:
-      printf("Unknown role was passed to %s\n", __func__);
+      if (!G.quiet) {
+        printf("Unknown role was passed to %s\n", __func__);
+      }
       BLI_assert(0);
       break;
   }
@@ -1450,9 +1510,35 @@ bool IMB_colormanagement_space_name_is_srgb(const char *name)
   return (colorspace && IMB_colormanagement_space_is_srgb(colorspace));
 }
 
-const float *IMB_colormanagement_get_xyz_to_scene_linear()
+blender::float3x3 IMB_colormanagement_get_xyz_to_scene_linear()
 {
-  return &imbuf_xyz_to_scene_linear[0][0];
+  return blender::float3x3(imbuf_xyz_to_scene_linear);
+}
+
+blender::float3x3 IMB_colormanagement_get_scene_linear_to_xyz()
+{
+  return blender::float3x3(imbuf_scene_linear_to_xyz);
+}
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Functions for converting between color temperature/tint and RGB white points
+ * \{ */
+
+void IMB_colormanagement_get_whitepoint(const float temperature,
+                                        const float tint,
+                                        float whitepoint[3])
+{
+  blender::float3 xyz = blender::math::whitepoint_from_temp_tint(temperature, tint);
+  IMB_colormanagement_xyz_to_scene_linear(whitepoint, xyz);
+}
+
+bool IMB_colormanagement_set_whitepoint(const float whitepoint[3], float &temperature, float &tint)
+{
+  blender::float3 xyz;
+  IMB_colormanagement_scene_linear_to_xyz(xyz, whitepoint);
+  return blender::math::whitepoint_to_temp_tint(xyz, temperature, tint);
 }
 
 /** \} */
@@ -3907,12 +3993,16 @@ ColormanageProcessor *IMB_colormanagement_display_processor_new(
     cm_processor->is_data_result = display_space->is_data;
   }
 
+  const bool use_white_balance = applied_view_settings->flag & COLORMANAGE_VIEW_USE_WHITE_BALANCE;
   cm_processor->cpu_processor = create_display_buffer_processor(
       applied_view_settings->look,
       applied_view_settings->view_transform,
       display_settings->display_device,
       applied_view_settings->exposure,
       applied_view_settings->gamma,
+      applied_view_settings->temperature,
+      applied_view_settings->tint,
+      use_white_balance,
       global_role_scene_linear);
 
   if (applied_view_settings->flag & COLORMANAGE_VIEW_USE_CURVES) {
@@ -4019,8 +4109,8 @@ void IMB_colormanagement_processor_apply_pixel(ColormanageProcessor *cm_processo
     }
   }
   else {
-    BLI_assert(
-        !"Incorrect number of channels passed to IMB_colormanagement_processor_apply_pixel");
+    BLI_assert_msg(
+        false, "Incorrect number of channels passed to IMB_colormanagement_processor_apply_pixel");
   }
 }
 
@@ -4225,6 +4315,10 @@ bool IMB_colormanagement_setup_glsl_draw_from_space(
   const float gamma = applied_view_settings->gamma;
   const float scale = (exposure == 0.0f) ? 1.0f : powf(2.0f, exposure);
   const float exponent = (gamma == 1.0f) ? 1.0f : 1.0f / max_ff(FLT_EPSILON, gamma);
+  const float temperature = applied_view_settings->temperature;
+  const float tint = applied_view_settings->tint;
+  const bool use_white_balance = (applied_view_settings->flag &
+                                  COLORMANAGE_VIEW_USE_WHITE_BALANCE) != 0;
   const bool use_hdr = GPU_hdr_support() &&
                        (applied_view_settings->flag & COLORMANAGE_VIEW_USE_HDR) != 0;
 
@@ -4240,9 +4334,12 @@ bool IMB_colormanagement_setup_glsl_draw_from_space(
                                                                 scale,
                                                                 exponent,
                                                                 dither,
+                                                                temperature,
+                                                                tint,
                                                                 predivide,
                                                                 do_overlay_merge,
-                                                                use_hdr);
+                                                                use_hdr,
+                                                                use_white_balance);
 
   OCIO_configRelease(config);
 

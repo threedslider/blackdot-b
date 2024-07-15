@@ -32,8 +32,11 @@ class VKTexture : public Texture, public VKBindableResource {
   VkImage vk_image_ = VK_NULL_HANDLE;
   VmaAllocation allocation_ = VK_NULL_HANDLE;
 
-  /* Image view when used in a shader. */
-  std::optional<VKImageView> image_view_;
+  /**
+   * Image views are owned by VKTexture. When a specific image view is needed it will be created
+   * and stored here. Image view can be requested by calling `image_view_get` method.
+   */
+  Vector<VKImageView> image_views_;
 
   /* Last image layout of the texture. Frame-buffer and barriers can alter/require the actual
    * layout to be changed. During this it requires to set the current layout in order to know which
@@ -44,16 +47,13 @@ class VKTexture : public Texture, public VKBindableResource {
   int layer_offset_ = 0;
   bool use_stencil_ = false;
 
-  VkComponentMapping vk_component_mapping_ = {VK_COMPONENT_SWIZZLE_IDENTITY,
-                                              VK_COMPONENT_SWIZZLE_IDENTITY,
-                                              VK_COMPONENT_SWIZZLE_IDENTITY,
-                                              VK_COMPONENT_SWIZZLE_IDENTITY};
-
-  enum eDirtyFlags {
-    IMAGE_VIEW_DIRTY = (1 << 0),
-  };
-
-  int flags_ = IMAGE_VIEW_DIRTY;
+  VKImageViewInfo image_view_info_ = {eImageViewUsage::ShaderBinding,
+                                      IndexRange(0, VK_REMAINING_ARRAY_LAYERS),
+                                      IndexRange(0, VK_REMAINING_MIP_LEVELS),
+                                      {{'r', 'g', 'b', 'a'}},
+                                      false,
+                                      false,
+                                      VKImageViewArrayed::DONT_CARE};
 
  public:
   VKTexture(const char *name) : Texture(name) {}
@@ -84,9 +84,10 @@ class VKTexture : public Texture, public VKBindableResource {
   /* TODO(fclem): Legacy. Should be removed at some point. */
   uint gl_bindcode_get() const override;
 
-  void bind(int location,
-            shader::ShaderCreateInfo::Resource::BindType bind_type,
-            const GPUSamplerState sampler_state) override;
+  void add_to_descriptor_set(AddToDescriptorSetContext &data,
+                             int location,
+                             shader::ShaderCreateInfo::Resource::BindType bind_type,
+                             const GPUSamplerState sampler_state) override;
 
   VkImage vk_image_handle() const
   {
@@ -105,9 +106,20 @@ class VKTexture : public Texture, public VKBindableResource {
     return device_format_;
   }
 
+  /**
+   * Get a specific image view for this texture. The specification of the image view are passed
+   * inside the `info` parameter.
+   */
+  const VKImageView &image_view_get(const VKImageViewInfo &info);
+
+  /**
+   * Get the current image view for this texture.
+   */
+  const VKImageView &image_view_get(VKImageViewArrayed arrayed);
+
  protected:
   bool init_internal() override;
-  bool init_internal(GPUVertBuf *vbo) override;
+  bool init_internal(VertBuf *vbo) override;
   bool init_internal(GPUTexture *src, int mip_offset, int layer_offset, bool use_stencil) override;
 
  private:
@@ -119,8 +131,6 @@ class VKTexture : public Texture, public VKBindableResource {
    * on the device.
    */
   bool allocate();
-
-  VkImageViewType vk_image_view_type() const;
 
   /**
    * Determine the layerCount for vulkan based on the texture type. Will pass the
@@ -134,75 +144,12 @@ class VKTexture : public Texture, public VKBindableResource {
   VkExtent3D vk_extent_3d(int mip_level) const;
 
   /* -------------------------------------------------------------------- */
-  /** \name Image Layout
-   * \{ */
- public:
-  /**
-   * Update the current layout attribute, without actually changing the layout.
-   *
-   * Vulkan can change the layout of an image, when a command is being executed.
-   * The start of a render pass or the end of a render pass can also alter the
-   * actual layout of the image. This method allows to change the last known layout
-   * that the image is using.
-   *
-   * NOTE: When we add command encoding, this should partly being done inside
-   * the command encoder, as there is more accurate determination of the transition
-   * of the layout. Only the final transition should then be stored inside the texture
-   * to be used by as initial layout for the next set of commands.
-   */
-  void current_layout_set(VkImageLayout new_layout);
-  VkImageLayout current_layout_get() const;
-
-  /**
-   * Ensure the layout of the texture. This also performs the conversion by adding a memory
-   * barrier to the active command buffer to perform the conversion.
-   *
-   * When texture is already in the requested layout, nothing will be done.
-   */
-  void layout_ensure(VKContext &context,
-                     VkImageLayout requested_layout,
-                     VkPipelineStageFlags src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                     VkAccessFlags src_access = VK_ACCESS_MEMORY_WRITE_BIT,
-                     VkPipelineStageFlags dst_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                     VkAccessFlags dst_access = VK_ACCESS_MEMORY_READ_BIT);
-
- private:
-  /**
-   * Internal function to ensure the layout of a single mipmap level. Note that the caller is
-   * responsible to update the current_layout of the image at the end of the operation and make
-   * sure that all mipmap levels are in that given layout.
-   */
-  void layout_ensure(VKContext &context,
-                     IndexRange mipmap_range,
-                     VkImageLayout current_layout,
-                     VkImageLayout requested_layout,
-                     VkPipelineStageFlags src_stage,
-                     VkAccessFlags src_access,
-                     VkPipelineStageFlags dst_stage,
-                     VkAccessFlags dst_access);
-
-  /** \} */
-
-  /* -------------------------------------------------------------------- */
   /** \name Image Views
    * \{ */
- public:
-  VKImageView &image_view_get()
-  {
-    image_view_ensure();
-    return *image_view_;
-  }
-
-  const VkComponentMapping &vk_component_mapping_get() const
-  {
-    return vk_component_mapping_;
-  }
 
  private:
   IndexRange mip_map_range() const;
   IndexRange layer_range() const;
-  void image_view_ensure();
-  void image_view_update();
 
   /** \} */
 };

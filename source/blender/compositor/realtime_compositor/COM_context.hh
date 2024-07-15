@@ -11,10 +11,12 @@
 #include "DNA_scene_types.h"
 #include "DNA_vec_types.h"
 
-#include "GPU_shader.h"
-#include "GPU_texture.h"
+#include "GPU_shader.hh"
+#include "GPU_texture.hh"
 
 #include "COM_domain.hh"
+#include "COM_meta_data.hh"
+#include "COM_profiler.hh"
 #include "COM_render_context.hh"
 #include "COM_result.hh"
 #include "COM_static_cache_manager.hh"
@@ -80,7 +82,7 @@ class Context {
   /* Get the texture where the result of the compositor viewer should be written, given the domain
    * of the result to be viewed. This should be called by viewer output nodes to get their target
    * texture. */
-  virtual GPUTexture *get_viewer_output_texture(Domain domain) = 0;
+  virtual GPUTexture *get_viewer_output_texture(Domain domain, bool is_data) = 0;
 
   /* Get the texture where the given render pass is stored. This should be called by the Render
    * Layer node to populate its outputs. */
@@ -89,7 +91,7 @@ class Context {
                                         const char *pass_name) = 0;
 
   /* Get the name of the view currently being rendered. */
-  virtual StringRef get_view_name() = 0;
+  virtual StringRef get_view_name() const = 0;
 
   /* Get the precision of the intermediate results of the compositor. */
   virtual ResultPrecision get_precision() const = 0;
@@ -107,10 +109,32 @@ class Context {
    * that is, to ready it to track the next change. */
   virtual IDRecalcFlag query_id_recalc_flag(ID *id) const = 0;
 
+  /* Populates the given meta data from the render stamp information of the given render pass. */
+  virtual void populate_meta_data_for_pass(const Scene *scene,
+                                           int view_layer_id,
+                                           const char *pass_name,
+                                           MetaData &meta_data) const;
+
   /* Get a pointer to the render context of this context. A render context stores information about
    * the current render. It might be null if the compositor is not being evaluated as part of a
    * render pipeline. */
   virtual RenderContext *render_context() const;
+
+  /* Get a pointer to the profiler of this context. It might be null if the compositor context does
+   * not support profiling. */
+  virtual Profiler *profiler() const;
+
+  /* Gets called after the evaluation of each compositor operation. See overrides for possible
+   * uses. */
+  virtual void evaluate_operation_post() const;
+
+  /* Returns true if the compositor evaluation is canceled and that the evaluator should stop
+   * executing as soon as possible. */
+  virtual bool is_canceled() const;
+
+  /* Resets the context's internal structures like texture pool and cache manager. This should be
+   * called before every evaluation. */
+  void reset();
 
   /* Get the size of the compositing region. See get_compositing_region(). The output size is
    * sanitized such that it is at least 1 in both dimensions. However, the developer is expected to

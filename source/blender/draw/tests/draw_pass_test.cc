@@ -27,8 +27,8 @@ static void test_draw_pass_all_commands()
   ssbo.push_update();
 
   /* Won't be dereferenced. */
-  GPUVertBuf *vbo = (GPUVertBuf *)1;
-  GPUIndexBuf *ibo = (GPUIndexBuf *)1;
+  gpu::VertBuf *vbo = (gpu::VertBuf *)1;
+  gpu::IndexBuf *ibo = (gpu::IndexBuf *)1;
   GPUFrameBuffer *fb = nullptr;
 
   float4 color(1.0f, 1.0f, 1.0f, 0.0f);
@@ -44,7 +44,7 @@ static void test_draw_pass_all_commands()
   const int mvp_location = GPU_shader_get_uniform(sh, "ModelViewProjectionMatrix");
   pass.shader_set(sh);
   pass.framebuffer_set(&fb);
-  pass.subpass_transition(GPU_ATTACHEMENT_IGNORE, {GPU_ATTACHEMENT_WRITE, GPU_ATTACHEMENT_READ});
+  pass.subpass_transition(GPU_ATTACHMENT_IGNORE, {GPU_ATTACHMENT_WRITE, GPU_ATTACHMENT_READ});
   pass.bind_texture("image", tex);
   pass.bind_texture("image", &tex);
   pass.bind_image("missing_image", tex);       /* Should not crash. */

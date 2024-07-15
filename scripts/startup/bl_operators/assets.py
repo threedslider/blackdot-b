@@ -40,8 +40,8 @@ class ASSET_OT_tag_add(AssetBrowserMetadataOperator, Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        active_asset = SpaceAssetInfo.get_active_asset(context)
-        active_asset.tags.new(data_("Tag"))
+        active_asset = context.asset
+        active_asset.metadata.tags.new(data_("Tag"))
 
         return {'FINISHED'}
 
@@ -92,6 +92,11 @@ class ASSET_OT_open_containing_blend_file(Operator):
         if asset.local_id:
             cls.poll_message_set("Selected asset is contained in the current file")
             return False
+        # This could become a built-in query, for now this is good enough.
+        if asset.full_library_path.endswith(".asset.blend"):
+            cls.poll_message_set(
+                "Selected asset is contained in a file managed by the asset system, manual edits should be avoided")
+            return False
         return True
 
     def execute(self, context):
@@ -125,7 +130,7 @@ class ASSET_OT_open_containing_blend_file(Operator):
             return {'RUNNING_MODAL'}
 
         if returncode:
-            self.report({'WARNING'}, rpt_("Blender sub-process exited with error code %d") % returncode)
+            self.report({'WARNING'}, rpt_("Blender sub-process exited with error code {:d}").format(returncode))
 
         if bpy.ops.asset.library_refresh.poll():
             bpy.ops.asset.library_refresh()

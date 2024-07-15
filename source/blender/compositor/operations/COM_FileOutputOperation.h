@@ -9,7 +9,7 @@
 #include "DNA_node_types.h"
 
 #include "COM_CompositorContext.h"
-#include "COM_MultiThreadedOperation.h"
+#include "COM_NodeOperation.h"
 
 struct StampData;
 
@@ -20,16 +20,21 @@ class FileOutput;
 namespace blender::compositor {
 
 struct FileOutputInput {
-  FileOutputInput(NodeImageMultiFileSocket *data, DataType data_type);
+  FileOutputInput(NodeImageMultiFileSocket *data, DataType data_type, DataType original_data_type);
 
   NodeImageMultiFileSocket *data;
+  /* The internal data type of the input in the operation, which can be different from the UI type.
+   * See the get_input_data_type function in COM_FileOutputNode.cc for more information. */
   DataType data_type;
+  /* Stores the original data type of socket in the UI, see data_type above for more information
+   * about the distinction. */
+  DataType original_data_type;
 
   float *output_buffer = nullptr;
   SocketReader *image_input = nullptr;
 };
 
-class FileOutputOperation : public MultiThreadedOperation {
+class FileOutputOperation : public NodeOperation {
  private:
   const CompositorContext *context_;
   const NodeImageMultiFile *node_data_;
@@ -40,7 +45,6 @@ class FileOutputOperation : public MultiThreadedOperation {
                       const NodeImageMultiFile *node_data,
                       Vector<FileOutputInput> inputs);
 
-  void execute_region(rcti *rect, unsigned int tile_number) override;
   bool is_output_operation(bool /*rendering*/) const override
   {
     return true;
@@ -52,9 +56,9 @@ class FileOutputOperation : public MultiThreadedOperation {
     return eCompositorPriority::Low;
   }
 
-  void update_memory_buffer_partial(MemoryBuffer *output,
-                                    const rcti &area,
-                                    Span<MemoryBuffer *> inputs) override;
+  void update_memory_buffer(MemoryBuffer *output,
+                            const rcti &area,
+                            Span<MemoryBuffer *> inputs) override;
 
  private:
   void execute_single_layer();

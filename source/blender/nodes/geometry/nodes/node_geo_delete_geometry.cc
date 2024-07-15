@@ -7,16 +7,6 @@
 #include "UI_interface.hh"
 #include "UI_resources.hh"
 
-#include "DNA_grease_pencil_types.h"
-#include "DNA_pointcloud_types.h"
-
-#include "BKE_curves.hh"
-#include "BKE_grease_pencil.hh"
-#include "BKE_instances.hh"
-#include "BKE_mesh.hh"
-#include "BKE_pointcloud.hh"
-
-#include "GEO_mesh_copy_selection.hh"
 #include "GEO_separate_geometry.hh"
 
 #include "RNA_enum_types.hh"
@@ -116,26 +106,25 @@ static void node_rna(StructRNA *srna)
                     "Which domain to delete in",
                     rna_enum_attribute_domain_without_corner_items,
                     NOD_storage_enum_accessors(domain),
-                    int(AttrDomain::Point),
-                    enums::domain_without_corner_experimental_grease_pencil_version3_fn);
+                    int(AttrDomain::Point));
 }
 
 static void node_register()
 {
-  static bNodeType ntype;
+  static blender::bke::bNodeType ntype;
 
   geo_node_type_base(&ntype, GEO_NODE_DELETE_GEOMETRY, "Delete Geometry", NODE_CLASS_GEOMETRY);
 
-  node_type_storage(&ntype,
-                    "NodeGeometryDeleteGeometry",
-                    node_free_standard_storage,
-                    node_copy_standard_storage);
+  blender::bke::node_type_storage(&ntype,
+                                  "NodeGeometryDeleteGeometry",
+                                  node_free_standard_storage,
+                                  node_copy_standard_storage);
 
   ntype.initfunc = node_init;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
-  nodeRegisterType(&ntype);
+  blender::bke::nodeRegisterType(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

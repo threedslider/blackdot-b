@@ -23,15 +23,14 @@
 #include "BLI_math_rotation.h"
 #include "BLI_utildefines.h"
 
-#include "BLT_translation.h"
+#include "BLT_translation.hh"
 
-#include "BKE_anim_data.h"
+#include "BKE_anim_data.hh"
 #include "BKE_context.hh"
 #include "BKE_curve.hh"
-#include "BKE_fcurve.h"
+#include "BKE_fcurve.hh"
 #include "BKE_fcurve_driver.h"
-#include "BKE_global.h"
-#include "BKE_main.hh"
+#include "BKE_global.hh"
 #include "BKE_screen.hh"
 #include "BKE_unit.hh"
 
@@ -46,14 +45,13 @@
 #include "RNA_prototypes.h"
 
 #include "ED_anim_api.hh"
-#include "ED_keyframing.hh"
 #include "ED_screen.hh"
 #include "ED_undo.hh"
 
 #include "UI_interface.hh"
 #include "UI_resources.hh"
 
-#include "graph_intern.h" /* own include */
+#include "graph_intern.hh" /* own include */
 
 #define B_REDR 1
 
@@ -619,15 +617,15 @@ static void do_graph_region_driver_buttons(bContext *C, void *id_v, int event)
       ID *id = static_cast<ID *>(id_v);
       AnimData *adt = BKE_animdata_from_id(id);
 
-      /* Rebuild depsgraph for the new dependencies, and ensure COW copies get flushed. */
+      /* Rebuild depsgraph for the new dependencies, and ensure evaluated copies get flushed. */
       DEG_relations_tag_update(bmain);
-      DEG_id_tag_update_ex(bmain, id, ID_RECALC_COPY_ON_WRITE);
+      DEG_id_tag_update_ex(bmain, id, ID_RECALC_SYNC_TO_EVAL);
       if (adt != nullptr) {
         if (adt->action != nullptr) {
-          DEG_id_tag_update_ex(bmain, &adt->action->id, ID_RECALC_COPY_ON_WRITE);
+          DEG_id_tag_update_ex(bmain, &adt->action->id, ID_RECALC_SYNC_TO_EVAL);
         }
         if (adt->tmpact != nullptr) {
-          DEG_id_tag_update_ex(bmain, &adt->tmpact->id, ID_RECALC_COPY_ON_WRITE);
+          DEG_id_tag_update_ex(bmain, &adt->tmpact->id, ID_RECALC_SYNC_TO_EVAL);
         }
       }
 
@@ -1035,17 +1033,16 @@ static void graph_draw_driver_settings_panel(uiLayout *layout,
     col = uiLayoutColumn(layout, true);
     block = uiLayoutGetBlock(col);
 
-    if (driver->flag & DRIVER_FLAG_INVALID) {
+    if (driver->flag & DRIVER_FLAG_PYTHON_BLOCKED) {
+      /* TODO: Add button to enable? */
+      uiItemL(col, RPT_("Python restricted for security"), ICON_ERROR);
+      uiItemL(col, RPT_("Slow Python expression"), ICON_INFO);
+    }
+    else if (driver->flag & DRIVER_FLAG_INVALID) {
       uiItemL(col, RPT_("ERROR: Invalid Python expression"), ICON_CANCEL);
     }
     else if (!BKE_driver_has_simple_expression(driver)) {
-      if ((G.f & G_FLAG_SCRIPT_AUTOEXEC) == 0) {
-        /* TODO: Add button to enable? */
-        uiItemL(col, RPT_("Python restricted for security"), ICON_ERROR);
-      }
-      else {
-        uiItemL(col, RPT_("Slow Python expression"), ICON_INFO);
-      }
+      uiItemL(col, RPT_("Slow Python expression"), ICON_INFO);
     }
 
     /* Explicit bpy-references are evil. Warn about these to prevent errors */
@@ -1107,8 +1104,6 @@ static void graph_draw_driver_settings_panel(uiLayout *layout,
       nullptr,
       0.0,
       0.0,
-      0,
-      0,
       TIP_("Add a Driver Variable to keep track of an input used by the driver"));
   UI_but_func_set(but, driver_add_var_cb, driver, nullptr);
 
@@ -1178,8 +1173,6 @@ static void graph_draw_driver_settings_panel(uiLayout *layout,
                          nullptr,
                          0.0,
                          0.0,
-                         0.0,
-                         0.0,
                          TIP_("Invalid variable name, click here for details"));
       UI_but_func_set(but, driver_dvar_invalid_name_query_cb, dvar, nullptr); /* XXX: reports? */
     }
@@ -1194,8 +1187,6 @@ static void graph_draw_driver_settings_panel(uiLayout *layout,
                        UI_UNIT_X,
                        UI_UNIT_Y,
                        nullptr,
-                       0.0,
-                       0.0,
                        0.0,
                        0.0,
                        TIP_("Delete target variable"));
@@ -1252,6 +1243,8 @@ static void graph_draw_driver_settings_panel(uiLayout *layout,
       uiItemL(row, valBuf, ICON_NONE);
     }
   }
+  /* Quiet warning about old value being unused before re-assigned. */
+  UNUSED_VARS(block);
 
   uiItemS(layout);
   uiItemS(layout);
@@ -1273,8 +1266,6 @@ static void graph_draw_driver_settings_panel(uiLayout *layout,
       nullptr,
       0.0,
       0.0,
-      0,
-      0,
       TIP_("Force updates of dependencies - Only use this if drivers are not updating correctly"));
   UI_but_func_set(but, driver_update_flags_cb, fcu, nullptr);
 }

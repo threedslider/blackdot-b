@@ -26,7 +26,9 @@
 #include "BLI_index_mask_fwd.hh"
 #include "BLI_math_matrix_types.hh"
 #include "BLI_shared_cache.hh"
+#include "BLI_string_ref.hh"
 #include "BLI_vector.hh"
+#include "BLI_virtual_array_fwd.hh"
 
 #include "DNA_customdata_types.h"
 
@@ -85,6 +87,16 @@ class InstanceReference {
   GeometrySet &geometry_set();
   const GeometrySet &geometry_set() const;
 
+  /**
+   * Converts the instance reference to a geometry set, even if it was an object or collection
+   * before.
+   *
+   * \note Uses out-parameter to be able to use #GeometrySet forward declaration.
+   */
+  void to_geometry_set(GeometrySet &r_geometry_set) const;
+
+  StringRefNull name() const;
+
   bool owns_direct_data() const;
   void ensure_owns_direct_data();
 
@@ -99,8 +111,7 @@ class Instances {
    */
   Vector<InstanceReference> references_;
 
-  /** Transformation of the instances. */
-  Vector<float4x4> transforms_;
+  int instances_num_ = 0;
 
   CustomData attributes_;
 
@@ -159,8 +170,8 @@ class Instances {
 
   Span<int> reference_handles() const;
   MutableSpan<int> reference_handles_for_write();
-  MutableSpan<float4x4> transforms();
   Span<float4x4> transforms() const;
+  MutableSpan<float4x4> transforms_for_write();
 
   int instances_num() const;
   int references_num() const;
@@ -193,6 +204,9 @@ class Instances {
   }
 };
 
+VArray<float3> instance_position_varray(const Instances &instances);
+VMutableArray<float3> instance_position_varray_for_write(Instances &instances);
+
 /* -------------------------------------------------------------------- */
 /** \name #InstanceReference Inline Methods
  * \{ */
@@ -209,14 +223,6 @@ inline InstanceReference::InstanceReference(Object &object) : type_(Type::Object
 inline InstanceReference::InstanceReference(Collection &collection)
     : type_(Type::Collection), data_(&collection)
 {
-}
-
-inline InstanceReference::InstanceReference(const InstanceReference &other)
-    : type_(other.type_), data_(other.data_)
-{
-  if (other.geometry_set_) {
-    geometry_set_ = std::make_unique<GeometrySet>(*other.geometry_set_);
-  }
 }
 
 inline InstanceReference::InstanceReference(InstanceReference &&other)

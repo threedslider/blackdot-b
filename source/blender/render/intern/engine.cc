@@ -12,31 +12,25 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLT_translation.h"
-
 #include "BLI_ghash.h"
 #include "BLI_listbase.h"
 #include "BLI_math_bits.h"
-#include "BLI_rect.h"
 #include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "DNA_object_types.h"
 
 #include "BKE_camera.h"
-#include "BKE_global.h"
-#include "BKE_layer.hh"
+#include "BKE_global.hh"
 #include "BKE_node.hh"
-#include "BKE_report.h"
-#include "BKE_scene.h"
+#include "BKE_report.hh"
+#include "BKE_scene.hh"
 
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_debug.hh"
 #include "DEG_depsgraph_query.hh"
 
-#include "GPU_context.h"
-
-#include "RNA_access.hh"
+#include "GPU_context.hh"
 
 #ifdef WITH_PYTHON
 #  include "BPY_extern.h"
@@ -100,7 +94,7 @@ RenderEngineType *RE_engines_find(const char *idname)
       BLI_findstring(&R_engines, idname, offsetof(RenderEngineType, idname)));
   if (!type) {
     type = static_cast<RenderEngineType *>(
-        BLI_findstring(&R_engines, "BLENDER_EEVEE", offsetof(RenderEngineType, idname)));
+        BLI_findstring(&R_engines, "BLENDER_EEVEE_NEXT", offsetof(RenderEngineType, idname)));
   }
 
   return type;
@@ -205,15 +199,22 @@ static RenderResult *render_result_from_bake(
   /* Add render passes. */
   render_layer_add_pass(rr, rl, channels_num, RE_PASSNAME_COMBINED, "", "RGBA", true);
 
-  RenderPass *primitive_pass = render_layer_add_pass(rr, rl, 4, "BakePrimitive", "", "RGBA", true);
+  RenderPass *primitive_pass = render_layer_add_pass(rr, rl, 3, "BakePrimitive", "", "RGB", true);
   RenderPass *differential_pass = render_layer_add_pass(
       rr, rl, 4, "BakeDifferential", "", "RGBA", true);
 
+  /* Per-pixel seeds are only needed for baking to vertex colors, see
+   * bake_targets_populate_pixels_color_attributes for more details. */
+  RenderPass *seed_pass = (image->image == nullptr) ?
+                              render_layer_add_pass(rr, rl, 1, "BakeSeed", "", "X", true) :
+                              nullptr;
+
   /* Fill render passes from bake pixel array, to be read by the render engine. */
   for (int ty = 0; ty < h; ty++) {
-    size_t offset = ty * w * 4;
-    float *primitive = primitive_pass->ibuf->float_buffer.data + offset;
-    float *differential = differential_pass->ibuf->float_buffer.data + offset;
+    size_t offset = ty * w;
+    float *primitive = primitive_pass->ibuf->float_buffer.data + 3 * offset;
+    float *seed = (seed_pass != nullptr) ? (seed_pass->ibuf->float_buffer.data + offset) : nullptr;
+    float *differential = differential_pass->ibuf->float_buffer.data + 4 * offset;
 
     size_t bake_offset = (y + ty) * image->width + x;
     const BakePixel *bake_pixel = pixels + bake_offset;
@@ -222,12 +223,12 @@ static RenderResult *render_result_from_bake(
       if (bake_pixel->object_id != engine->bake.object_id) {
         primitive[0] = int_as_float(-1);
         primitive[1] = int_as_float(-1);
+        primitive[2] = int_as_float(-1);
       }
       else {
-        primitive[0] = int_as_float(bake_pixel->seed);
-        primitive[1] = int_as_float(bake_pixel->primitive_id);
-        primitive[2] = bake_pixel->uv[0];
-        primitive[3] = bake_pixel->uv[1];
+        primitive[0] = bake_pixel->uv[0];
+        primitive[1] = bake_pixel->uv[1];
+        primitive[2] = int_as_float(bake_pixel->primitive_id);
 
         differential[0] = bake_pixel->du_dx;
         differential[1] = bake_pixel->du_dy;
@@ -235,7 +236,12 @@ static RenderResult *render_result_from_bake(
         differential[3] = bake_pixel->dv_dy;
       }
 
-      primitive += 4;
+      if (seed_pass != nullptr) {
+        *seed = int_as_float(bake_pixel->seed);
+        seed += 1;
+      }
+
+      primitive += 3;
       differential += 4;
       bake_pixel++;
     }
@@ -1342,8 +1348,8 @@ bool RE_engine_gpu_context_enable(RenderEngine *engine)
     /* Activate RenderEngine System and Blender GPU Context. */
     WM_system_gpu_context_activate(engine->system_gpu_context);
     if (engine->blender_gpu_context) {
-      GPU_context_active_set(engine->blender_gpu_context);
       GPU_render_begin();
+      GPU_context_active_set(engine->blender_gpu_context);
     }
     return true;
   }
@@ -1358,8 +1364,8 @@ void RE_engine_gpu_context_disable(RenderEngine *engine)
   else {
     if (engine->system_gpu_context) {
       if (engine->blender_gpu_context) {
-        GPU_render_end();
         GPU_context_active_set(nullptr);
+        GPU_render_end();
       }
       WM_system_gpu_context_release(engine->system_gpu_context);
       /* Restore DRW state context if previously active. */

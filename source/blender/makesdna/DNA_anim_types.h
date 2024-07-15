@@ -15,6 +15,12 @@
 #include "DNA_curve_types.h"
 #include "DNA_listBase.h"
 
+#ifdef __cplusplus
+#  include "BLI_span.hh"
+
+#  include <type_traits>
+#endif
+
 /* ************************************************ */
 /* F-Curve DataTypes */
 
@@ -72,9 +78,8 @@ typedef enum eFModifier_Types {
   FMODIFIER_TYPE_ENVELOPE = 3,
   FMODIFIER_TYPE_CYCLES = 4,
   FMODIFIER_TYPE_NOISE = 5,
-  /** Unimplemented - for applying: FFT, high/low pass filters, etc. */
-  FMODIFIER_TYPE_FILTER = 6,
-  FMODIFIER_TYPE_PYTHON = 7,
+  FMODIFIER_TYPE_FILTER = 6, /* Was never implemented, removed in #123906. */
+  FMODIFIER_TYPE_PYTHON = 7, /* Was never implemented, removed in #123906. */
   FMODIFIER_TYPE_LIMITS = 8,
   FMODIFIER_TYPE_STEPPED = 9,
 
@@ -217,14 +222,6 @@ typedef enum eFMod_Cycling_Modes {
   FCM_EXTRAPOLATE_MIRROR,
 } eFMod_Cycling_Modes;
 
-/* Python-script modifier data */
-typedef struct FMod_Python {
-  /** Text buffer containing script to execute. */
-  struct Text *script;
-  /** ID-properties to provide 'custom' settings. */
-  IDProperty *prop;
-} FMod_Python;
-
 /* limits modifier data */
 typedef struct FMod_Limits {
   /** Rect defining the min/max values. */
@@ -291,7 +288,8 @@ typedef enum eFMod_Stepped_Flags {
 
 /* Drivers -------------------------------------- */
 
-/* Driver Target (dtar)
+/**
+ * Driver Target (`dtar`)
  *
  * Defines how to access a dependency needed for a driver variable.
  */
@@ -415,7 +413,7 @@ typedef enum eDriverTarget_ContextProperty {
 #define MAX_DRIVER_TARGETS 8
 
 /**
- * Driver Variable (dvar)
+ * Driver Variable (`dvar`)
  *
  * A 'variable' for use as an input for the driver evaluation.
  * Defines a way of accessing some channel to use, that can be
@@ -490,7 +488,7 @@ typedef enum eDriverVar_Flags {
   DVAR_FLAG_INVALID_EMPTY = (1 << 8),
 } eDriverVar_Flags;
 
-/* All invalid dvar name flags */
+/** All invalid `dvar` name flags. */
 #define DVAR_ALL_INVALID_FLAGS \
   (DVAR_FLAG_INVALID_NAME | DVAR_FLAG_INVALID_START_NUM | DVAR_FLAG_INVALID_START_CHAR | \
    DVAR_FLAG_INVALID_HAS_SPACE | DVAR_FLAG_INVALID_HAS_DOT | DVAR_FLAG_INVALID_HAS_SPECIAL | \
@@ -564,7 +562,8 @@ typedef enum eDriver_Flags {
   DRIVER_FLAG_RECOMPILE = (1 << 3),
   /** The names are cached so they don't need have python unicode versions created each time */
   DRIVER_FLAG_RENAMEVAR = (1 << 4),
-  // DRIVER_FLAG_UNUSED_5 = (1 << 5),
+  /* Set if the driver cannot run because it uses Python which isn't allowed to execute. */
+  DRIVER_FLAG_PYTHON_BLOCKED = (1 << 5),
   /** Include 'self' in the drivers namespace. */
   DRIVER_FLAG_USE_SELF = (1 << 6),
 } eDriver_Flags;
@@ -588,7 +587,7 @@ typedef struct FPoint {
   char _pad[4];
 } FPoint;
 
-/* 'Function-Curve' - defines values over time for a given setting (fcu) */
+/** 'Function-Curve' - defines values over time for a given setting (fcu). */
 typedef struct FCurve {
   struct FCurve *next, *prev;
 
@@ -716,11 +715,10 @@ typedef enum eFCurve_Smoothing {
 } eFCurve_Smoothing;
 
 /* ************************************************ */
-/* 'Action' Datatypes */
+/* 'Action' Data-types */
 
 /* NOTE: Although these are part of the Animation System,
- * they are not stored here... see DNA_action_types.h instead
- */
+ * they are not stored here, see `DNA_action_types.h` instead. */
 
 /* ************************************************ */
 /* NLA - Non-Linear Animation */
@@ -926,7 +924,7 @@ typedef enum eNlaTrack_Flag {
 } eNlaTrack_Flag;
 
 /* ************************************ */
-/* KeyingSet Datatypes */
+/* KeyingSet Data-types */
 
 /**
  * Path for use in KeyingSet definitions (ksp)
@@ -1059,10 +1057,8 @@ typedef enum eInsertKeyFlags {
   INSERTKEY_CYCLE_AWARE = (1 << 9),
   /** don't create new F-Curves (implied by INSERTKEY_REPLACE) */
   INSERTKEY_AVAILABLE = (1 << 10),
-  /* Keep last. */
-  INSERTKEY_MAX,
 } eInsertKeyFlags;
-ENUM_OPERATORS(eInsertKeyFlags, INSERTKEY_MAX);
+ENUM_OPERATORS(eInsertKeyFlags, INSERTKEY_AVAILABLE);
 
 /* ************************************************ */
 /* Animation Data */
@@ -1110,10 +1106,30 @@ typedef struct AnimOverride {
 typedef struct AnimData {
   /**
    * Active action - acts as the 'tweaking track' for the NLA.
-   * Either use BKE_animdata_set_action() to set this, or call
+   *
+   * Legacy Actions: Either use BKE_animdata_set_action() to set this, or call
    * #BKE_animdata_action_ensure_idroot() after setting.
+   *
+   * Layered Actions: never set this directly, use one of the assignment
+   * functions in ANIM_action.hh instead.
    */
   bAction *action;
+
+  /**
+   * Identifier for which ActionSlot of the above Animation is actually animating this
+   * data-block.
+   *
+   * Do not set this directly, use one of the assignment functions in ANIM_action.hh instead.
+   */
+  int32_t slot_handle;
+  /**
+   * Slot name, primarily used for mapping to the right slot when assigning
+   * another Action. Should be the same type as #ActionSlot::name.
+   *
+   * \see #ActionSlot::name
+   */
+  char slot_name[66]; /* MAX_ID_NAME */
+  uint8_t _pad0[2];
 
   /**
    * Temp-storage for the 'real' active action (i.e. the one used before the tweaking-action
@@ -1149,7 +1165,6 @@ typedef struct AnimData {
   /* settings for animation evaluation */
   /** User-defined settings. */
   int flag;
-  char _pad[4];
 
   /* settings for active action evaluation (based on NLA strip settings) */
   /** Accumulation mode for active action. */
@@ -1158,7 +1173,15 @@ typedef struct AnimData {
   short act_extendmode;
   /** Influence for active action. */
   float act_influence;
+
+  uint8_t _pad1[4];
 } AnimData;
+
+#ifdef __cplusplus
+/* Some static assertions that things that should have the same type actually do. */
+static_assert(std::is_same_v<decltype(ActionSlot::handle), decltype(AnimData::slot_handle)>);
+static_assert(std::is_same_v<decltype(ActionSlot::name), decltype(AnimData::slot_name)>);
+#endif
 
 /* Animation Data settings (mostly for NLA) */
 typedef enum eAnimData_Flag {
@@ -1190,6 +1213,10 @@ typedef enum eAnimData_Flag {
 
   /** F-Curves from this AnimData block are always visible. */
   ADT_CURVES_ALWAYS_VISIBLE = (1 << 17),
+
+  /** Animation pointer to by this AnimData block is expanded in UI. This is stored on the AnimData
+   * so that each user of the Animation can have its own expansion/contraction state. */
+  ADT_UI_EXPANDED = (1 << 18),
 } eAnimData_Flag;
 
 /* Base Struct for Anim ------------------------------------- */
@@ -1206,5 +1233,3 @@ typedef struct IdAdtTemplate {
 
 /* From: `DNA_object_types.h`, see its doc-string there. */
 #define SELECT 1
-
-/* ************************************************ */

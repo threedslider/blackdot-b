@@ -19,7 +19,6 @@ namespace blender::draw::pbvh {
 struct PBVHBatches;
 }
 
-struct PBVHGPUFormat;
 struct BMVert;
 struct BMFace;
 
@@ -29,9 +28,10 @@ struct PBVHNode {
   /* Opaque handle for drawing code */
   blender::draw::pbvh::PBVHBatches *draw_batches = nullptr;
 
-  /* Voxel bounds */
-  blender::Bounds<blender::float3> vb = {};
-  blender::Bounds<blender::float3> orig_vb = {};
+  /** Axis aligned min and max of all vertex positions in the node. */
+  blender::Bounds<blender::float3> bounds = {};
+  /** Bounds from the start of current brush stroke. */
+  blender::Bounds<blender::float3> bounds_orig = {};
 
   /* For internal nodes, the offset of the children in the PBVH
    * 'nodes' array. */
@@ -69,13 +69,13 @@ struct PBVHNode {
    * Used for leaf nodes in a mesh-based PBVH (not multires.)
    */
   blender::Array<int, 0> vert_indices;
+  /** The number of vertices in #vert_indices not shared with (owned by) another node. */
   int uniq_verts = 0;
-  int face_verts = 0;
 
   /* Array of indices into the Mesh's corner array.
    * PBVH_FACES only.
    */
-  blender::Array<int, 0> loop_indices;
+  blender::Array<int, 0> corner_indices;
 
   /* An array mapping face corners into the vert_indices
    * array. The array is sized to match 'totprim', and each of
@@ -93,8 +93,6 @@ struct PBVHNode {
 
   /* Used for ray-casting: how close the bounding-box is to the ray point. */
   float tmin = 0.0f;
-
-  blender::Vector<PBVHProxyNode> proxies;
 
   /* Dyntopo */
 
@@ -129,12 +127,6 @@ struct PBVH {
 
   /* Memory backing for PBVHNode.prim_indices. */
   blender::Array<int> prim_indices;
-  int totprim;
-  int totvert;
-
-  int leaf_limit;
-  int pixel_leaf_limit;
-  int depth_limit;
 
   /* Mesh data. The evaluated deform mesh for mesh sculpting, and the base mesh for grids. */
   Mesh *mesh;
@@ -150,20 +142,8 @@ struct PBVH {
   blender::Span<blender::float3> vert_normals;
   blender::Span<blender::float3> face_normals;
 
-  /** Only valid for polygon meshes. */
-  blender::OffsetIndices<int> faces;
-  blender::Span<int> corner_verts;
-  /* Owned by the #PBVH, because after deformations they have to be recomputed. */
-  blender::Array<blender::int3> corner_tris;
-  blender::Span<int> corner_tri_faces;
-
   /* Grid Data */
-  CCGKey gridkey;
   SubdivCCG *subdiv_ccg;
-
-#ifdef PERFCNTRS
-  int perf_modified;
-#endif
 
   /* flag are verts/faces deformed */
   bool deformed;
@@ -179,22 +159,9 @@ struct PBVH {
 
   BMLog *bm_log;
 
-  blender::GroupedSpan<int> vert_to_face_map;
-
-  CustomDataLayer *color_layer;
-  blender::bke::AttrDomain color_domain;
-
-  /* Initialize this to true, instead of waiting for a draw engine
-   * to set it. Prevents a crash in draw manager instancing code.
-   * TODO: This is fragile, another solution should be found. */
-  bool is_drawing = true;
-
-  /* Used by DynTopo to invalidate the draw cache. */
-  bool draw_cache_invalid = true;
-
-  PBVHGPUFormat *vbo_id;
-
   PBVHPixels pixels;
+
+  ~PBVH();
 };
 
 /* pbvh.cc */

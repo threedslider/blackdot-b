@@ -18,24 +18,27 @@ static void node_geo_exec(GeoNodeExecParams params)
 {
   Vector<GeometrySet> geometries = params.extract_input<Vector<GeometrySet>>("Geometry");
   std::unique_ptr<bke::Instances> instances = std::make_unique<bke::Instances>();
+
   for (GeometrySet &geometry : geometries) {
     geometry.ensure_owns_direct_data();
     const int handle = instances->add_reference(std::move(geometry));
     instances->add_instance(handle, float4x4::identity());
   }
-  params.set_output("Instances", GeometrySet::from_instances(instances.release()));
+
+  GeometrySet new_geometry = GeometrySet::from_instances(instances.release());
+  params.set_output("Instances", std::move(new_geometry));
 }
 
 static void node_register()
 {
-  static bNodeType ntype;
+  static blender::bke::bNodeType ntype;
 
   geo_node_type_base(
       &ntype, GEO_NODE_GEOMETRY_TO_INSTANCE, "Geometry to Instance", NODE_CLASS_GEOMETRY);
   blender::bke::node_type_size(&ntype, 160, 100, 300);
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  nodeRegisterType(&ntype);
+  blender::bke::nodeRegisterType(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -53,64 +53,38 @@ VKVertexAttributeObject &VKVertexAttributeObject::operator=(const VKVertexAttrib
 /** \name Bind resources
  * \{ */
 
-void VKVertexAttributeObject::bind(VKContext &context)
+void VKVertexAttributeObject::bind(
+    render_graph::VKVertexBufferBindings &r_vertex_buffer_bindings) const
 {
+  /* TODO: VBOs and Buffers can share the same setup and can also split the buffers from the
+   * offsets so we don't need to loop. */
   const bool use_vbos = !vbos.is_empty();
-  if (use_vbos) {
-    bind_vbos(context);
-  }
-  else {
-    bind_buffers(context);
-  }
-}
-
-void VKVertexAttributeObject::bind_vbos(VKContext &context)
-{
-  /* Bind VBOS from batches. */
   Array<bool> visited_bindings(bindings.size());
   visited_bindings.fill(false);
 
+  const VKBuffer &dummy = VKBackend::get().device.dummy_buffer_get();
   for (VkVertexInputAttributeDescription attribute : attributes) {
     if (visited_bindings[attribute.binding]) {
       continue;
     }
     visited_bindings[attribute.binding] = true;
 
-    if (attribute.binding < vbos.size()) {
+    VkBuffer buffer = dummy.vk_handle();
+    VkDeviceSize offset = 0;
+
+    if (use_vbos && attribute.binding < vbos.size()) {
       BLI_assert(vbos[attribute.binding]);
-      VKVertexBuffer &vbo = *vbos[attribute.binding];
-      vbo.upload();
-      context.command_buffers_get().bind(attribute.binding, vbo, 0);
+      buffer = vbos[attribute.binding]->vk_handle();
     }
-    else {
-      const VKBuffer &buffer = VKBackend::get().device_get().dummy_buffer_get();
-      const VKBufferWithOffset buffer_with_offset = {buffer, 0};
-      context.command_buffers_get().bind(attribute.binding, buffer_with_offset);
+    else if (!use_vbos && attribute.binding < buffers.size()) {
+      buffer = buffers[attribute.binding].buffer.vk_handle();
+      offset = buffers[attribute.binding].offset;
     }
-  }
-}
 
-void VKVertexAttributeObject::bind_buffers(VKContext &context)
-{
-  /* Bind dynamic buffers from immediate mode. */
-  Array<bool> visited_bindings(bindings.size());
-  visited_bindings.fill(false);
-
-  for (VkVertexInputAttributeDescription attribute : attributes) {
-    if (visited_bindings[attribute.binding]) {
-      continue;
-    }
-    visited_bindings[attribute.binding] = true;
-
-    if (attribute.binding < buffers.size()) {
-      VKBufferWithOffset &buffer = buffers[attribute.binding];
-      context.command_buffers_get().bind(attribute.binding, buffer);
-    }
-    else {
-      const VKBuffer &buffer = VKBackend::get().device_get().dummy_buffer_get();
-      const VKBufferWithOffset buffer_with_offset = {buffer, 0};
-      context.command_buffers_get().bind(attribute.binding, buffer_with_offset);
-    }
+    r_vertex_buffer_bindings.buffer[attribute.binding] = buffer;
+    r_vertex_buffer_bindings.offset[attribute.binding] = offset;
+    r_vertex_buffer_bindings.buffer_count = max_ii(r_vertex_buffer_bindings.buffer_count,
+                                                   attribute.binding + 1);
   }
 }
 

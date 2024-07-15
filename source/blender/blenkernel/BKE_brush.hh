@@ -10,6 +10,9 @@
  * General operations for brushes.
  */
 
+#include "BLI_span.hh"
+
+#include "DNA_brush_enums.h"
 #include "DNA_color_types.h"
 #include "DNA_object_enums.h"
 
@@ -38,10 +41,6 @@ void BKE_brush_system_exit();
  */
 Brush *BKE_brush_add(Main *bmain, const char *name, eObjectMode ob_mode);
 /**
- * Add a new gp-brush.
- */
-Brush *BKE_brush_add_gpencil(Main *bmain, ToolSettings *ts, const char *name, eObjectMode mode);
-/**
  * Delete a Brush.
  */
 bool BKE_brush_delete(Main *bmain, Brush *brush);
@@ -56,26 +55,8 @@ Brush *BKE_brush_first_search(Main *bmain, eObjectMode ob_mode);
 
 void BKE_brush_sculpt_reset(Brush *brush);
 
-/**
- * Create a set of grease pencil Drawing presets.
- */
-void BKE_brush_gpencil_paint_presets(Main *bmain, ToolSettings *ts, bool reset);
-/**
- * Create a set of grease pencil Vertex Paint presets.
- */
-void BKE_brush_gpencil_vertex_presets(Main *bmain, ToolSettings *ts, bool reset);
-/**
- * Create a set of grease pencil Sculpt Paint presets.
- */
-void BKE_brush_gpencil_sculpt_presets(Main *bmain, ToolSettings *ts, bool reset);
-/**
- * Create a set of grease pencil Weight Paint presets.
- */
-void BKE_brush_gpencil_weight_presets(Main *bmain, ToolSettings *ts, bool reset);
-void BKE_gpencil_brush_preset_set(Main *bmain, Brush *brush, short type);
-
-void BKE_brush_jitter_pos(const Scene *scene,
-                          Brush *brush,
+void BKE_brush_jitter_pos(const Scene &scene,
+                          const Brush &brush,
                           const float pos[2],
                           float jitterpos[2]);
 void BKE_brush_randomize_texture_coords(UnifiedPaintSettings *ups, bool mask);
@@ -86,6 +67,15 @@ void BKE_brush_randomize_texture_coords(UnifiedPaintSettings *ups, bool mask);
  * Library Operations
  */
 void BKE_brush_curve_preset(Brush *b, enum eCurveMappingPreset preset);
+
+/**
+ * Combine the brush strength based on the distances and brush settings with the existing factors.
+ */
+void BKE_brush_calc_curve_factors(eBrushCurvePreset preset,
+                                  const CurveMapping *cumap,
+                                  blender::Span<float> distances,
+                                  float brush_radius,
+                                  blender::MutableSpan<float> factors);
 /**
  * Uses the brush curve control to find a strength value between 0 and 1.
  */
@@ -93,6 +83,10 @@ float BKE_brush_curve_strength_clamped(const Brush *br, float p, float len);
 /**
  * Uses the brush curve control to find a strength value.
  */
+float BKE_brush_curve_strength(eBrushCurvePreset preset,
+                               const CurveMapping *cumap,
+                               float distance,
+                               float brush_radius);
 float BKE_brush_curve_strength(const Brush *br, float p, float len);
 
 /* Sampling. */
@@ -179,17 +173,6 @@ void BKE_brush_scale_size(int *r_brush_size,
  * (often presented to the user as a square) tip inside a specific paint mode.
  */
 bool BKE_brush_has_cube_tip(const Brush *brush, PaintMode paint_mode);
-
-/* Accessors */
-#define BKE_brush_tool_get(brush, p) \
-  (CHECK_TYPE_ANY(brush, Brush *, const Brush *), \
-   *(const char *)POINTER_OFFSET(brush, (p)->runtime.tool_offset))
-#define BKE_brush_tool_set(brush, p, tool) \
-  { \
-    CHECK_TYPE_ANY(brush, Brush *); \
-    *(char *)POINTER_OFFSET(brush, (p)->runtime.tool_offset) = tool; \
-  } \
-  ((void)0)
 
 /* debugging only */
 void BKE_brush_debug_print_state(Brush *br);

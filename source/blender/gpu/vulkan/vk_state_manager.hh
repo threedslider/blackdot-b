@@ -12,6 +12,7 @@
 
 #include "BLI_array.hh"
 
+#include "render_graph/vk_resource_access_info.hh"
 #include "vk_bindable_resource.hh"
 
 namespace blender::gpu {
@@ -20,13 +21,15 @@ class VKUniformBuffer;
 class VKVertexBuffer;
 class VKStorageBuffer;
 class VKIndexBuffer;
+class VKContext;
 
 class VKStateManager : public StateManager {
 
   uint texture_unpack_row_length_ = 0;
 
   VKBindSpace<shader::ShaderCreateInfo::Resource::BindType::SAMPLER> textures_;
-  VKBindSpace<shader::ShaderCreateInfo::Resource::BindType::IMAGE> images_;
+  VKBindSpace<shader::ShaderCreateInfo::Resource::BindType::IMAGE, BIND_SPACE_IMAGE_OFFSET>
+      images_;
   VKBindSpace<shader::ShaderCreateInfo::Resource::BindType::UNIFORM_BUFFER> uniform_buffers_;
   VKBindSpace<shader::ShaderCreateInfo::Resource::BindType::STORAGE_BUFFER> storage_buffers_;
 
@@ -37,7 +40,8 @@ class VKStateManager : public StateManager {
   void issue_barrier(eGPUBarrier barrier_bits) override;
 
   /** Apply resources to the bindings of the active shader. */
-  void apply_bindings();
+  void apply_bindings(VKContext &context,
+                      render_graph::VKResourceAccessInfo &resource_access_info);
 
   void texture_bind(Texture *tex, GPUSamplerState sampler, int unit) override;
   void texture_unbind(Texture *tex) override;
@@ -49,12 +53,14 @@ class VKStateManager : public StateManager {
 
   void uniform_buffer_bind(VKUniformBuffer *uniform_buffer, int slot);
   void uniform_buffer_unbind(VKUniformBuffer *uniform_buffer);
+  void uniform_buffer_unbind_all();
 
   void texel_buffer_bind(VKVertexBuffer &vertex_buffer, int slot);
   void texel_buffer_unbind(VKVertexBuffer &vertex_buffer);
 
   void storage_buffer_bind(VKBindableResource &resource, int slot);
   void storage_buffer_unbind(VKBindableResource &resource);
+  void storage_buffer_unbind_all();
 
   void unbind_from_all_namespaces(VKBindableResource &bindable_resource);
 

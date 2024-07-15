@@ -21,22 +21,22 @@ MTLVertBuf::~MTLVertBuf()
 void MTLVertBuf::acquire_data()
 {
   /* Discard previous data, if any. */
-  MEM_SAFE_FREE(data);
+  MEM_SAFE_FREE(data_);
   if (usage_ == GPU_USAGE_DEVICE_ONLY) {
-    data = nullptr;
+    data_ = nullptr;
   }
   else {
-    data = (uchar *)MEM_mallocN(sizeof(uchar) * this->size_alloc_get(), __func__);
+    data_ = (uchar *)MEM_mallocN(sizeof(uchar) * this->size_alloc_get(), __func__);
   }
 }
 
 void MTLVertBuf::resize_data()
 {
   if (usage_ == GPU_USAGE_DEVICE_ONLY) {
-    data = nullptr;
+    data_ = nullptr;
   }
   else {
-    data = (uchar *)MEM_reallocN(data, sizeof(uchar) * this->size_alloc_get());
+    data_ = (uchar *)MEM_reallocN(data_, sizeof(uchar) * this->size_alloc_get());
   }
 }
 
@@ -50,7 +50,7 @@ void MTLVertBuf::release_data()
 
   GPU_TEXTURE_FREE_SAFE(buffer_texture_);
 
-  MEM_SAFE_FREE(data);
+  MEM_SAFE_FREE(data_);
 
   if (ssbo_wrapper_) {
     delete ssbo_wrapper_;
@@ -111,8 +111,8 @@ void MTLVertBuf::duplicate_data(VertBuf *dst_)
   }
 
   /* Copy raw CPU data. */
-  if (data != nullptr) {
-    dst->data = (uchar *)MEM_dupallocN(src->data);
+  if (data_ != nullptr) {
+    dst->data_ = (uchar *)MEM_dupallocN(src->data_);
   }
 }
 
@@ -144,7 +144,7 @@ void MTLVertBuf::bind()
    * NOTE: If a buffer is re-sized, but no new data is provided, the previous
    * contents are copied into the newly allocated buffer. */
   bool requires_reallocation = (vbo_ != nullptr) && (alloc_size_ != required_size);
-  bool new_data_ready = (this->flag & GPU_VERTBUF_DATA_DIRTY) && this->data;
+  bool new_data_ready = (this->flag & GPU_VERTBUF_DATA_DIRTY) && this->data_;
 
   gpu::MTLBuffer *prev_vbo = nullptr;
   GPUVertBufStatus prev_flag = this->flag;
@@ -191,13 +191,13 @@ void MTLVertBuf::bind()
 
       /* Fetch mapped buffer host ptr and upload data. */
       void *dst_data = vbo_->get_host_ptr();
-      memcpy((uint8_t *)dst_data, this->data, required_size_raw);
+      memcpy((uint8_t *)dst_data, this->data_, required_size_raw);
       vbo_->flush_range(0, required_size_raw);
     }
 
     /* If static usage, free host-side data. */
     if (usage_ == GPU_USAGE_STATIC) {
-      MEM_SAFE_FREE(data);
+      MEM_SAFE_FREE(data_);
     }
 
     /* Flag data as having been uploaded. */
@@ -237,7 +237,7 @@ void MTLVertBuf::bind()
 
       /* For VBOs flagged as static, release host data as it will no longer be needed. */
       if (usage_ == GPU_USAGE_STATIC) {
-        MEM_SAFE_FREE(data);
+        MEM_SAFE_FREE(data_);
       }
 
       /* Flag data as uploaded. */
@@ -261,7 +261,7 @@ void MTLVertBuf::bind()
 void MTLVertBuf::update_sub(uint start, uint len, const void *data)
 {
   /* Fetch and verify active context. */
-  MTLContext *ctx = static_cast<MTLContext *>(unwrap(GPU_context_active_get()));
+  MTLContext *ctx = MTLContext::get();
   BLI_assert(ctx);
   BLI_assert(ctx->device);
 
@@ -307,7 +307,7 @@ void MTLVertBuf::bind_as_ssbo(uint binding)
 
   /* Create MTLStorageBuffer to wrap this resource and use conventional binding. */
   if (ssbo_wrapper_ == nullptr) {
-    ssbo_wrapper_ = new MTLStorageBuf(this, alloc_size_);
+    ssbo_wrapper_ = new MTLStorageBuf(this, ceil_to_multiple_u(alloc_size_, 16));
   }
   ssbo_wrapper_->bind(binding);
 }
@@ -332,7 +332,7 @@ void MTLVertBuf::bind_as_texture(uint binding)
 
   /* Create texture from vertex buffer. */
   if (buffer_texture_ == nullptr) {
-    buffer_texture_ = GPU_texture_create_from_vertbuf("vertbuf_as_texture", wrap(this));
+    buffer_texture_ = GPU_texture_create_from_vertbuf("vertbuf_as_texture", this);
   }
 
   /* Verify successful creation and bind. */

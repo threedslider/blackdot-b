@@ -16,13 +16,20 @@ static void sh_node_tex_checker_declare(NodeDeclarationBuilder &b)
   b.is_function_node();
   b.add_input<decl::Vector>("Vector").min(-10000.0f).max(10000.0f).implicit_field(
       implicit_field_inputs::position);
-  b.add_input<decl::Color>("Color1").default_value({0.8f, 0.8f, 0.8f, 1.0f});
-  b.add_input<decl::Color>("Color2").default_value({0.2f, 0.2f, 0.2f, 1.0f});
+  b.add_input<decl::Color>("Color1")
+      .default_value({0.8f, 0.8f, 0.8f, 1.0f})
+      .description("Color of the first checker");
+  b.add_input<decl::Color>("Color2")
+      .default_value({0.2f, 0.2f, 0.2f, 1.0f})
+      .description("Color of the second checker");
   b.add_input<decl::Float>("Scale")
       .min(-10000.0f)
       .max(10000.0f)
       .default_value(5.0f)
-      .no_muted_links();
+      .no_muted_links()
+      .description(
+          "Overall texture scale.\n"
+          "The scale is a factor of the bounding box of the face divided by the Scale value");
   b.add_output<decl::Color>("Color");
   b.add_output<decl::Float>("Fac");
 }
@@ -130,16 +137,16 @@ void register_node_type_sh_tex_checker()
 {
   namespace file_ns = blender::nodes::node_shader_tex_checker_cc;
 
-  static bNodeType ntype;
+  static blender::bke::bNodeType ntype;
 
   sh_fn_node_type_base(&ntype, SH_NODE_TEX_CHECKER, "Checker Texture", NODE_CLASS_TEXTURE);
   ntype.declare = file_ns::sh_node_tex_checker_declare;
   ntype.initfunc = file_ns::node_shader_init_tex_checker;
-  node_type_storage(
+  blender::bke::node_type_storage(
       &ntype, "NodeTexChecker", node_free_standard_storage, node_copy_standard_storage);
   ntype.gpu_fn = file_ns::node_shader_gpu_tex_checker;
   ntype.build_multi_function = file_ns::sh_node_tex_checker_build_multi_function;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  nodeRegisterType(&ntype);
+  blender::bke::nodeRegisterType(&ntype);
 }
