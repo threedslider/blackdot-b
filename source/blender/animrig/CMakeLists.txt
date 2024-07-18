@@ -12,7 +12,7 @@ set(INC
   ../makesrna
   ../windowmanager
   ../../../extern/fmtlib/include
-  # RNA_prototypes.h
+  # RNA_prototypes.hh
   ${CMAKE_BINARY_DIR}/source/blender/makesrna
 )
 
@@ -22,6 +22,7 @@ set(INC_SYS
 set(SRC
   intern/action.cc
   intern/action_runtime.cc
+  intern/action_selection.cc
   intern/anim_rna.cc
   intern/animdata.cc
   intern/bone_collections.cc

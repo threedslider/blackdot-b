@@ -27,7 +27,7 @@
 
 #include "node_common.h"
 
-#include "RNA_prototypes.h"
+#include "RNA_prototypes.hh"
 
 #include "NOD_composite.hh"
 #include "node_composite_util.hh"
@@ -201,6 +201,11 @@ void ntreeCompositUpdateRLayers(bNodeTree *ntree)
   for (bNode *node : ntree->all_nodes()) {
     if (node->type == CMP_NODE_R_LAYERS) {
       node_cmp_rlayers_outputs(ntree, node);
+    }
+    else if (node->type == CMP_NODE_CRYPTOMATTE &&
+             node->custom1 == CMP_NODE_CRYPTOMATTE_SOURCE_RENDER)
+    {
+      node->typeinfo->updatefunc(ntree, node);
     }
   }
 }

@@ -29,7 +29,7 @@
 #include "RNA_access.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
-#include "RNA_prototypes.h"
+#include "RNA_prototypes.hh"
 
 #include "BLT_translation.hh"
 
@@ -257,6 +257,8 @@ static int graphkeys_insertkey_exec(bContext *C, wmOperator *op)
   if (ANIM_animdata_get_context(C, &ac) == 0) {
     return OPERATOR_CANCELLED;
   }
+
+  ANIM_deselect_keys_in_animation_editors(C);
 
   /* Which channels to affect? */
   mode = eGraphKeys_InsertKey_Types(RNA_enum_get(op->ptr, "type"));

@@ -358,26 +358,9 @@ bool VKTexture::init_internal()
 
 bool VKTexture::init_internal(VertBuf *vbo)
 {
+  BLI_assert(source_buffer_ == nullptr);
   device_format_ = format_;
-  if (!allocate()) {
-    return false;
-  }
-  VKVertexBuffer *vertex_buffer = unwrap(vbo);
-
-  render_graph::VKCopyBufferToImageNode::CreateInfo copy_buffer_to_image = {};
-  copy_buffer_to_image.src_buffer = vertex_buffer->vk_handle();
-  copy_buffer_to_image.dst_image = vk_image_handle();
-  copy_buffer_to_image.region.imageExtent.width = w_;
-  copy_buffer_to_image.region.imageExtent.height = 1;
-  copy_buffer_to_image.region.imageExtent.depth = 1;
-  copy_buffer_to_image.region.imageSubresource.aspectMask = to_vk_image_aspect_single_bit(
-      to_vk_image_aspect_flag_bits(device_format_), false);
-  copy_buffer_to_image.region.imageSubresource.mipLevel = 0;
-  copy_buffer_to_image.region.imageSubresource.layerCount = 1;
-
-  VKContext &context = *VKContext::get();
-  context.render_graph.add_node(copy_buffer_to_image);
-
+  source_buffer_ = unwrap(vbo);
   return true;
 }
 
@@ -516,8 +499,11 @@ bool VKTexture::allocate()
   }
   debug::object_label(vk_image_, name_);
 
-  device.resources.add_image(
-      vk_image_, VK_IMAGE_LAYOUT_UNDEFINED, render_graph::ResourceOwner::APPLICATION, name_);
+  device.resources.add_image(vk_image_,
+                             image_info.arrayLayers,
+                             VK_IMAGE_LAYOUT_UNDEFINED,
+                             render_graph::ResourceOwner::APPLICATION,
+                             name_);
 
   return result == VK_SUCCESS;
 }
@@ -527,6 +513,13 @@ void VKTexture::add_to_descriptor_set(AddToDescriptorSetContext &data,
                                       shader::ShaderCreateInfo::Resource::BindType bind_type,
                                       const GPUSamplerState sampler_state)
 {
+  /* Forwarding the call to the source vertex buffer as in vulkan a texel buffer is a buffer(view)
+   * and not a texture. */
+  if (type_ == GPU_TEXTURE_BUFFER) {
+    source_buffer_->add_to_descriptor_set(data, binding, bind_type, sampler_state);
+    return;
+  }
+
   const std::optional<VKDescriptorSet::Location> location =
       data.shader_interface.descriptor_set_location(bind_type, binding);
   if (location) {
@@ -539,9 +532,17 @@ void VKTexture::add_to_descriptor_set(AddToDescriptorSetContext &data,
       const VKSampler &sampler = device.samplers().get(sampler_state);
       data.descriptor_set.bind(*this, *location, sampler, arrayed);
     }
+    uint32_t layer_base = 0;
+    uint32_t layer_count = VK_REMAINING_ARRAY_LAYERS;
+    if (arrayed == VKImageViewArrayed::ARRAYED && is_texture_view()) {
+      layer_base = layer_offset_;
+      layer_count = vk_layer_count(VK_REMAINING_ARRAY_LAYERS);
+    }
     data.resource_access_info.images.append({vk_image_handle(),
                                              data.shader_interface.access_mask(bind_type, binding),
-                                             to_vk_image_aspect_flag_bits(device_format_)});
+                                             to_vk_image_aspect_flag_bits(device_format_),
+                                             layer_base,
+                                             layer_count});
   }
 }
 

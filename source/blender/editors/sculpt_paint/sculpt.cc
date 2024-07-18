@@ -277,14 +277,6 @@ float3 SCULPT_vertex_limit_surface_get(const SculptSession &ss, PBVHVertRef vert
   return {};
 }
 
-float3 SCULPT_vertex_persistent_normal_get(const SculptSession &ss, PBVHVertRef vertex)
-{
-  if (ss.attrs.persistent_no) {
-    return (const float *)SCULPT_vertex_attr_get(vertex, ss.attrs.persistent_no);
-  }
-  return SCULPT_vertex_normal_get(ss, vertex);
-}
-
 float SCULPT_mask_get_at_grids_vert_index(const SubdivCCG &subdiv_ccg,
                                           const CCGKey &key,
                                           const int vert_index)
@@ -923,12 +915,12 @@ struct NearestVertexData {
 
 namespace blender::ed::sculpt_paint {
 
-static std::optional<int> nearest_vert_calc_mesh(const PBVH &pbvh,
-                                                 const Span<float3> vert_positions,
-                                                 const Span<bool> hide_vert,
-                                                 const float3 &location,
-                                                 const float max_distance,
-                                                 const bool use_original)
+std::optional<int> nearest_vert_calc_mesh(const PBVH &pbvh,
+                                          const Span<float3> vert_positions,
+                                          const Span<bool> hide_vert,
+                                          const float3 &location,
+                                          const float max_distance,
+                                          const bool use_original)
 {
   const float max_distance_sq = max_distance * max_distance;
   Vector<PBVHNode *> nodes = bke::pbvh::search_gather(
@@ -968,11 +960,11 @@ static std::optional<int> nearest_vert_calc_mesh(const PBVH &pbvh,
   return nearest.vert;
 }
 
-static std::optional<SubdivCCGCoord> nearest_vert_calc_grids(PBVH &pbvh,
-                                                             const SubdivCCG &subdiv_ccg,
-                                                             const float3 &location,
-                                                             const float max_distance,
-                                                             const bool use_original)
+std::optional<SubdivCCGCoord> nearest_vert_calc_grids(PBVH &pbvh,
+                                                      const SubdivCCG &subdiv_ccg,
+                                                      const float3 &location,
+                                                      const float max_distance,
+                                                      const bool use_original)
 {
   const float max_distance_sq = max_distance * max_distance;
   Vector<PBVHNode *> nodes = bke::pbvh::search_gather(
@@ -1021,10 +1013,10 @@ static std::optional<SubdivCCGCoord> nearest_vert_calc_grids(PBVH &pbvh,
   return nearest.coord;
 }
 
-static std::optional<BMVert *> nearest_vert_calc_bmesh(PBVH &pbvh,
-                                                       const float3 &location,
-                                                       const float max_distance,
-                                                       const bool use_original)
+std::optional<BMVert *> nearest_vert_calc_bmesh(PBVH &pbvh,
+                                                const float3 &location,
+                                                const float max_distance,
+                                                const bool use_original)
 {
   const float max_distance_sq = max_distance * max_distance;
   Vector<PBVHNode *> nodes = bke::pbvh::search_gather(
@@ -1142,122 +1134,7 @@ void SCULPT_tag_update_overlays(bContext *C)
 
 /** \} */
 
-/* -------------------------------------------------------------------- */
-/** \name Sculpt Flood Fill API
- *
- * Iterate over connected vertices, starting from one or more initial vertices.
- * \{ */
-
 namespace blender::ed::sculpt_paint {
-
-namespace flood_fill {
-
-FillData init_fill(SculptSession &ss)
-{
-  SCULPT_vertex_random_access_ensure(ss);
-  FillData data;
-  data.visited_verts.resize(SCULPT_vertex_count_get(ss));
-  return data;
-}
-
-void add_initial(FillData &flood, PBVHVertRef vertex)
-{
-  flood.queue.push(vertex);
-}
-
-void add_and_skip_initial(FillData &flood, PBVHVertRef vertex)
-{
-  flood.queue.push(vertex);
-  flood.visited_verts[vertex.i].set(vertex.i);
-}
-
-void add_initial_with_symmetry(
-    const Object &ob, const SculptSession &ss, FillData &flood, PBVHVertRef vertex, float radius)
-{
-  /* Add active vertex and symmetric vertices to the queue. */
-  const char symm = SCULPT_mesh_symmetry_xyz_get(ob);
-  for (char i = 0; i <= symm; ++i) {
-    if (!SCULPT_is_symmetry_iteration_valid(i, symm)) {
-      continue;
-    }
-    PBVHVertRef v = {PBVH_REF_NONE};
-
-    if (i == 0) {
-      v = vertex;
-    }
-    else if (radius > 0.0f) {
-      float radius_squared = (radius == FLT_MAX) ? FLT_MAX : radius * radius;
-      float location[3];
-      flip_v3_v3(location, SCULPT_vertex_co_get(ss, vertex), ePaintSymmetryFlags(i));
-      v = nearest_vert_calc(ob, location, radius_squared, false);
-    }
-
-    if (v.i != PBVH_REF_NONE) {
-      add_initial(flood, v);
-    }
-  }
-}
-
-void add_active(const Object &ob, const SculptSession &ss, FillData &flood, float radius)
-{
-  /* Add active vertex and symmetric vertices to the queue. */
-  const char symm = SCULPT_mesh_symmetry_xyz_get(ob);
-  for (char i = 0; i <= symm; ++i) {
-    if (!SCULPT_is_symmetry_iteration_valid(i, symm)) {
-      continue;
-    }
-
-    PBVHVertRef v = {PBVH_REF_NONE};
-
-    if (i == 0) {
-      v = SCULPT_active_vertex_get(ss);
-    }
-    else if (radius > 0.0f) {
-      float location[3];
-      flip_v3_v3(location, SCULPT_active_vertex_co_get(ss), ePaintSymmetryFlags(i));
-      v = nearest_vert_calc(ob, location, radius, false);
-    }
-
-    if (v.i != PBVH_REF_NONE) {
-      add_initial(flood, v);
-    }
-  }
-}
-
-void execute(SculptSession &ss,
-             FillData &flood,
-             FunctionRef<bool(PBVHVertRef from_v, PBVHVertRef to_v, bool is_duplicate)> func)
-{
-  while (!flood.queue.empty()) {
-    PBVHVertRef from_v = flood.queue.front();
-    flood.queue.pop();
-
-    SculptVertexNeighborIter ni;
-    SCULPT_VERTEX_DUPLICATES_AND_NEIGHBORS_ITER_BEGIN (ss, from_v, ni) {
-      const PBVHVertRef to_v = ni.vertex;
-      int to_v_i = BKE_pbvh_vertex_to_index(*ss.pbvh, to_v);
-
-      if (flood.visited_verts[to_v_i]) {
-        continue;
-      }
-
-      if (!hide::vert_visible_get(ss, to_v)) {
-        continue;
-      }
-
-      flood.visited_verts[BKE_pbvh_vertex_to_index(*ss.pbvh, to_v)].set();
-
-      if (func(from_v, to_v, ni.is_duplicate)) {
-        flood.queue.push(to_v);
-      }
-    }
-    SCULPT_VERTEX_NEIGHBORS_ITER_END(ni);
-  }
-}
-
-}  // namespace flood_fill
-
-/** \} */
 
 /* -------------------------------------------------------------------- */
 /** \name Tool Capabilities
@@ -3053,41 +2930,6 @@ bool node_in_cylinder(const DistRayAABB_Precalc &ray_dist_precalc,
   return dist_sq < radius_sq || true;
 }
 
-}  // namespace blender::ed::sculpt_paint
-
-void SCULPT_clip(const Sculpt &sd, const SculptSession &ss, float co[3], const float val[3])
-{
-  for (int i = 0; i < 3; i++) {
-    if (sd.flags & (SCULPT_LOCK_X << i)) {
-      continue;
-    }
-
-    bool do_clip = false;
-    float co_clip[3];
-    if (ss.cache && (ss.cache->flag & (CLIP_X << i))) {
-      /* Take possible mirror object into account. */
-      mul_v3_m4v3(co_clip, ss.cache->clip_mirror_mtx.ptr(), co);
-
-      if (fabsf(co_clip[i]) <= ss.cache->clip_tolerance[i]) {
-        co_clip[i] = 0.0f;
-        float imtx[4][4];
-        invert_m4_m4(imtx, ss.cache->clip_mirror_mtx.ptr());
-        mul_m4_v3(imtx, co_clip);
-        do_clip = true;
-      }
-    }
-
-    if (do_clip) {
-      co[i] = co_clip[i];
-    }
-    else {
-      co[i] = val[i];
-    }
-  }
-}
-
-namespace blender::ed::sculpt_paint {
-
 static Vector<PBVHNode *> sculpt_pbvh_gather_cursor_update(Object &ob, bool use_original)
 {
   SculptSession &ss = *ob.sculpt;
@@ -3614,20 +3456,6 @@ void calc_brush_plane(
 
 }  // namespace blender::ed::sculpt_paint
 
-int SCULPT_plane_trim(const blender::ed::sculpt_paint::StrokeCache &cache,
-                      const Brush &brush,
-                      const float val[3])
-{
-  return (!(brush.flag & BRUSH_PLANE_TRIM) ||
-          (dot_v3v3(val, val) <= cache.radius_squared * cache.plane_trim_squared));
-}
-
-int SCULPT_plane_point_side(const float co[3], const float plane[4])
-{
-  float d = plane_point_side_v3(plane, co);
-  return d <= 0.0f;
-}
-
 float SCULPT_brush_plane_offset_get(const Sculpt &sd, const SculptSession &ss)
 {
   const Brush &brush = *BKE_paint_brush_for_read(&sd.paint);
@@ -3938,7 +3766,7 @@ static void do_brush_action(const Scene &scene,
          * enhance brush in the middle of the stroke. */
         if (ss.cache->bstrength < 0.0f) {
           /* Invert mode, intensify details. */
-          smooth::enhance_details_brush(sd, ob, nodes);
+          do_enhance_details_brush(sd, ob, nodes);
         }
         else {
           do_smooth_brush(sd, ob, nodes, std::clamp(ss.cache->bstrength, 0.0f, 1.0f));
@@ -3976,7 +3804,7 @@ static void do_brush_action(const Scene &scene,
       do_thumb_brush(sd, ob, nodes);
       break;
     case SCULPT_TOOL_LAYER:
-      SCULPT_do_layer_brush(sd, ob, nodes);
+      do_layer_brush(sd, ob, nodes);
       break;
     case SCULPT_TOOL_FLATTEN:
       do_flatten_brush(sd, ob, nodes);
@@ -6035,9 +5863,6 @@ static void sculpt_stroke_update_step(bContext *C,
   if ((ELEM(brush.sculpt_tool,
             SCULPT_TOOL_BOUNDARY,
             SCULPT_TOOL_CLOTH,
-            SCULPT_TOOL_LAYER,
-            SCULPT_TOOL_MASK,
-            SCULPT_TOOL_PAINT,
             SCULPT_TOOL_POSE,
             SCULPT_TOOL_SMOOTH) ||
        BKE_pbvh_type(*ss.pbvh) != PBVH_FACES))
@@ -6672,12 +6497,22 @@ void SCULPT_cube_tip_init(const Sculpt & /*sd*/,
 
 namespace blender::ed::sculpt_paint {
 
-void gather_grids_positions(const SubdivCCG &subdiv_ccg,
+void gather_mesh_positions(Span<float3> vert_postions,
+                           Span<int> verts,
+                           MutableSpan<float3> positions)
+{
+  BLI_assert(verts.size() == positions.size());
+
+  for (const int i : verts.index_range()) {
+    positions[i] = vert_postions[verts[i]];
+  }
+}
+
+void gather_grids_positions(const CCGKey &key,
+                            const Span<CCGElem *> elems,
                             const Span<int> grids,
                             const MutableSpan<float3> positions)
 {
-  const CCGKey key = BKE_subdiv_ccg_key_top_level(subdiv_ccg);
-  const Span<CCGElem *> elems = subdiv_ccg.grids;
   BLI_assert(grids.size() * key.grid_area == positions.size());
 
   for (const int i : grids.index_range()) {
@@ -6691,6 +6526,8 @@ void gather_grids_positions(const SubdivCCG &subdiv_ccg,
 
 void gather_bmesh_positions(const Set<BMVert *, 0> &verts, const MutableSpan<float3> positions)
 {
+  BLI_assert(verts.size() == positions.size());
+
   int i = 0;
   for (const BMVert *vert : verts) {
     positions[i] = vert->co;
@@ -6723,6 +6560,96 @@ void gather_bmesh_normals(const Set<BMVert *, 0> &verts, const MutableSpan<float
     i++;
   }
 }
+
+template<typename T>
+void gather_data_grids(const SubdivCCG &subdiv_ccg,
+                       const Span<T> src,
+                       const Span<int> grids,
+                       const MutableSpan<T> node_data)
+{
+  const CCGKey key = BKE_subdiv_ccg_key_top_level(subdiv_ccg);
+  BLI_assert(grids.size() * key.grid_area == node_data.size());
+
+  for (const int i : grids.index_range()) {
+    const int node_start = i * key.grid_area;
+    const int grids_start = grids[i] * key.grid_area;
+    node_data.slice(node_start, key.grid_area).copy_from(src.slice(grids_start, key.grid_area));
+  }
+}
+
+template<typename T>
+void gather_data_vert_bmesh(const Span<T> src,
+                            const Set<BMVert *, 0> &verts,
+                            const MutableSpan<T> node_data)
+{
+  BLI_assert(verts.size() == node_data.size());
+
+  int i = 0;
+  for (const BMVert *vert : verts) {
+    node_data[i] = src[BM_elem_index_get(vert)];
+    i++;
+  }
+}
+
+template<typename T>
+void scatter_data_grids(const SubdivCCG &subdiv_ccg,
+                        const Span<T> node_data,
+                        const Span<int> grids,
+                        const MutableSpan<T> dst)
+{
+  const CCGKey key = BKE_subdiv_ccg_key_top_level(subdiv_ccg);
+  BLI_assert(grids.size() * key.grid_area == node_data.size());
+
+  for (const int i : grids.index_range()) {
+    const int node_start = i * key.grid_area;
+    const int grids_start = grids[i] * key.grid_area;
+    dst.slice(grids_start, key.grid_area).copy_from(node_data.slice(node_start, key.grid_area));
+  }
+}
+
+template<typename T>
+void scatter_data_vert_bmesh(const Span<T> node_data,
+                             const Set<BMVert *, 0> &verts,
+                             const MutableSpan<T> dst)
+{
+  BLI_assert(verts.size() == node_data.size());
+
+  int i = 0;
+  for (const BMVert *vert : verts) {
+    dst[BM_elem_index_get(vert)] = node_data[i];
+    i++;
+  }
+}
+
+template void gather_data_grids<float>(const SubdivCCG &,
+                                       Span<float>,
+                                       Span<int>,
+                                       MutableSpan<float>);
+template void gather_data_grids<float3>(const SubdivCCG &,
+                                        Span<float3>,
+                                        Span<int>,
+                                        MutableSpan<float3>);
+template void gather_data_vert_bmesh<float>(Span<float>,
+                                            const Set<BMVert *, 0> &,
+                                            MutableSpan<float>);
+template void gather_data_vert_bmesh<float3>(Span<float3>,
+                                             const Set<BMVert *, 0> &,
+                                             MutableSpan<float3>);
+
+template void scatter_data_grids<float>(const SubdivCCG &,
+                                        Span<float>,
+                                        Span<int>,
+                                        MutableSpan<float>);
+template void scatter_data_grids<float3>(const SubdivCCG &,
+                                         Span<float3>,
+                                         Span<int>,
+                                         MutableSpan<float3>);
+template void scatter_data_vert_bmesh<float>(Span<float>,
+                                             const Set<BMVert *, 0> &,
+                                             MutableSpan<float>);
+template void scatter_data_vert_bmesh<float3>(Span<float3>,
+                                              const Set<BMVert *, 0> &,
+                                              MutableSpan<float3>);
 
 void fill_factor_from_hide(const Mesh &mesh,
                            const Span<int> verts,
