@@ -1,7 +1,7 @@
 Blackdot-b
 -------------
 
-Blackdot-b is the free and open source 3D creation suite based from Blender v. 4.1.1 (updated to 4.2) and it is inspired from Softimage XSI.
+Blackdot-b is the free and open source 3D creation suite based from Blender v. 4.1.1 (updated to 4.3) and it is inspired from Softimage XSI.
 It supports the entirety of the 3D pipeline-modeling, rigging, animation, simulation, rendering, compositing, motion tracking and video editing.
 
 
