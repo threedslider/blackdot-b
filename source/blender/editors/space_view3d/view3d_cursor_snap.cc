@@ -11,9 +11,9 @@
 #include "DNA_object_types.h"
 
 #include "BLI_listbase.h"
+#include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector_types.hh"
-#include "BLI_rect.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -27,6 +27,7 @@
 
 #include "GPU_immediate.hh"
 #include "GPU_matrix.hh"
+#include "GPU_state.hh"
 
 #include "ED_screen.hh"
 #include "ED_transform.hh"
@@ -190,7 +191,7 @@ static void v3d_cursor_plane_draw_grid(const int resolution,
   const int axis_z = (plane_axis + 2) % 3;
 
   int i;
-  const float resolution_div = float(1.0f) / float(resolution);
+  const float resolution_div = 1.0f / float(resolution);
   i = 0;
   for (int x = 0; x < resolution; x++) {
     const float x_fl = (x * resolution_div) - 0.5f;
@@ -563,9 +564,16 @@ static bool v3d_cursor_is_snap_invert(SnapCursorDataIntern *data_intern, uint8_t
 
 static eSnapMode v3d_cursor_snap_elements(ToolSettings *tool_settings)
 {
-  return eSnapMode(tool_settings->snap_mode_tools == SCE_SNAP_TO_NONE ?
-                       tool_settings->snap_mode :
-                       tool_settings->snap_mode_tools);
+  if (tool_settings->snap_mode_tools == SCE_SNAP_TO_NONE) {
+    /* Use the snap modes defined in the scene instead. */
+    eSnapMode snap_mode = eSnapMode(tool_settings->snap_mode);
+    if ((snap_mode & SCE_SNAP_TO_INCREMENT) && (tool_settings->snap_flag & SCE_SNAP_ABS_GRID)) {
+      /* Convert snap to increment to snap to grid. */
+      snap_mode |= SCE_SNAP_TO_GRID;
+    }
+    return snap_mode;
+  }
+  return eSnapMode(tool_settings->snap_mode_tools);
 }
 
 static void v3d_cursor_snap_context_ensure(Scene *scene)
@@ -615,7 +623,7 @@ static void v3d_cursor_snap_update(V3DSnapCursorState *state,
     snap_data->is_snap_invert = v3d_cursor_is_snap_invert(data_intern, event_modifier);
 #endif
 
-    if (snap_data->is_snap_invert != !(tool_settings->snap_flag & SCE_SNAP)) {
+    if (snap_data->is_snap_invert != ((tool_settings->snap_flag & SCE_SNAP) == 0)) {
       snap_data->is_enabled = false;
       if (!calc_plane_omat) {
         snap_data->type_target = SCE_SNAP_TO_NONE;
@@ -663,15 +671,14 @@ static void v3d_cursor_snap_update(V3DSnapCursorState *state,
                                          SNAP_GEOM_CAGE :
                                          SNAP_GEOM_EDIT;
 
-      bool use_occlusion_test = (state->flag & V3D_SNAPCURSOR_OCCLUSION_ALWAYS_TRUE) ? false :
-                                                                                       true;
-
       float dist_px = 12.0f * U.pixelsize;
 
       SnapObjectParams params{};
       params.snap_target_select = SCE_SNAP_TARGET_ALL;
       params.edit_mode_type = edit_mode_type;
-      params.use_occlusion_test = use_occlusion_test;
+      params.occlusion_test = (state->flag & V3D_SNAPCURSOR_OCCLUSION_ALWAYS_TRUE) ?
+                                  SNAP_OCCLUSION_ALWAYS :
+                                  SNAP_OCCLUSION_AS_SEEM;
       snap_elem = ED_transform_snap_object_project_view3d_ex(data_intern->snap_context_v3d,
                                                              depsgraph,
                                                              region,
@@ -688,6 +695,22 @@ static void v3d_cursor_snap_update(V3DSnapCursorState *state,
                                                              nullptr,
                                                              obmat,
                                                              face_nor);
+      if ((snap_elem & data_intern->snap_elem_hidden) && (snap_elements & SCE_SNAP_TO_GRID)) {
+        BLI_assert(snap_elem != SCE_SNAP_TO_GRID);
+        params.occlusion_test = SNAP_OCCLUSION_NEVER;
+        snap_elem = ED_transform_snap_object_project_view3d(data_intern->snap_context_v3d,
+                                                            depsgraph,
+                                                            region,
+                                                            v3d,
+                                                            SCE_SNAP_TO_GRID,
+                                                            &params,
+                                                            co,
+                                                            mval_fl,
+                                                            prev_co,
+                                                            &dist_px,
+                                                            co,
+                                                            no);
+      }
     }
   }
 #ifdef USE_SNAP_DETECT_FROM_KEYMAP_HACK
@@ -819,8 +842,8 @@ static bool v3d_cursor_snap_poll_fn(bContext *C)
       return false;
     }
     /* Sometimes the cursor may be on an invisible part of an overlapping region. */
-    const wmWindowManager *wm = CTX_wm_manager(C);
-    const wmEvent *event = wm->winactive->eventstate;
+    wmWindow *win = CTX_wm_window(C);
+    const wmEvent *event = win->eventstate;
     if (ED_region_overlap_isect_xy(region, event->xy)) {
       return false;
     }
@@ -867,7 +890,7 @@ static void v3d_cursor_snap_draw_fn(bContext *C, int x, int y, void * /*customda
   Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
   Scene *scene = DEG_get_input_scene(depsgraph);
 
-  wmWindow *win = CTX_wm_window(C);
+  const wmWindow *win = CTX_wm_window(C);
   const wmEvent *event = win->eventstate;
   if (event && v3d_cursor_eventstate_has_changed(data_intern, state, UNPACK2(xy), event->modifier))
   {
@@ -1016,7 +1039,7 @@ V3DSnapCursorState *ED_view3d_cursor_snap_state_create()
   state_intern->snap_state = g_data_intern.state_default;
   BLI_addtail(&g_data_intern.state_intern, state_intern);
 
-  return (V3DSnapCursorState *)&state_intern->snap_state;
+  return &state_intern->snap_state;
 }
 
 void ED_view3d_cursor_snap_state_free(V3DSnapCursorState *state)

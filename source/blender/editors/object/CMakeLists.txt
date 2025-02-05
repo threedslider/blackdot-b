@@ -4,22 +4,11 @@
 
 set(INC
   ../include
-  ../../asset_system
-  ../../blenkernel
-  ../../blentranslation
-  ../../bmesh
-  ../../functions
-  ../../geometry
-  ../../gpencil_modifiers_legacy
-  ../../gpu
   ../../ikplugin
-  ../../imbuf
   ../../makesrna
   ../../modifiers
   ../../python
-  ../../render
   ../../shader_fx
-  ../../windowmanager
 
   # RNA_prototypes.hh
   ${CMAKE_BINARY_DIR}/source/blender/makesrna
@@ -39,11 +28,11 @@ set(SRC
   object_data_transfer.cc
   object_data_transform.cc
   object_edit.cc
-  object_gpencil_modifier.cc
   object_hook.cc
   object_light_linking_ops.cc
   object_modes.cc
   object_modifier.cc
+  object_multires_modifier.cc
   object_ops.cc
   object_random.cc
   object_relations.cc
@@ -62,19 +51,26 @@ set(SRC
 
 set(LIB
   PRIVATE bf::animrig
+  PRIVATE bf::asset_system
   PRIVATE bf::blenfont
-  bf_blenkernel
+  PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
+  PRIVATE bf::blentranslation
+  PRIVATE bf::bmesh
   PRIVATE bf::depsgraph
   PRIVATE bf::dna
   bf_editor_mesh
   bf_editor_metaball
   bf_editor_grease_pencil
   PRIVATE bf::extern::fmtlib
+  PRIVATE bf::functions
+  PRIVATE bf::geometry
+  PRIVATE bf::gpu
+  PRIVATE bf::imbuf
   PRIVATE bf::intern::clog
   PRIVATE bf::intern::guardedalloc
-  bf_render
-  bf_windowmanager
+  PRIVATE bf::render
+  PRIVATE bf::windowmanager
 )
 
 

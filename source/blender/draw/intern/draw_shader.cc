@@ -8,12 +8,7 @@
 
 #include "DRW_render.hh"
 
-#include "BLI_dynstr.h"
-#include "BLI_string_utils.hh"
-
 #include "GPU_batch.hh"
-#include "GPU_index_buffer.hh"
-#include "GPU_vertex_buffer.hh"
 
 #include "draw_shader.hh"
 
@@ -57,14 +52,6 @@ GPUShader *DRW_shader_curves_refine_get(blender::draw::CurvesEvalShader type)
   }
 
   return e_data.hair_refine_sh[type];
-}
-
-GPUShader *DRW_shader_debug_print_display_get()
-{
-  if (e_data.debug_print_display_sh == nullptr) {
-    e_data.debug_print_display_sh = GPU_shader_create_from_info_name("draw_debug_print_display");
-  }
-  return e_data.debug_print_display_sh;
 }
 
 GPUShader *DRW_shader_debug_draw_display_get()
@@ -113,12 +100,12 @@ GPUShader *DRW_shader_draw_command_generate_get()
 void DRW_shaders_free()
 {
   for (int i = 0; i < PART_REFINE_MAX_SHADER; i++) {
-    DRW_SHADER_FREE_SAFE(e_data.hair_refine_sh[i]);
+    GPU_SHADER_FREE_SAFE(e_data.hair_refine_sh[i]);
   }
-  DRW_SHADER_FREE_SAFE(e_data.debug_print_display_sh);
-  DRW_SHADER_FREE_SAFE(e_data.debug_draw_display_sh);
-  DRW_SHADER_FREE_SAFE(e_data.draw_visibility_compute_sh);
-  DRW_SHADER_FREE_SAFE(e_data.draw_view_finalize_sh);
-  DRW_SHADER_FREE_SAFE(e_data.draw_resource_finalize_sh);
-  DRW_SHADER_FREE_SAFE(e_data.draw_command_generate_sh);
+  GPU_SHADER_FREE_SAFE(e_data.debug_print_display_sh);
+  GPU_SHADER_FREE_SAFE(e_data.debug_draw_display_sh);
+  GPU_SHADER_FREE_SAFE(e_data.draw_visibility_compute_sh);
+  GPU_SHADER_FREE_SAFE(e_data.draw_view_finalize_sh);
+  GPU_SHADER_FREE_SAFE(e_data.draw_resource_finalize_sh);
+  GPU_SHADER_FREE_SAFE(e_data.draw_command_generate_sh);
 }

@@ -5,11 +5,9 @@
 /** \file
  * \ingroup edsculpt
  */
+#include "sculpt_dyntopo.hh"
 
-#include <cmath>
 #include <cstdlib>
-
-#include "MEM_guardedalloc.h"
 
 #include "BLT_translation.hh"
 
@@ -21,12 +19,10 @@
 #include "BKE_modifier.hh"
 #include "BKE_object.hh"
 #include "BKE_paint.hh"
+#include "BKE_paint_bvh.hh"
 #include "BKE_particle.h"
-#include "BKE_pbvh_api.hh"
 #include "BKE_pointcache.h"
 #include "BKE_scene.hh"
-
-#include "BLI_index_range.hh"
 
 #include "DEG_depsgraph.hh"
 
@@ -34,26 +30,15 @@
 #include "WM_types.hh"
 
 #include "ED_undo.hh"
+
 #include "sculpt_intern.hh"
+#include "sculpt_undo.hh"
 
 #include "UI_interface.hh"
 #include "UI_resources.hh"
 
 #include "bmesh.hh"
 #include "bmesh_tools.hh"
-
-void SCULPT_pbvh_clear(Object &ob)
-{
-  using namespace blender;
-  SculptSession &ss = *ob.sculpt;
-  /* Clear out any existing DM and PBVH. */
-  bke::pbvh::free(ss.pbvh);
-
-  BKE_object_free_derived_caches(&ob);
-
-  /* Tag to rebuild PBVH in depsgraph. */
-  DEG_id_tag_update(&ob.id, ID_RECALC_GEOMETRY);
-}
 
 namespace blender::ed::sculpt_paint::dyntopo {
 
@@ -77,7 +62,7 @@ void enable_ex(Main &bmain, Depsgraph &depsgraph, Object &ob)
   Mesh *mesh = static_cast<Mesh *>(ob.data);
   const BMAllocTemplate allocsize = BMALLOC_TEMPLATE_FROM_ME(mesh);
 
-  SCULPT_pbvh_clear(ob);
+  BKE_sculptsession_free_pbvh(ob);
 
   /* Dynamic topology doesn't ensure selection state is valid, so remove #36280. */
   BKE_mesh_mselect_clear(mesh);
@@ -109,7 +94,7 @@ void enable_ex(Main &bmain, Depsgraph &depsgraph, Object &ob)
   ss.bm_log = BM_log_create(ss.bm);
 
   /* Update dependency graph, so modifiers that depend on dyntopo being enabled
-   * are re-evaluated and the PBVH is re-created. */
+   * are re-evaluated and the #bke::pbvh::Tree is re-created. */
   DEG_id_tag_update(&ob.id, ID_RECALC_GEOMETRY);
   BKE_scene_graph_update_tagged(&depsgraph, &bmain);
 }
@@ -126,15 +111,12 @@ static void disable(
   SculptSession &ss = *ob.sculpt;
   Mesh *mesh = static_cast<Mesh *>(ob.data);
 
-  if (ss.attrs.dyntopo_node_id_vertex) {
-    BKE_sculpt_attribute_destroy(&ob, ss.attrs.dyntopo_node_id_vertex);
+  if (BMesh *bm = ss.bm) {
+    BM_data_layer_free_named(bm, &bm->vdata, ".sculpt_dyntopo_node_id_vertex");
+    BM_data_layer_free_named(bm, &bm->pdata, ".sculpt_dyntopo_node_id_face");
   }
 
-  if (ss.attrs.dyntopo_node_id_face) {
-    BKE_sculpt_attribute_destroy(&ob, ss.attrs.dyntopo_node_id_face);
-  }
-
-  SCULPT_pbvh_clear(ob);
+  BKE_sculptsession_free_pbvh(ob);
 
   if (undo_step) {
     undo::restore_from_bmesh_enter_geometry(*undo_step, *mesh);
@@ -167,7 +149,7 @@ static void disable(
   BKE_ptcache_object_reset(&scene, &ob, PTCACHE_RESET_OUTDATED);
 
   /* Update dependency graph, so modifiers that depend on dyntopo being enabled
-   * are re-evaluated and the PBVH is re-created. */
+   * are re-evaluated and the #bke::pbvh::Tree is re-created. */
   DEG_id_tag_update(&ob.id, ID_RECALC_GEOMETRY);
   BKE_scene_graph_update_tagged(&depsgraph, &bmain);
 }
@@ -188,8 +170,8 @@ void disable_with_undo(Main &bmain, Depsgraph &depsgraph, Scene &scene, Object &
     /* May be false in background mode. */
     const bool use_undo = G.background ? (ED_undo_stack_get() != nullptr) : true;
     if (use_undo) {
-      undo::push_begin_ex(ob, "Dynamic topology disable");
-      undo::push_node(ob, nullptr, undo::Type::DyntopoEnd);
+      undo::push_begin_ex(scene, ob, "Dynamic topology disable");
+      undo::push_node(depsgraph, ob, nullptr, undo::Type::DyntopoEnd);
     }
     disable(bmain, depsgraph, scene, ob, nullptr);
     if (use_undo) {
@@ -198,18 +180,18 @@ void disable_with_undo(Main &bmain, Depsgraph &depsgraph, Scene &scene, Object &
   }
 }
 
-static void enable_with_undo(Main &bmain, Depsgraph &depsgraph, Object &ob)
+static void enable_with_undo(Main &bmain, Depsgraph &depsgraph, const Scene &scene, Object &ob)
 {
   SculptSession &ss = *ob.sculpt;
   if (ss.bm == nullptr) {
     /* May be false in background mode. */
     const bool use_undo = G.background ? (ED_undo_stack_get() != nullptr) : true;
     if (use_undo) {
-      undo::push_begin_ex(ob, "Dynamic topology enable");
+      undo::push_begin_ex(scene, ob, "Dynamic topology enable");
     }
     enable_ex(bmain, depsgraph, ob);
     if (use_undo) {
-      undo::push_node(ob, nullptr, undo::Type::DyntopoBegin);
+      undo::push_node(depsgraph, ob, nullptr, undo::Type::DyntopoBegin);
       undo::push_end(ob);
     }
   }
@@ -229,7 +211,7 @@ static int sculpt_dynamic_topology_toggle_exec(bContext *C, wmOperator * /*op*/)
     disable_with_undo(bmain, depsgraph, scene, ob);
   }
   else {
-    enable_with_undo(bmain, depsgraph, ob);
+    enable_with_undo(bmain, depsgraph, scene, ob);
   }
 
   WM_cursor_wait(false);

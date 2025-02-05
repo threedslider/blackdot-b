@@ -32,7 +32,7 @@
 
 #include "BLI_scanfill.h" /* own include */
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /* local types */
 typedef struct PolyFill {
@@ -846,8 +846,8 @@ uint BLI_scanfill_calc_ex(ScanFillContext *sf_ctx, const int flag, const float n
 
 #ifndef NDEBUG
   for (eve = sf_ctx->fillvertbase.first; eve; eve = eve->next) {
-    /* these values used to be set,
-     * however they should always be zero'd so check instead */
+    /* These values used to be set,
+     * however they should always be zeroed so check instead. */
     BLI_assert(eve->f == 0);
     BLI_assert(sf_ctx->poly_nr || eve->poly_nr == 0);
     BLI_assert(eve->edge_count == 0);

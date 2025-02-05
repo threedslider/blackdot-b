@@ -8,14 +8,6 @@
 
 #include <algorithm>
 
-#if !defined(WIN32)
-#  include <cstdint>
-#endif
-
-/* COLLADABU_ASSERT, may be able to remove later */
-#include "COLLADABUPlatform.h"
-
-#include "BLI_compiler_attrs.h"
 #include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
 
@@ -23,7 +15,7 @@
 #include "DNA_modifier_types.h"
 #include "DNA_scene_types.h"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_deform.hh"
 #include "BKE_object.hh"
 #include "BKE_object_deform.h"

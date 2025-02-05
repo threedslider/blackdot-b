@@ -11,7 +11,7 @@
 
 #include <Python.h>
 
-#include "../BPY_extern.h"
+#include "../BPY_extern.hh"
 
 BPy_ThreadStatePtr BPY_thread_save()
 {
@@ -30,5 +30,32 @@ void BPY_thread_restore(BPy_ThreadStatePtr tstate)
 {
   if (tstate) {
     PyEval_RestoreThread((PyThreadState *)tstate);
+  }
+}
+
+void BPY_thread_backtrace_print()
+{
+  PyThreadState *tstate = PyGILState_GetThisThreadState();
+
+  if (tstate) {
+    PyFrameObject *frame = PyThreadState_GetFrame(tstate);
+
+    printf(frame ? "Python stack trace:\n" : "No Python stack trace available.\n");
+
+    while (frame) {
+      PyCodeObject *frame_co = PyFrame_GetCode(frame);
+      int line = PyFrame_GetLineNumber(frame);
+      const char *filename = PyUnicode_AsUTF8(frame_co->co_filename);
+      const char *funcname = PyUnicode_AsUTF8(frame_co->co_name);
+      printf("    %s:%d %s\n", filename, line, funcname);
+      Py_DECREF(frame_co);
+      PyFrameObject *frame_back = PyFrame_GetBack(frame);
+      Py_DECREF(frame);
+      frame = frame_back;
+    }
+    printf("\n");
+  }
+  else {
+    printf("No Python thread state available.\n");
   }
 }

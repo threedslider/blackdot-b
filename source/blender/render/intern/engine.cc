@@ -12,7 +12,6 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_ghash.h"
 #include "BLI_listbase.h"
 #include "BLI_math_bits.h"
 #include "BLI_string.h"
@@ -33,7 +32,7 @@
 #include "GPU_context.hh"
 
 #ifdef WITH_PYTHON
-#  include "BPY_extern.h"
+#  include "BPY_extern.hh"
 #endif
 
 #include "IMB_imbuf_types.hh"
@@ -137,14 +136,27 @@ static void engine_depsgraph_free(RenderEngine *engine)
     /* Need GPU context since this might free GPU buffers. */
     const bool use_gpu_context = (engine->type->flag & RE_USE_GPU_CONTEXT);
     if (use_gpu_context) {
-      DRW_render_context_enable(engine->re);
+      /* This function can be called on the main thread before RenderEngine is destroyed.
+       * In this case, just bind the main draw context to gather the deleted GPU buffers.
+       * Binding the same GPU context as the render engine is not needed (see #129019). */
+      if (BLI_thread_is_main()) {
+        DRW_gpu_context_enable();
+      }
+      else {
+        DRW_render_context_enable(engine->re);
+      }
     }
 
     DEG_graph_free(engine->depsgraph);
     engine->depsgraph = nullptr;
 
     if (use_gpu_context) {
-      DRW_render_context_disable(engine->re);
+      if (BLI_thread_is_main()) {
+        DRW_gpu_context_disable();
+      }
+      else {
+        DRW_render_context_disable(engine->re);
+      }
     }
   }
 }
@@ -836,6 +848,16 @@ bool RE_bake_engine(Render *re,
 
 /* Render */
 
+static bool possibly_using_gpu_compositor(const Render *re)
+{
+  if (re->r.compositor_device != SCE_COMPOSITOR_DEVICE_GPU) {
+    return false;
+  }
+
+  const Scene *scene = re->pipeline_scene_eval;
+  return (scene->nodetree && scene->use_nodes && (scene->r.scemode & R_DOCOMP));
+}
+
 static void engine_render_view_layer(Render *re,
                                      RenderEngine *engine,
                                      ViewLayer *view_layer_iter,
@@ -860,7 +882,9 @@ static void engine_render_view_layer(Render *re,
     if (use_gpu_context) {
       DRW_render_context_enable(engine->re);
     }
-    else if (engine->has_grease_pencil && use_grease_pencil && G.background) {
+    else if (G.background && ((engine->has_grease_pencil && use_grease_pencil) ||
+                              possibly_using_gpu_compositor(re)))
+    {
       /* Workaround for specific NVidia drivers which crash on Linux when OptiX context is
        * initialized prior to OpenGL context. This affects driver versions 545.29.06, 550.54.14,
        * and 550.67 running on kernel 6.8.

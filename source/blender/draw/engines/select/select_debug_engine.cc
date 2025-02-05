@@ -8,14 +8,14 @@
  * Engine for debugging the selection map drawing.
  */
 
+#include "BLT_translation.hh"
+
 #include "DNA_ID.h"
-#include "DNA_vec_types.h"
 
 #include "DRW_engine.hh"
-#include "DRW_select_buffer.hh"
 
-#include "draw_cache.hh"
-#include "draw_manager_c.hh"
+#include "draw_manager.hh"
+#include "draw_pass.hh"
 
 #include "select_engine.hh"
 
@@ -25,21 +25,17 @@
 /** \name Structs and static variables
  * \{ */
 
-struct SELECTIDDEBUG_PassList {
-  struct DRWPass *debug_pass;
-};
-
 struct SELECTIDDEBUG_Data {
   void *engine_type;
   DRWViewportEmptyList *fbl;
   DRWViewportEmptyList *txl;
-  SELECTIDDEBUG_PassList *psl;
+  DRWViewportEmptyList *psl;
   DRWViewportEmptyList *stl;
 };
 
 static struct {
   struct GPUShader *select_debug_sh;
-} e_data = {{nullptr}}; /* Engine data */
+} e_data = {nullptr}; /* Engine data */
 
 /** \} */
 
@@ -47,47 +43,33 @@ static struct {
 /** \name Engine Functions
  * \{ */
 
-static void select_debug_engine_init(void *vedata)
+static void select_debug_draw_scene(void * /*vedata*/)
 {
-  SELECTIDDEBUG_PassList *psl = ((SELECTIDDEBUG_Data *)vedata)->psl;
+  GPUTexture *texture_u32 = DRW_engine_select_texture_get();
+  if (texture_u32 == nullptr) {
+    return;
+  }
 
   if (!e_data.select_debug_sh) {
-    e_data.select_debug_sh = DRW_shader_create_fullscreen(
-        "uniform usampler2D image;"
-        "in vec4 uvcoordsvar;"
-        "out vec4 fragColor;"
-        "void main() {"
-        "  uint px = texture(image, uvcoordsvar.xy).r;"
-        "  fragColor = vec4(1.0, 1.0, 1.0, 0.0);"
-        "  if (px != 0u) {"
-        "    fragColor.a = 1.0;"
-        "    px &= 0x3Fu;"
-        "    fragColor.r = ((px >> 0) & 0x3u) / float(0x3u);"
-        "    fragColor.g = ((px >> 2) & 0x3u) / float(0x3u);"
-        "    fragColor.b = ((px >> 4) & 0x3u) / float(0x3u);"
-        "  }"
-        "}\n",
-        nullptr);
+    e_data.select_debug_sh = GPU_shader_create_from_info_name("select_debug_fullscreen");
   }
 
-  psl->debug_pass = DRW_pass_create("Debug Pass", DRW_STATE_WRITE_COLOR | DRW_STATE_BLEND_ALPHA);
-  GPUTexture *texture_u32 = DRW_engine_select_texture_get();
-  if (texture_u32) {
-    DRWShadingGroup *shgrp = DRW_shgroup_create(e_data.select_debug_sh, psl->debug_pass);
-    DRW_shgroup_uniform_texture(shgrp, "image", texture_u32);
-    DRW_shgroup_call_procedural_triangles(shgrp, nullptr, 1);
-  }
+  using namespace blender::draw;
+
+  PassSimple pass = {"SelectEngineDebug"};
+  pass.init();
+  pass.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_BLEND_ALPHA);
+  pass.shader_set(e_data.select_debug_sh);
+  pass.bind_texture("image", texture_u32);
+  pass.bind_texture("image", texture_u32);
+  pass.draw_procedural(GPU_PRIM_TRIS, 1, 3);
+
+  DRW_manager_get()->submit(pass);
 }
 
-static void select_debug_draw_scene(void *vedata)
+static void select_debug_engine_free()
 {
-  SELECTIDDEBUG_PassList *psl = ((SELECTIDDEBUG_Data *)vedata)->psl;
-  DRW_draw_pass(psl->debug_pass);
-}
-
-static void select_debug_engine_free(void)
-{
-  DRW_SHADER_FREE_SAFE(e_data.select_debug_sh);
+  GPU_SHADER_FREE_SAFE(e_data.select_debug_sh);
 }
 
 /** \} */
@@ -104,7 +86,7 @@ DrawEngineType draw_engine_debug_select_type = {
     /*prev*/ nullptr,
     /*idname*/ N_("Select ID Debug"),
     /*vedata_size*/ &select_debug_data_size,
-    /*engine_init*/ &select_debug_engine_init,
+    /*engine_init*/ nullptr,
     /*engine_free*/ &select_debug_engine_free,
     /*instance_free*/ nullptr,
     /*cache_init*/ nullptr,

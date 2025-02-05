@@ -6,7 +6,6 @@
  * \ingroup edphys
  */
 
-#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
@@ -14,11 +13,11 @@
 #include "MEM_guardedalloc.h"
 
 /* types */
-#include "DNA_action_types.h"
 #include "DNA_object_types.h"
 
-#include "BLI_blenlib.h"
-#include "BLI_path_util.h"
+#include "BLI_fileops.h"
+#include "BLI_path_utils.hh"
+#include "BLI_string.h"
 #include "BLI_time.h"
 #include "BLI_utildefines.h"
 
@@ -338,7 +337,7 @@ static void fluid_bake_endjob(void *customdata)
   if (job->success) {
     /* Show bake info. */
     WM_reportf(
-        RPT_INFO, "Fluid: %s complete! (%.2f)", job->name, BLI_time_now_seconds() - job->start);
+        RPT_INFO, "Fluid: %s complete (%.2f)", job->name, BLI_time_now_seconds() - job->start);
   }
   else {
     if (fds->error[0] != '\0') {
@@ -446,7 +445,7 @@ static void fluid_free_endjob(void *customdata)
   if (job->success) {
     /* Show free job info */
     WM_reportf(
-        RPT_INFO, "Fluid: %s complete! (%.2f)", job->name, BLI_time_now_seconds() - job->start);
+        RPT_INFO, "Fluid: %s complete (%.2f)", job->name, BLI_time_now_seconds() - job->start);
   }
   else {
     if (fds->error[0] != '\0') {

@@ -29,11 +29,19 @@ void VKIndexBuffer::ensure_updated()
     return;
   }
 
-  VKContext &context = *VKContext::get();
-  VKStagingBuffer staging_buffer(buffer_, VKStagingBuffer::Direction::HostToDevice);
-  staging_buffer.host_buffer_get().update(data_);
-  staging_buffer.copy_to_device(context);
-  MEM_SAFE_FREE(data_);
+  if (!data_uploaded_ && buffer_.is_mapped()) {
+    buffer_.update_immediately(data_);
+    MEM_SAFE_FREE(data_);
+  }
+  else {
+    VKContext &context = *VKContext::get();
+    VKStagingBuffer staging_buffer(buffer_, VKStagingBuffer::Direction::HostToDevice);
+    staging_buffer.host_buffer_get().update_immediately(data_);
+    staging_buffer.copy_to_device(context);
+    MEM_SAFE_FREE(data_);
+  }
+
+  data_uploaded_ = true;
 }
 
 void VKIndexBuffer::upload_data()
@@ -43,26 +51,13 @@ void VKIndexBuffer::upload_data()
 
 void VKIndexBuffer::bind_as_ssbo(uint binding)
 {
-  VKContext::get()->state_manager_get().storage_buffer_bind(*this, binding);
-}
-
-void VKIndexBuffer::add_to_descriptor_set(AddToDescriptorSetContext &data,
-                                          int binding,
-                                          shader::ShaderCreateInfo::Resource::BindType bind_type,
-                                          const GPUSamplerState /*sampler_state*/)
-{
-  BLI_assert(bind_type == shader::ShaderCreateInfo::Resource::BindType::STORAGE_BUFFER);
-  ensure_updated();
-
-  const std::optional<VKDescriptorSet::Location> location =
-      data.shader_interface.descriptor_set_location(bind_type, binding);
-  if (location) {
-    data.descriptor_set.bind_as_ssbo(*this, *location);
-    render_graph::VKBufferAccess buffer_access = {};
-    buffer_access.vk_buffer = buffer_.vk_handle();
-    buffer_access.vk_access_flags = data.shader_interface.access_mask(bind_type, binding);
-    data.resource_access_info.buffers.append(buffer_access);
+  if (is_subrange_) {
+    src_->bind_as_ssbo(binding);
+    return;
   }
+
+  VKContext::get()->state_manager_get().storage_buffer_bind(
+      BindSpaceStorageBuffers::Type::IndexBuffer, this, binding);
 }
 
 void VKIndexBuffer::read(uint32_t *data) const
@@ -85,12 +80,12 @@ void VKIndexBuffer::strip_restart_indices()
 
 void VKIndexBuffer::allocate()
 {
-  GPUUsageType usage = data_ == nullptr ? GPU_USAGE_DEVICE_ONLY : GPU_USAGE_STATIC;
   buffer_.create(size_get(),
-                 usage,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                 false);
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                 VkMemoryPropertyFlags(0),
+                 VmaAllocationCreateFlags(0));
   debug::object_label(buffer_.vk_handle(), "IndexBuffer");
 }
 

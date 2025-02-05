@@ -29,14 +29,14 @@ class GHOST_CallbackEventConsumer : public GHOST_IEventConsumer {
   /**
    * Destructor.
    */
-  ~GHOST_CallbackEventConsumer() {}
+  ~GHOST_CallbackEventConsumer() override = default;
 
   /**
    * This method is called by an event producer when an event is available.
    * \param event: The event that can be handled or ignored.
    * \return Indication as to whether the event was handled.
    */
-  bool processEvent(const GHOST_IEvent *event);
+  bool processEvent(const GHOST_IEvent *event) override;
 
  protected:
   /** The call-back routine invoked. */
@@ -44,7 +44,5 @@ class GHOST_CallbackEventConsumer : public GHOST_IEventConsumer {
   /** The data passed back through the call-back routine. */
   GHOST_TUserDataPtr m_userData;
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("GHOST:GHOST_CallbackEventConsumer")
-#endif
 };

@@ -41,32 +41,32 @@ class GHOST_ISystemPaths {
    * Destructor.
    * Protected default constructor to force use of static dispose member.
    */
-  virtual ~GHOST_ISystemPaths() {}
+  virtual ~GHOST_ISystemPaths() = default;
 
  public:
   /**
-   * Determine the base dir in which shared resources are located. It will first try to use
+   * Determine the base directory in which shared resources are located. It will first try to use
    * "unpack and run" path, then look for properly installed path, including versioning.
-   * \return Unsigned char string pointing to system dir (eg /usr/share/blender/).
+   * \return Unsigned char string pointing to system directory (eg `/usr/share/blender/`).
    */
   virtual const char *getSystemDir(int version, const char *versionstr) const = 0;
 
   /**
-   * Determine the base dir in which user configuration is stored, including versioning.
+   * Determine the base directory in which user configuration is stored, including versioning.
    * If needed, it will create the base directory.
-   * \return Unsigned char string pointing to user dir (eg ~/.blender/).
+   * \return Unsigned char string pointing to user directory (eg `~/.blender/`).
    */
   virtual const char *getUserDir(int version, const char *versionstr) const = 0;
 
   /**
    * Determine a special ("well known") and easy to reach user directory.
-   * \return Unsigned char string pointing to user dir (eg `~/Documents/`).
+   * \return Unsigned char string pointing to user directory (eg `~/Documents/`).
    */
   virtual const char *getUserSpecialDir(GHOST_TUserSpecialDirTypes type) const = 0;
 
   /**
    * Determine the directory of the current binary
-   * \return Unsigned char string pointing to the binary dir
+   * \return Unsigned char string pointing to the binary directory.
    */
   virtual const char *getBinaryDir() const = 0;
 
@@ -79,7 +79,5 @@ class GHOST_ISystemPaths {
   /** The one and only system paths. */
   static GHOST_ISystemPaths *m_systemPaths;
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("GHOST:GHOST_ISystemPaths")
-#endif
 };

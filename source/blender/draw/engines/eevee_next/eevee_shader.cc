@@ -11,6 +11,8 @@
 
 #include "GPU_capabilities.hh"
 
+#include "BKE_material.hh"
+
 #include "gpu_shader_create_info.hh"
 
 #include "eevee_shader.hh"
@@ -78,8 +80,13 @@ ShaderModule::ShaderModule()
 
 ShaderModule::~ShaderModule()
 {
+  if (compilation_handle_) {
+    /* Finish compilation to avoid asserts on exit at GLShaderCompiler destructor. */
+    is_ready(true);
+  }
+
   for (GPUShader *&shader : shaders_) {
-    DRW_SHADER_FREE_SAFE(shader);
+    GPU_SHADER_FREE_SAFE(shader);
   }
 }
 
@@ -154,6 +161,16 @@ const char *ShaderModule::static_shader_create_info_name_get(eShaderType shader_
       return "eevee_film_cryptomatte_post";
     case FILM_FRAG:
       return "eevee_film_frag";
+    case FILM_PASS_CONVERT_COMBINED:
+      return "eevee_film_pass_convert_combined";
+    case FILM_PASS_CONVERT_DEPTH:
+      return "eevee_film_pass_convert_depth";
+    case FILM_PASS_CONVERT_VALUE:
+      return "eevee_film_pass_convert_value";
+    case FILM_PASS_CONVERT_COLOR:
+      return "eevee_film_pass_convert_color";
+    case FILM_PASS_CONVERT_CRYPTOMATTE:
+      return "eevee_film_pass_convert_cryptomatte";
     case DEFERRED_COMBINE:
       return "eevee_deferred_combine";
     case DEFERRED_LIGHT_SINGLE:
@@ -270,6 +287,8 @@ const char *ShaderModule::static_shader_create_info_name_get(eShaderType shader_
       return "eevee_ray_tile_classify";
     case RAY_TILE_COMPACT:
       return "eevee_ray_tile_compact";
+    case RENDERPASS_CLEAR:
+      return "eevee_renderpass_clear";
     case LIGHTPROBE_IRRADIANCE_BOUNDS:
       return "eevee_lightprobe_volume_bounds";
     case LIGHTPROBE_IRRADIANCE_OFFSET:
@@ -328,6 +347,8 @@ const char *ShaderModule::static_shader_create_info_name_get(eShaderType shader_
       return "eevee_shadow_page_tile_store";
     case SHADOW_TILEMAP_TAG_USAGE_VOLUME:
       return "eevee_shadow_tag_usage_volume";
+    case SHADOW_VIEW_VISIBILITY:
+      return "eevee_shadow_view_visibility";
     case SUBSURFACE_CONVOLVE:
       return "eevee_subsurface_convolve";
     case SUBSURFACE_SETUP:
@@ -405,7 +426,10 @@ class SamplerSlots {
 
     first_reserved_ = MATERIAL_TEXTURE_RESERVED_SLOT_FIRST;
     last_reserved_ = MATERIAL_TEXTURE_RESERVED_SLOT_LAST_NO_EVAL;
-    if (pipeline_type == MAT_PIPE_DEFERRED && has_shader_to_rgba) {
+    if (geometry_type == MAT_GEOM_WORLD) {
+      last_reserved_ = MATERIAL_TEXTURE_RESERVED_SLOT_LAST_WORLD;
+    }
+    else if (pipeline_type == MAT_PIPE_DEFERRED && has_shader_to_rgba) {
       last_reserved_ = MATERIAL_TEXTURE_RESERVED_SLOT_LAST_HYBRID;
     }
     else if (pipeline_type == MAT_PIPE_FORWARD) {
@@ -692,7 +716,7 @@ void ShaderModule::material_create_info_amend(GPUMaterial *gpumat, GPUCodegenOut
   attr_load << (!codegen.attr_load.empty() ? codegen.attr_load : "");
   attr_load << "}\n\n";
 
-  std::stringstream vert_gen, frag_gen, comp_gen;
+  std::stringstream vert_gen, frag_gen;
 
   if (do_vertex_attrib_load) {
     vert_gen << global_vars.str() << attr_load.str();
@@ -981,8 +1005,6 @@ GPUMaterial *ShaderModule::world_shader_get(::World *blender_world,
                                this);
 }
 
-/* Variation to compile a material only with a nodetree. Caller needs to maintain the list of
- * materials and call GPU_material_free on it to update the material. */
 GPUMaterial *ShaderModule::material_shader_get(const char *name,
                                                ListBase &materials,
                                                bNodeTree *nodetree,

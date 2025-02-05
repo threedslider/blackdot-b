@@ -82,7 +82,9 @@ or the context for executing the actions is not properly set (the case for timer
 
 This utility executes actions as if the user initiated them from a key shortcut.
 """
-
+__all__ = (
+    "main",
+)
 
 import os
 import sys
@@ -131,7 +133,7 @@ def find_main_area(ui_type=None):
 
 def gen_events_type_text(text):
     """
-    Generate events to type in `text`.
+    Generate events to type in ``text``.
     """
     for ch in text:
         kw_extra = {}

@@ -36,9 +36,9 @@
 #include "BLI_buffer.h"
 #include "BLI_utildefines.h"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
-static void *buffer_alloc(BLI_Buffer *buffer, const size_t len)
+static void *buffer_alloc(const BLI_Buffer *buffer, const size_t len)
 {
   return MEM_mallocN(buffer->elem_size * len, "BLI_Buffer.data");
 }

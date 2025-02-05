@@ -6,6 +6,8 @@
  * \ingroup draw
  */
 
+#pragma once
+
 #ifndef GPU_SHADER
 #  include "GPU_shader_shared_utils.hh"
 
@@ -23,6 +25,8 @@ typedef struct GlobalsUboStorage GlobalsUboStorage;
 /* \note Also keep all color as vec4 and between #UBO_FIRST_COLOR and #UBO_LAST_COLOR. */
 struct GlobalsUboStorage {
   /* UBOs data needs to be 16 byte aligned (size of vec4) */
+  float4 clip_planes[6];
+
   float4 color_wire;
   float4 color_wire_edit;
   float4 color_active;

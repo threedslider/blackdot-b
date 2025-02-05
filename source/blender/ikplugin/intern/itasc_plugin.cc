@@ -27,16 +27,13 @@
 #include "MEM_guardedalloc.h"
 
 #include "BIK_api.h"
-#include "BLI_blenlib.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_armature.hh"
 #include "BKE_constraint.h"
-#include "BKE_global.hh"
 #include "DNA_action_types.h"
 #include "DNA_armature_types.h"
 #include "DNA_constraint_types.h"
@@ -213,7 +210,7 @@ enum IK_SegmentAxis {
   IK_TRANS_Z = 5,
 };
 
-static int initialize_chain(Object *ob, bPoseChannel *pchan_tip, bConstraint *con)
+static int initialize_chain(Object * /*ob*/, bPoseChannel *pchan_tip, bConstraint *con)
 {
   bPoseChannel *curchan, *pchan_root = nullptr, *chanlist[256], **oldchan;
   PoseTree *tree;
@@ -368,7 +365,7 @@ static int initialize_chain(Object *ob, bPoseChannel *pchan_tip, bConstraint *co
   return treecount;
 }
 
-static bool is_cartesian_constraint(bConstraint *con)
+static bool is_cartesian_constraint(bConstraint * /*con*/)
 {
   // bKinematicConstraint* data=(bKinematicConstraint *)con->data;
 
@@ -556,15 +553,15 @@ static void GetJointRotation(KDL::Rotation &boneRot, int type, double *rot)
   }
 }
 
-static bool target_callback(const iTaSC::Timestamp &timestamp,
-                            const iTaSC::Frame &current,
+static bool target_callback(const iTaSC::Timestamp & /*timestamp*/,
+                            const iTaSC::Frame & /*current*/,
                             iTaSC::Frame &next,
                             void *param)
 {
   IK_Target *target = (IK_Target *)param;
   /* compute next target position
    * get target matrix from constraint. */
-  bConstraint *constraint = (bConstraint *)target->blenderConstraint;
+  bConstraint *constraint = target->blenderConstraint;
   float tarmat[4][4];
 
   BKE_constraint_target_matrix_get(target->bldepsgraph,
@@ -602,7 +599,7 @@ static bool target_callback(const iTaSC::Timestamp &timestamp,
 }
 
 static bool base_callback(const iTaSC::Timestamp &timestamp,
-                          const iTaSC::Frame &current,
+                          const iTaSC::Frame & /*current*/,
                           iTaSC::Frame &next,
                           void *param)
 {
@@ -705,9 +702,9 @@ static bool base_callback(const iTaSC::Timestamp &timestamp,
   return true;
 }
 
-static bool copypose_callback(const iTaSC::Timestamp &timestamp,
+static bool copypose_callback(const iTaSC::Timestamp & /*timestamp*/,
                               iTaSC::ConstraintValues *const _values,
-                              uint _nvalues,
+                              uint /*nvalues*/,
                               void *_param)
 {
   IK_Target *iktarget = (IK_Target *)_param;
@@ -752,7 +749,7 @@ static bool copypose_callback(const iTaSC::Timestamp &timestamp,
 }
 
 static void copypose_error(const iTaSC::ConstraintValues *values,
-                           uint nvalues,
+                           uint /*nvalues*/,
                            IK_Target *iktarget)
 {
   iTaSC::ConstraintSingleValue *value;
@@ -779,7 +776,7 @@ static void copypose_error(const iTaSC::ConstraintValues *values,
 
 static bool distance_callback(const iTaSC::Timestamp &timestamp,
                               iTaSC::ConstraintValues *const _values,
-                              uint _nvalues,
+                              uint /*nvalues*/,
                               void *_param)
 {
   IK_Target *iktarget = (IK_Target *)_param;
@@ -829,13 +826,13 @@ static bool distance_callback(const iTaSC::Timestamp &timestamp,
 }
 
 static void distance_error(const iTaSC::ConstraintValues *values,
-                           uint _nvalues,
+                           uint /*nvalues*/,
                            IK_Target *iktarget)
 {
   iktarget->blenderConstraint->lin_error = float(values->values[0].y - values->values[0].yd);
 }
 
-static bool joint_callback(const iTaSC::Timestamp &timestamp,
+static bool joint_callback(const iTaSC::Timestamp & /*timestamp*/,
                            iTaSC::ConstraintValues *const _values,
                            uint _nvalues,
                            void *_param)
@@ -1435,7 +1432,7 @@ static IK_Scene *convert_tree(
   /* for each target, we need to add an end effector in the armature */
   for (numtarget = 0, polarcon = nullptr, ret = true, target = (PoseTarget *)tree->targets.first;
        target;
-       target = (PoseTarget *)target->next)
+       target = target->next)
   {
     condata = (bKinematicConstraint *)target->con->data;
     pchan = tree->pchan[target->tip];
@@ -1922,7 +1919,7 @@ void itasc_execute_tree(
   }
 }
 
-void itasc_release_tree(Scene *scene, Object *ob, float ctime)
+void itasc_release_tree(Scene * /*scene*/, Object * /*ob*/, float /*ctime*/)
 {
   /* not used for iTaSC */
 }
@@ -1982,7 +1979,7 @@ void itasc_update_param(bPose *pose)
   }
 }
 
-void itasc_test_constraint(Object *ob, bConstraint *cons)
+void itasc_test_constraint(Object * /*ob*/, bConstraint *cons)
 {
   bKinematicConstraint *data = (bKinematicConstraint *)cons->data;
 

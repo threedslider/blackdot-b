@@ -3,6 +3,10 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+__all__ = (
+    "main",
+)
+
 import os
 from os.path import join
 
@@ -17,10 +21,15 @@ SOURCE_EXT = (
     ".glsl",
     # Python
     ".py",
+    # TOML.
+    ".toml",
     # Text (also CMake)
     ".txt", ".cmake", ".rst",
     # MS-Windows Scripts.
     ".bat", ".cmd",
+    # HTML, XML.
+    ".html",
+    ".xml",
 )
 
 

@@ -8,33 +8,42 @@
 
 #pragma once
 
-#include "overlay_next_private.hh"
+#include "DNA_world_types.h"
+
+#include "draw_cache.hh"
+
+#include "overlay_next_base.hh"
 
 namespace blender::draw::overlay {
 
-class Background {
+/**
+ * Draw background color .
+ */
+class Background : Overlay {
  private:
   PassSimple bg_ps_ = {"Background"};
 
+  GPUFrameBuffer *framebuffer_ref_ = nullptr;
+
  public:
-  void begin_sync(Resources &res, const State &state)
+  void begin_sync(Resources &res, const State &state) final
   {
     DRWState pass_state = DRW_STATE_WRITE_COLOR | DRW_STATE_BLEND_BACKGROUND;
     float4 color_override(0.0f, 0.0f, 0.0f, 0.0f);
     int background_type;
 
-    if (DRW_state_is_viewport_image_render() && !DRW_state_draw_background()) {
+    if (state.is_viewport_image_render && !state.draw_background) {
       background_type = BG_SOLID;
       color_override[3] = 1.0f;
     }
-    else if (state.space_type == SPACE_IMAGE) {
+    else if (state.is_space_image()) {
       background_type = BG_SOLID_CHECKER;
     }
-    else if (state.space_type == SPACE_NODE) {
+    else if (state.is_space_node()) {
       background_type = BG_MASK;
       pass_state = DRW_STATE_WRITE_COLOR | DRW_STATE_BLEND_MUL;
     }
-    else if (!DRW_state_draw_background()) {
+    else if (!state.draw_background) {
       background_type = BG_CHECKER;
     }
     else if (state.v3d->shading.background_type == V3D_SHADING_BACKGROUND_WORLD &&
@@ -67,28 +76,32 @@ class Background {
     }
 
     bg_ps_.init();
+    bg_ps_.framebuffer_set(&framebuffer_ref_);
+
+    if ((state.clipping_plane_count != 0) && (state.rv3d) && (state.rv3d->clipbb)) {
+      Span<float3> bbox(reinterpret_cast<float3 *>(state.rv3d->clipbb->vec[0]), 8);
+
+      bg_ps_.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_BLEND_ALPHA | DRW_STATE_CULL_BACK);
+      bg_ps_.shader_set(res.shaders.background_clip_bound.get());
+      bg_ps_.push_constant("ucolor", res.theme_settings.color_clipping_border);
+      bg_ps_.push_constant("boundbox", bbox.data(), 8);
+      bg_ps_.draw(DRW_cache_cube_get());
+    }
+
     bg_ps_.state_set(pass_state);
     bg_ps_.shader_set(res.shaders.background_fill.get());
-    bg_ps_.bind_ubo("globalsBlock", &res.globals_buf);
+    bg_ps_.bind_ubo(OVERLAY_GLOBALS_SLOT, &res.globals_buf);
     bg_ps_.bind_texture("colorBuffer", &res.color_render_tx);
     bg_ps_.bind_texture("depthBuffer", &res.depth_tx);
     bg_ps_.push_constant("colorOverride", color_override);
     bg_ps_.push_constant("bgType", background_type);
     bg_ps_.draw_procedural(GPU_PRIM_TRIS, 1, 3);
-
-    if (state.clipping_state != 0 && state.rv3d != nullptr && state.rv3d->clipbb != nullptr) {
-      bg_ps_.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_BLEND_ALPHA | DRW_STATE_CULL_BACK);
-      bg_ps_.shader_set(res.shaders.background_clip_bound.get());
-      bg_ps_.push_constant("ucolor", res.theme_settings.color_clipping_border);
-      bg_ps_.push_constant("boundbox", &state.rv3d->clipbb->vec[0][0], 8);
-      bg_ps_.draw(DRW_cache_cube_get());
-    }
   }
 
-  void draw(Resources &res, Manager &manager)
+  void draw_output(Framebuffer &framebuffer, Manager &manager, View &view) final
   {
-    GPU_framebuffer_bind(res.overlay_color_only_fb);
-    manager.submit(bg_ps_);
+    framebuffer_ref_ = framebuffer;
+    manager.submit(bg_ps_, view);
   }
 };
 

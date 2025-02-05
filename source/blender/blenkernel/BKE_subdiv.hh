@@ -9,13 +9,14 @@
 #pragma once
 
 #include "BLI_compiler_compat.h"
-#include "BLI_sys_types.h"
 
 struct Mesh;
 struct MultiresModifierData;
 struct OpenSubdiv_Converter;
 struct OpenSubdiv_Evaluator;
-class OpenSubdiv_TopologyRefiner;
+namespace blender::opensubdiv {
+class TopologyRefinerImpl;
+}
 
 namespace blender::bke::subdiv {
 
@@ -92,7 +93,7 @@ struct SubdivStats {
       double topology_refiner_creation_time;
       /* Total time spent in blender::bke::subdiv::subdiv_to_mesh(). */
       double subdiv_to_mesh_time;
-      /* Geometry (mesh vertices) creation time during SUBDIV_TYO_MESH. */
+      /* Geometry (mesh vertices) creation time during SUBDIV_TO_MESH. */
       double subdiv_to_mesh_geometry_time;
       /* Time spent on evaluator creation from topology refiner. */
       double evaluator_creation_time;
@@ -159,7 +160,7 @@ struct Subdiv {
   /* Topology refiner includes all the glue logic to feed Blender side
    * topology to OpenSubdiv. It can be shared by both evaluator and GL mesh
    * drawer. */
-  OpenSubdiv_TopologyRefiner *topology_refiner;
+  blender::opensubdiv::TopologyRefinerImpl *topology_refiner;
   /* CPU side evaluator. */
   OpenSubdiv_Evaluator *evaluator;
   /* Optional displacement evaluator. */
@@ -300,8 +301,9 @@ BLI_INLINE void rotate_grid_to_quad(
     int corner, float grid_u, float grid_v, float *r_quad_u, float *r_quad_v);
 
 /* Convert Blender edge crease value to OpenSubdiv sharpness. */
-BLI_INLINE float crease_to_sharpness(float edge_crease);
+BLI_INLINE float crease_to_sharpness(float crease);
+BLI_INLINE float sharpness_to_crease(float sharpness);
 
 }  // namespace blender::bke::subdiv
 
-#include "intern/subdiv_inline.hh"
+#include "intern/subdiv_inline.hh"  // IWYU pragma: export

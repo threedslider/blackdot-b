@@ -2,16 +2,15 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-import os
-
-from typing import (
-    Generator,
-    Callable,
-    Set,
-    Tuple,
+__all__ = (
+    "PATHS",
+    "PATHS_EXCLUDE",
+    "SOURCE_DIR",
 )
 
-PATHS: Tuple[str, ...] = (
+import os
+
+PATHS: tuple[str, ...] = (
     "build_files",
     "doc",
     "release/datafiles",
@@ -34,7 +33,7 @@ PATHS = tuple(
     for p in PATHS
 )
 
-PATHS_EXCLUDE: Set[str] = set(
+PATHS_EXCLUDE: set[str] = set(
     os.path.join(SOURCE_DIR, p.replace("/", os.sep))
     for p in
     (
@@ -44,13 +43,3 @@ PATHS_EXCLUDE: Set[str] = set(
         "scripts/modules/rna_manual_reference.py",
     )
 )
-
-
-def files(path: str, test_fn: Callable[[str], bool]) -> Generator[str, None, None]:
-    for dirpath, dirnames, filenames in os.walk(path):
-        # skip '.git'
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        for filename in filenames:
-            if test_fn(filename):
-                filepath = os.path.join(dirpath, filename)
-                yield filepath

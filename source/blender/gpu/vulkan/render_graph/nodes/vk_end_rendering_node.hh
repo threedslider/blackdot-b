@@ -15,7 +15,10 @@ namespace blender::gpu::render_graph {
 /**
  * Information stored inside the render graph node. See `VKRenderGraphNode`.
  */
-struct VKEndRenderingData {};
+struct VKEndRenderingData {
+  /* Render pass used (when dynamic rendering is not supported). */
+  VkRenderPass vk_render_pass;
+};
 
 /**
  * End rendering node
@@ -37,7 +40,8 @@ class VKEndRenderingNode : public VKNodeInfo<VKNodeType::END_RENDERING,
    * (`VK*Data`/`VK*CreateInfo`) types can be included in the same header file as the logic. The
    * actual node data (`VKRenderGraphNode` includes all header files.)
    */
-  template<typename Node> void set_node_data(Node &node, const CreateInfo &create_info)
+  template<typename Node, typename Storage>
+  void set_node_data(Node &node, Storage & /*storage*/, const CreateInfo &create_info)
   {
     node.end_rendering = create_info;
   }
@@ -55,10 +59,16 @@ class VKEndRenderingNode : public VKNodeInfo<VKNodeType::END_RENDERING,
    * Build the commands and add them to the command_buffer.
    */
   void build_commands(VKCommandBufferInterface &command_buffer,
-                      Data & /*data*/,
+                      Data &data,
                       VKBoundPipelines & /*r_bound_pipelines*/) override
   {
-    command_buffer.end_rendering();
+    const bool is_dynamic_rendering = data.vk_render_pass == VK_NULL_HANDLE;
+    if (is_dynamic_rendering) {
+      command_buffer.end_rendering();
+    }
+    else {
+      command_buffer.end_render_pass();
+    }
   }
 };
 }  // namespace blender::gpu::render_graph

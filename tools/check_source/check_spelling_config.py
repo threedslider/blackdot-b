@@ -4,6 +4,15 @@
 
 # these must be all lower case for comparisons
 
+__all__ = (
+    "dict_custom",
+    "dict_ignore",
+    "dict_ignore_hyphenated_prefix",
+    "dict_ignore_hyphenated_suffix",
+    "directories_ignore",
+    "files_ignore",
+)
+
 dict_custom = {
     # Added to newer versions of the dictionary,
     # we can remove these when the updated word-lists have been applied to `aspell-en`.
@@ -39,12 +48,14 @@ dict_custom = {
     "adjugate",
     "affectable",
     "alignable",
+    "bindable",
     "branchless",
     "allocatable",
     "allocator",
     "allocators",
     "anisotropic",
     "anisotropy",
+    "asymptote",
     "atomicity",
     "attachmentless",
     "attenuations",
@@ -142,6 +153,7 @@ dict_custom = {
     "discretization",
     "discretized",
     "discretizes",
+    "distributable",
     "downcasting",
     "downsample",
     "downsampled",
@@ -311,6 +323,7 @@ dict_custom = {
     "rebalancing",
     "rebase",
     "recomputation",
+    "reconnection",
     "recurse",
     "recursed",
     "recurses",
@@ -323,6 +336,9 @@ dict_custom = {
     "reimplement",
     "reimplemented",
     "reimplementing",
+    "relink",
+    "relinked",
+    "relinking",
     "remappable",
     "remapper",
     "remappings",
@@ -403,6 +419,7 @@ dict_custom = {
     "thumbstick",
     "tokenize",
     "tokenizing",
+    "toolchain",
     "trackpad",
     "transcode",
     "transmissive",
@@ -415,10 +432,12 @@ dict_custom = {
     "unadjusted",
     "unalignable",
     "unallocated",
+    "unanimated",
     "unapplied",
     "unapply",
     "unassign",
     "unassigning",
+    "unassigns",
     "unassociated",
     "unbake",
     "unbuffered",
@@ -434,6 +453,7 @@ dict_custom = {
     "uncomputed",
     "unconfigured",
     "unconvert",
+    "uncorrupted",
     "undefine",
     "undefined",
     "undeform",
@@ -477,6 +497,7 @@ dict_custom = {
     "unmaximized",
     "unmeasurable",
     "unminimize",
+    "unmodulated",
     "unmute",
     "unnormalize",
     "unnormalized",
@@ -571,6 +592,7 @@ dict_custom = {
     "multithreaded",
     "multithreading",
     "namespace",
+    "namespaces",
     "reparent",
     "tooltip",
     "unparent",
@@ -731,6 +753,8 @@ dict_custom = {
     "bmain",
     "bmesh",
     "bpy",
+    "channelbag",
+    "channelbags",
     "depsgraph",
     "doctree",
     "editmode",
@@ -838,6 +862,7 @@ dict_ignore = {
 
     # Company names.
     "Logitech",
+    "Qualcomm",
     "Wacom",
 
     # Project Names.

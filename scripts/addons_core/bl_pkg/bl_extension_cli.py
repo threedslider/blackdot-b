@@ -18,11 +18,6 @@ import sys
 
 from typing import (
     Any,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
 )
 
 from .bl_extension_utils import PkgManifest_Normalized
@@ -106,10 +101,10 @@ class subcmd_utils:
 
     @staticmethod
     def _expand_package_ids(
-            packages: List[str],
+            packages: list[str],
             *,
             use_local: bool,
-    ) -> Union[List[Tuple[int, str]], str]:
+    ) -> list[tuple[int, str]] | str:
         # Takes a terse lists of package names and expands to repo index and name list,
         # returning an error string if any can't be resolved.
         from . import repo_cache_store_ensure
@@ -131,7 +126,8 @@ class subcmd_utils:
             # Show any exceptions created while accessing the JSON,
             repo = repos_all[repo_index]
             if pkg_manifest is None:
-                errors.append("Repository \"{:s}\" has no data, sync may be needed!".format(repo.module))
+                if use_local and not repo.remote_url:
+                    errors.append("Repository \"{:s}\" has no data, sync may be needed!".format(repo.module))
                 repo_packages = set()
             else:
                 repo_packages = set(pkg_manifest.keys())
@@ -172,11 +168,11 @@ class subcmd_utils:
         return repos_and_packages
 
     @staticmethod
-    def expand_package_ids_from_remote(packages: List[str]) -> Union[List[Tuple[int, str]], str]:
+    def expand_package_ids_from_remote(packages: list[str]) -> list[tuple[int, str]] | str:
         return subcmd_utils._expand_package_ids(packages, use_local=False)
 
     @staticmethod
-    def expand_package_ids_from_local(packages: List[str]) -> Union[List[Tuple[int, str]], str]:
+    def expand_package_ids_from_local(packages: list[str]) -> list[tuple[int, str]] | str:
         return subcmd_utils._expand_package_ids(packages, use_local=True)
 
 
@@ -196,10 +192,10 @@ class subcmd_query:
 
         def list_item(
                 pkg_id: str,
-                item_local: Optional[PkgManifest_Normalized],
-                item_remote: Optional[PkgManifest_Normalized],
+                item_local: PkgManifest_Normalized | None,
+                item_remote: PkgManifest_Normalized | None,
                 has_remote: bool,
-                item_warnings: List[str],
+                item_warnings: list[str],
         ) -> None:
             # Both can't be None.
             assert item_remote is not None or item_local is not None
@@ -242,6 +238,9 @@ class subcmd_query:
                     colorize(item.tagline or "<no tagline>", "faint"),
                 ))
 
+            if item_remote and item_remote.block:
+                print("    Blocked:", colorize(item_remote.block.reason, "red"))
+
             if item_warnings:
                 # Including all text on one line doesn't work well here,
                 # add warnings below the package.
@@ -263,8 +262,11 @@ class subcmd_query:
         import addon_utils  # type: ignore
 
         # pylint: disable-next=protected-access
-        extensions_warnings: Dict[str, List[str]] = addon_utils._extensions_warnings_get()
+        extensions_warnings: dict[str, list[str]] = addon_utils._extensions_warnings_get()
         assert isinstance(extensions_warnings, dict)
+
+        # Blocked and installed.
+        blocked_and_installed_count = 0
 
         for repo_index, (
                 pkg_manifest_local,
@@ -285,6 +287,21 @@ class subcmd_query:
                 item_remote = pkg_manifest_remote.get(pkg_id) if (pkg_manifest_remote is not None) else None
                 item_warnings = extensions_warnings.get("bl_ext.{:s}.{:s}".format(repo.module, pkg_id), [])
                 list_item(pkg_id, item_local, item_remote, has_remote, item_warnings)
+                if item_local and item_remote and item_remote.block:
+                    blocked_and_installed_count += 1
+        sys.stdout.flush()
+
+        if blocked_and_installed_count:
+            sys.stderr.write("\n")
+            sys.stderr.write(
+                "  Warning: " +
+                colorize("{:d} installed extension(s) are blocked!\n".format(blocked_and_installed_count), "red")
+            )
+            sys.stderr.write(
+                "           " +
+                colorize("Uninstall them to remove this message!\n", "red")
+            )
+            sys.stderr.write("\n")
 
         return True
 
@@ -317,7 +334,7 @@ class subcmd_pkg:
     def install(
             *,
             sync: bool,
-            packages: List[str],
+            packages: list[str],
             enable_on_install: bool,
             no_prefs: bool,
     ) -> bool:
@@ -353,7 +370,7 @@ class subcmd_pkg:
     @staticmethod
     def remove(
             *,
-            packages: List[str],
+            packages: list[str],
             no_prefs: bool,
     ) -> bool:
         # Expand all package ID's.
@@ -898,7 +915,7 @@ def cli_extension_args_extra(subparsers: "argparse._SubParsersAction[argparse.Ar
     cli_extension_args_repo_remove(subparsers)
 
 
-def cli_extension_handler(args: List[str]) -> int:
+def cli_extension_handler(args: list[str]) -> int:
     from .cli import blender_ext
 
     # Override the default valid tags with a file which Blender includes.

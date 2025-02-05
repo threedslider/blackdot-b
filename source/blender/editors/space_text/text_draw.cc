@@ -12,7 +12,9 @@
 
 #include "BLF_api.hh"
 
-#include "BLI_blenlib.h"
+#include "BLI_rect.h"
+#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
@@ -432,14 +434,12 @@ static int space_text_draw_wrapped(const SpaceText *st,
   int mi, ma, mstart, mend; /* mem */
   char fmt_prev = 0xff;
   /* don't draw lines below this */
-  const int clip_min_y = -int(st->runtime->lheight_px - 1);
+  const int clip_min_y = -(st->runtime->lheight_px - 1);
 
   flatten_string(st, &fs, str);
   str = fs.buf;
   max = w / st->runtime->cwidth_px;
-  if (max < 8) {
-    max = 8;
-  }
+  max = std::max(max, 8);
   basex = x;
   lines = 1;
 
@@ -885,7 +885,7 @@ int space_text_get_total_lines(SpaceText *st, const ARegion *region)
 /** \name Draw Scroll-Bar
  * \{ */
 
-static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *scroll, rcti *back)
+static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *r_scroll, rcti *r_back)
 {
   int lhlstart, lhlend, ltexth, sell_off, curl_off;
   short barheight, barstart, hlstart, hlend, blank_lines;
@@ -898,15 +898,15 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *scroll, rcti *b
   blank_lines = st->runtime->viewlines / 2;
 
   /* nicer code: use scroll rect for entire bar */
-  back->xmin = region->winx - (0.6 * U.widget_unit);
-  back->xmax = region->winx;
-  back->ymin = 0;
-  back->ymax = region->winy;
+  r_back->xmin = region->winx - (0.6 * U.widget_unit);
+  r_back->xmax = region->winx;
+  r_back->ymin = 0;
+  r_back->ymax = region->winy;
 
-  scroll->xmax = region->winx - (0.2 * U.widget_unit);
-  scroll->xmin = scroll->xmax - (0.4 * U.widget_unit);
-  scroll->ymin = pix_top_margin;
-  scroll->ymax = pix_available;
+  r_scroll->xmax = region->winx - (0.2 * U.widget_unit);
+  r_scroll->xmin = r_scroll->xmax - (0.4 * U.widget_unit);
+  r_scroll->ymin = pix_top_margin;
+  r_scroll->ymax = pix_available;
 
   /* when re-sizing a 2D Viewport with the bar at the bottom to a greater height
    * more blank lines will be added */
@@ -924,7 +924,7 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *scroll, rcti *b
   }
   barstart = (ltexth > 0) ? ((pix_available - pix_bardiff) * st->top) / ltexth : 0;
 
-  st->runtime->scroll_region_handle = *scroll;
+  st->runtime->scroll_region_handle = *r_scroll;
   st->runtime->scroll_region_handle.ymax -= barstart;
   st->runtime->scroll_region_handle.ymin = st->runtime->scroll_region_handle.ymax - barheight;
 
@@ -932,9 +932,7 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *scroll, rcti *b
   CLAMP(st->runtime->scroll_region_handle.ymax, pix_bottom_margin, region->winy - pix_top_margin);
 
   st->runtime->scroll_px_per_line = (pix_available > 0) ? float(ltexth) / pix_available : 0;
-  if (st->runtime->scroll_px_per_line < 0.1f) {
-    st->runtime->scroll_px_per_line = 0.1f;
-  }
+  st->runtime->scroll_px_per_line = std::max(st->runtime->scroll_px_per_line, 0.1f);
 
   curl_off = space_text_get_span_wrap(
       st, region, static_cast<TextLine *>(st->text->lines.first), st->text->curl);
@@ -1005,7 +1003,7 @@ static void calc_text_rcts(SpaceText *st, ARegion *region, rcti *scroll, rcti *b
     hlend = hlstart + 2;
   }
 
-  st->runtime->scroll_region_select = *scroll;
+  st->runtime->scroll_region_select = *r_scroll;
   st->runtime->scroll_region_select.ymax = region->winy - pix_top_margin - hlstart;
   st->runtime->scroll_region_select.ymin = region->winy - pix_top_margin - hlend;
 
@@ -1170,7 +1168,6 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
   Text *text = st->text;
   int vcurl, vcurc, vsell, vselc;
   bool hidden = false;
-  int x, y, w, i;
   int offl, offc;
   const int lheight = TXT_LINE_HEIGHT(st);
 
@@ -1200,14 +1197,12 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
     vcurl = txt_get_span(static_cast<TextLine *>(text->lines.first), text->curl) - st->top + offl;
     vcurc = space_text_get_char_pos(st, text->curl->line, text->curc) - st->left + offc;
 
-    if (vcurc < 0) {
-      vcurc = 0;
-    }
+    vcurc = std::max(vcurc, 0);
 
     immUniformThemeColor(TH_SHADE2);
 
-    x = TXT_BODY_LEFT(st);
-    y = region->winy;
+    int x = TXT_BODY_LEFT(st);
+    int y = region->winy;
     if (st->flags & ST_SCROLL_SELECT) {
       y += st->runtime->scroll_ofs_px[1];
     }
@@ -1252,7 +1247,7 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
           pos, x + fromc * st->runtime->cwidth_px - U.pixelsize, y, region->winx, y - lheight);
       y -= lheight;
 
-      for (i = froml + 1; i < tol; i++) {
+      for (int i = froml + 1; i < tol; i++) {
         immRecti(pos, x - U.pixelsize, y, region->winx, y - lheight);
         y -= lheight;
       }
@@ -1262,6 +1257,8 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
       }
       y -= lheight;
     }
+    /* Quiet warnings. */
+    UNUSED_VARS(x, y);
   }
 
   if (st->line_hlight) {
@@ -1299,8 +1296,8 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
 
   if (!hidden) {
     /* Draw the cursor itself (we draw the sel. cursor as this is the leading edge) */
-    x = TXT_BODY_LEFT(st) + (vselc * st->runtime->cwidth_px);
-    y = region->winy - vsell * lheight;
+    int x = TXT_BODY_LEFT(st) + (vselc * st->runtime->cwidth_px);
+    int y = region->winy - vsell * lheight;
     if (st->flags & ST_SCROLL_SELECT) {
       y += st->runtime->scroll_ofs_px[1];
     }
@@ -1311,7 +1308,7 @@ static void draw_text_decoration(SpaceText *st, ARegion *region)
       char ch = text->sell->line[text->selc];
 
       y += TXT_LINE_SPACING(st);
-      w = st->runtime->cwidth_px;
+      int w = st->runtime->cwidth_px;
       if (ch == '\t') {
         w *= st->tabnumber - (vselc + st->left) % st->tabnumber;
       }
@@ -1522,7 +1519,7 @@ void draw_text_main(SpaceText *st, ARegion *region)
   st->runtime->lheight_px = (U.widget_unit * st->lheight) / 20;
 
   /* don't draw lines below this */
-  const int clip_min_y = -int(st->runtime->lheight_px - 1);
+  const int clip_min_y = -(st->runtime->lheight_px - 1);
 
   st->runtime->viewlines = (st->runtime->lheight_px) ?
                                int(region->winy - clip_min_y) / TXT_LINE_HEIGHT(st) :
@@ -1751,12 +1748,8 @@ void ED_space_text_scroll_to_cursor(SpaceText *st, ARegion *region, const bool c
     }
   }
 
-  if (st->top < 0) {
-    st->top = 0;
-  }
-  if (st->left < 0) {
-    st->left = 0;
-  }
+  st->top = std::max(st->top, 0);
+  st->left = std::max(st->left, 0);
 
   st->runtime->scroll_ofs_px[0] = 0;
   st->runtime->scroll_ofs_px[1] = 0;
@@ -1790,33 +1783,34 @@ bool ED_space_text_region_location_from_cursor(const SpaceText *st,
                                                const int cursor_co[2],
                                                int r_pixel_co[2])
 {
-  TextLine *line = nullptr;
+  Text *text = st->text;
 
-  if (!st->text) {
-    goto error;
+  if (!text) {
+    return false;
+  }
+  TextLine *line = static_cast<TextLine *>(BLI_findlink(&text->lines, cursor_co[0]));
+  if (!line) {
+    return false;
   }
 
-  line = static_cast<TextLine *>(BLI_findlink(&st->text->lines, cursor_co[0]));
-  if (!line || (cursor_co[1] < 0) || (cursor_co[1] > line->len)) {
-    goto error;
+  /* Convert character index to char byte offset. */
+  const int char_ofs = BLI_str_utf8_offset_from_index(line->line, line->len, cursor_co[1]);
+  if (char_ofs < 0 || char_ofs > line->len) {
+    return false;
   }
-  else {
-    int offl, offc;
-    int linenr_offset = TXT_BODY_LEFT(st);
-    /* handle tabs as well! */
-    int char_pos = space_text_get_char_pos(st, line->line, cursor_co[1]);
 
-    space_text_wrap_offset(st, region, line, cursor_co[1], &offl, &offc);
-    r_pixel_co[0] = (char_pos + offc - st->left) * st->runtime->cwidth_px + linenr_offset;
-    r_pixel_co[1] = (cursor_co[0] + offl - st->top) * TXT_LINE_HEIGHT(st);
-    r_pixel_co[1] = (region->winy - (r_pixel_co[1] + (TXT_BODY_LPAD * st->runtime->cwidth_px))) -
-                    st->runtime->lheight_px;
-  }
+  /* All values are in-range, calculate the pixel offset.
+   * Note that !126720 provides a useful interactive test-case for this logic. */
+  const int lheight = TXT_LINE_HEIGHT(st);
+  const int linenr_offset = TXT_BODY_LEFT(st);
+  /* Handle tabs as well! */
+  const int char_pos = space_text_get_char_pos(st, line->line, char_ofs);
+
+  int offl, offc;
+  space_text_wrap_offset(st, region, line, char_ofs, &offl, &offc);
+  r_pixel_co[0] = (char_pos + offc - st->left) * st->runtime->cwidth_px + linenr_offset;
+  r_pixel_co[1] = (region->winy - ((cursor_co[0] + offl - st->top) * lheight)) - lheight;
   return true;
-
-error:
-  r_pixel_co[0] = r_pixel_co[1] = -1;
-  return false;
 }
 
 /** \} */

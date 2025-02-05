@@ -14,6 +14,11 @@
 #include "DNA_world_types.h"
 
 #include "eevee_lookdev.hh"
+#include "eevee_sync.hh"
+
+struct bNodeTree;
+struct bNodeSocketValueRGBA;
+struct UniformBuffer;
 
 namespace blender::eevee {
 
@@ -36,6 +41,7 @@ class DefaultWorldNodeTree {
   DefaultWorldNodeTree();
   ~DefaultWorldNodeTree();
 
+  /** Configure a default node-tree with the given world. */
   bNodeTree *nodetree_get(::World *world);
 };
 

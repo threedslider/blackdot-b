@@ -12,96 +12,44 @@ namespace blender::draw::overlay {
 
 ShaderModule *ShaderModule::g_shader_modules[2][2] = {{nullptr}};
 
-ShaderModule::ShaderPtr ShaderModule::selectable_shader(const char *create_info_name)
+ShaderModule::ShaderPtr ShaderModule::shader_clippable(const char *create_info_name)
 {
-  /* TODO: This is what it should be like with all variations defined with create infos. */
-  // std::string create_info_name = base_create_info;
-  // create_info_name += SelectEngineT::shader_suffix;
-  // create_info_name += clipping_enabled_ ? "_clipped" : "";
-  // this->shader_ = GPU_shader_create_from_info_name(create_info_name.c_str());
-  UNUSED_VARS(clipping_enabled_);
+  std::string name = create_info_name;
 
-  /* WORKAROUND: ... but for now, we have to patch the create info used by the old engine. */
-  gpu::shader::ShaderCreateInfo info = *reinterpret_cast<const gpu::shader::ShaderCreateInfo *>(
-      GPU_shader_create_info_get(create_info_name));
-
-  if (selection_type_ != SelectionType::DISABLED) {
-    info.define("SELECT_ENABLE");
+  if (clipping_enabled_) {
+    name += "_clipped";
   }
 
-  return ShaderPtr(
-      GPU_shader_create_from_info(reinterpret_cast<const GPUShaderCreateInfo *>(&info)));
+  return ShaderPtr(GPU_shader_create_from_info_name(name.c_str()));
 }
 
-ShaderModule::ShaderPtr ShaderModule::selectable_shader(
-    const char *create_info_name,
-    const FunctionRef<void(gpu::shader::ShaderCreateInfo &info)> patch)
+ShaderModule::ShaderPtr ShaderModule::shader_selectable(const char *create_info_name)
 {
-  gpu::shader::ShaderCreateInfo info = *reinterpret_cast<const gpu::shader::ShaderCreateInfo *>(
-      GPU_shader_create_info_get(create_info_name));
-
-  patch(info);
+  std::string name = create_info_name;
 
   if (selection_type_ != SelectionType::DISABLED) {
-    info.define("SELECT_ENABLE");
-    /* Replace additional info. */
-    for (StringRefNull &str : info.additional_infos_) {
-      if (str == "draw_modelmat_new") {
-        str = "draw_modelmat_new_with_custom_id";
-      }
-    }
-    info.additional_info("select_id_patch");
+    name += "_selectable";
   }
 
-  return ShaderPtr(
-      GPU_shader_create_from_info(reinterpret_cast<const GPUShaderCreateInfo *>(&info)));
+  if (clipping_enabled_) {
+    name += "_clipped";
+  }
+
+  return ShaderPtr(GPU_shader_create_from_info_name(name.c_str()));
+}
+
+ShaderModule::ShaderPtr ShaderModule::shader_selectable_no_clip(const char *create_info_name)
+{
+  std::string name = create_info_name;
+
+  if (selection_type_ != SelectionType::DISABLED) {
+    name += "_selectable";
+  }
+
+  return ShaderPtr(GPU_shader_create_from_info_name(name.c_str()));
 }
 
 using namespace blender::gpu::shader;
-
-ShaderModule::ShaderModule(const SelectionType selection_type, const bool clipping_enabled)
-    : selection_type_(selection_type), clipping_enabled_(clipping_enabled)
-{
-  armature_sphere_outline = selectable_shader(
-      "overlay_armature_sphere_outline", [](gpu::shader::ShaderCreateInfo &info) {
-        info.storage_buf(0, Qualifier::READ, "mat4", "data_buf[]");
-        info.define("inst_obmat", "data_buf[gl_InstanceID]");
-        info.vertex_inputs_.pop_last();
-      });
-
-  depth_mesh = selectable_shader("overlay_depth_only", [](gpu::shader::ShaderCreateInfo &info) {
-    info.additional_infos_.clear();
-    info.additional_info("draw_view", "draw_modelmat_new", "draw_resource_handle_new");
-  });
-
-  extra_shape = selectable_shader("overlay_extra", [](gpu::shader::ShaderCreateInfo &info) {
-    info.storage_buf(0, Qualifier::READ, "ExtraInstanceData", "data_buf[]");
-    info.define("color", "data_buf[gl_InstanceID].color_");
-    info.define("inst_obmat", "data_buf[gl_InstanceID].object_to_world_");
-    info.vertex_inputs_.pop_last();
-    info.vertex_inputs_.pop_last();
-  });
-
-  extra_wire_object = selectable_shader(
-      "overlay_extra_wire", [](gpu::shader::ShaderCreateInfo &info) {
-        info.define("OBJECT_WIRE");
-        info.additional_infos_.clear();
-        info.additional_info(
-            "draw_view", "draw_modelmat_new", "draw_resource_handle_new", "draw_globals");
-      });
-  lattice_points = selectable_shader(
-      "overlay_edit_lattice_point", [](gpu::shader::ShaderCreateInfo &info) {
-        info.additional_infos_.clear();
-        info.additional_info(
-            "draw_view", "draw_modelmat_new", "draw_resource_handle_new", "draw_globals");
-      });
-  lattice_wire = selectable_shader(
-      "overlay_edit_lattice_wire", [](gpu::shader::ShaderCreateInfo &info) {
-        info.additional_infos_.clear();
-        info.additional_info(
-            "draw_view", "draw_modelmat_new", "draw_resource_handle_new", "draw_globals");
-      });
-}
 
 ShaderModule &ShaderModule::module_get(SelectionType selection_type, bool clipping_enabled)
 {

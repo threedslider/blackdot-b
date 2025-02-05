@@ -669,6 +669,16 @@ VkFormat to_vk_format(const shader::Type type)
   return VK_FORMAT_R32G32B32A32_SFLOAT;
 }
 
+VkQueryType to_vk_query_type(const GPUQueryType query_type)
+{
+  switch (query_type) {
+    case GPU_QUERY_OCCLUSION:
+      return VK_QUERY_TYPE_OCCLUSION;
+  }
+  BLI_assert_unreachable();
+  return VK_QUERY_TYPE_OCCLUSION;
+}
+
 VkImageType to_vk_image_type(const eGPUTextureType type)
 {
   /* See
@@ -796,8 +806,13 @@ VkClearColorValue to_vk_clear_color_value(const eGPUDataFormat format, const voi
 {
   VkClearColorValue result = {{0.0f}};
   switch (format) {
+    /* All float-like formats (i.e. everything except literal int/uint go
+     * into VkClearColorValue float color fields. */
     case GPU_DATA_FLOAT:
-    case GPU_DATA_10_11_11_REV: {
+    case GPU_DATA_HALF_FLOAT:
+    case GPU_DATA_UBYTE:
+    case GPU_DATA_10_11_11_REV:
+    case GPU_DATA_2_10_10_10_REV: {
       const float *float_data = static_cast<const float *>(data);
       copy_color<float>(result.float32, float_data);
       break;
@@ -814,11 +829,7 @@ VkClearColorValue to_vk_clear_color_value(const eGPUDataFormat format, const voi
       copy_color<uint32_t>(result.uint32, uint_data);
       break;
     }
-
-    case GPU_DATA_HALF_FLOAT:
-    case GPU_DATA_UBYTE:
-    case GPU_DATA_UINT_24_8:
-    case GPU_DATA_2_10_10_10_REV: {
+    case GPU_DATA_UINT_24_8: {
       BLI_assert_unreachable();
       break;
     }

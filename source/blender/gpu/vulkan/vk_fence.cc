@@ -7,18 +7,24 @@
  */
 
 #include "vk_fence.hh"
+#include "vk_backend.hh"
 #include "vk_common.hh"
+#include "vk_context.hh"
 
 namespace blender::gpu {
 
 void VKFence::signal()
 {
-  NOT_YET_IMPLEMENTED
+  VKContext &context = *VKContext::get();
+  timeline_value_ = context.flush_render_graph(RenderGraphFlushFlags::SUBMIT |
+                                               RenderGraphFlushFlags::RENEW_RENDER_GRAPH);
 }
 
 void VKFence::wait()
 {
-  NOT_YET_IMPLEMENTED
+  VKDevice &device = VKBackend::get().device;
+  device.wait_for_timeline(timeline_value_);
+  timeline_value_ = 0;
 }
 
 }  // namespace blender::gpu

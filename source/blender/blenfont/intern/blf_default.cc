@@ -11,11 +11,8 @@
 #include "DNA_userdef_types.h"
 
 #include "BLI_assert.h"
-#include "BLI_math_vector_types.hh"
 
 #include "BLF_api.hh"
-
-#include "blf_internal.hh"
 
 /* call BLF_default_set first! */
 #define ASSERT_DEFAULT_SET BLI_assert(global_font_default != -1)
@@ -32,7 +29,7 @@ void BLF_default_size(float size)
 
 void BLF_default_set(int fontid)
 {
-  if ((fontid == -1) || blf_font_id_is_valid(fontid)) {
+  if ((fontid == -1) || BLF_is_loaded_id(fontid)) {
     global_font_default = fontid;
   }
 }

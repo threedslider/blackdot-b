@@ -10,11 +10,7 @@
 
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
-#include "DNA_view2d_types.h"
-#include "DNA_view3d_types.h"
 #include "DNA_workspace_types.h"
-
-#include "DNA_object_enums.h"
 
 #include "WM_types.hh"
 
@@ -153,15 +149,17 @@ void ED_region_visibility_change_update_animated(bContext *C, ScrArea *area, ARe
 
 void ED_region_clear(const bContext *C, const ARegion *region, int /*ThemeColorID*/ colorid);
 
-void ED_region_info_draw(ARegion *region, const char *text, float fill_color[4], bool full_redraw);
+void ED_region_info_draw(ARegion *region,
+                         const char *text,
+                         const float fill_color[4],
+                         bool full_redraw);
 void ED_region_info_draw_multiline(ARegion *region,
                                    const char *text_array[],
-                                   float fill_color[4],
+                                   const float fill_color[4],
                                    bool full_redraw);
 void ED_region_image_metadata_panel_draw(ImBuf *ibuf, uiLayout *layout);
 void ED_region_grid_draw(ARegion *region, float zoomx, float zoomy, float x0, float y0);
 float ED_region_blend_alpha(ARegion *region);
-void ED_region_visible_rect_calc(ARegion *region, rcti *rect);
 const rcti *ED_region_visible_rect(ARegion *region);
 /**
  * Overlapping regions only in the following restricted cases.
@@ -206,9 +204,13 @@ int ED_area_header_switchbutton(const bContext *C, uiBlock *block, int yco);
 
 /* areas */
 /**
+ * Ensure #ScrArea.type and #ARegion.type are set and valid.
+ */
+void ED_area_and_region_types_init(ScrArea *area);
+/**
  * Called in screen_refresh, or screens_init, also area size changes.
  */
-void ED_area_init(wmWindowManager *wm, wmWindow *win, ScrArea *area);
+void ED_area_init(bContext *C, const wmWindow *win, ScrArea *area);
 void ED_area_exit(bContext *C, ScrArea *area);
 blender::StringRefNull ED_area_name(const ScrArea *area);
 int ED_area_icon(const ScrArea *area);
@@ -219,7 +221,7 @@ void ED_screen_global_areas_sync(wmWindow *win);
 void ED_area_do_listen(wmSpaceTypeListenerParams *params);
 void ED_area_tag_redraw(ScrArea *area);
 void ED_area_tag_redraw_no_rebuild(ScrArea *area);
-void ED_area_tag_redraw_regiontype(ScrArea *area, int type);
+void ED_area_tag_redraw_regiontype(ScrArea *area, int regiontype);
 void ED_area_tag_refresh(ScrArea *area);
 /**
  * For regions that change the region size in their #ARegionType.layout() callback: Mark the area
@@ -267,7 +269,7 @@ void ED_area_offscreen_free(wmWindowManager *wm, wmWindow *win, ScrArea *area);
  * Search all screens, even non-active or overlapping (multiple windows), return the most-likely
  * area of interest. xy is relative to active window, like all similar functions.
  */
-ScrArea *ED_area_find_under_cursor(const bContext *C, int spacetype, const int xy[2]);
+ScrArea *ED_area_find_under_cursor(const bContext *C, int spacetype, const int event_xy[2]);
 
 ScrArea *ED_screen_areas_iter_first(const wmWindow *win, const bScreen *screen);
 ScrArea *ED_screen_areas_iter_next(const bScreen *screen, const ScrArea *area);
@@ -288,12 +290,17 @@ ScrArea *ED_screen_areas_iter_next(const bScreen *screen, const ScrArea *area);
                        (ScrVert *)(screen)->vertbase.first : \
                        vert_name->next)
 
+/**
+ * Update all areas that are supposed to follow the timeline current-frame indicator.
+ */
+void ED_areas_do_frame_follow(bContext *C, bool center_view);
+
 /* screens */
 
 /**
  * File read, set all screens, ....
  */
-void ED_screens_init(Main *bmain, wmWindowManager *wm);
+void ED_screens_init(bContext *C, Main *bmain, wmWindowManager *wm);
 /**
  * Only for edge lines between areas.
  */
@@ -303,8 +310,8 @@ void ED_screen_draw_edges(wmWindow *win);
  * Make this screen usable.
  * for file read and first use, for scaling window, area moves.
  */
-void ED_screen_refresh(wmWindowManager *wm, wmWindow *win);
-void ED_screen_ensure_updated(bContext *C, wmWindowManager *wm, wmWindow *win, bScreen *screen);
+void ED_screen_refresh(bContext *C, wmWindowManager *wm, wmWindow *win);
+void ED_screen_ensure_updated(bContext *C, wmWindowManager *wm, wmWindow *win);
 void ED_screen_do_listen(bContext *C, const wmNotifier *note);
 /**
  * \brief Change the active screen.
@@ -328,6 +335,7 @@ void ED_screen_exit(bContext *C, wmWindow *window, bScreen *screen);
  */
 void ED_screen_animation_timer(bContext *C, int redraws, int sync, int enable);
 void ED_screen_animation_timer_update(bScreen *screen, int redraws);
+void ED_screen_animation_timer_reset(bScreen *screen, wmWindowManager *wm);
 void ED_screen_restore_temp_type(bContext *C, ScrArea *area);
 ScrArea *ED_screen_full_newspace(bContext *C, ScrArea *area, int type);
 /**
@@ -500,6 +508,7 @@ void ED_update_for_newframe(Main *bmain, Depsgraph *depsgraph);
 /**
  * Toggle operator.
  */
+void ED_reset_audio_device(bContext *C);
 int ED_screen_animation_play(bContext *C, int sync, int mode);
 /**
  * Find window that owns the animation timer.

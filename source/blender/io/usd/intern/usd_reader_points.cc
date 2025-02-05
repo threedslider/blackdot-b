@@ -19,32 +19,15 @@
 
 namespace blender::io::usd {
 
-USDPointsReader::USDPointsReader(const pxr::UsdPrim &prim,
-                                 const USDImportParams &import_params,
-                                 const ImportSettings &settings)
-    : USDGeomReader(prim, import_params, settings), points_prim_(prim)
-{
-}
-
-bool USDPointsReader::valid() const
-{
-  return bool(points_prim_);
-}
-
 void USDPointsReader::create_object(Main *bmain, double /*motionSampleTime*/)
 {
-  PointCloud *point_cloud = static_cast<PointCloud *>(BKE_pointcloud_add(bmain, name_.c_str()));
+  PointCloud *point_cloud = BKE_pointcloud_add(bmain, name_.c_str());
   object_ = BKE_object_add_only_object(bmain, OB_POINTCLOUD, name_.c_str());
   object_->data = point_cloud;
 }
 
 void USDPointsReader::read_object_data(Main *bmain, double motionSampleTime)
 {
-  if (!points_prim_) {
-    /* Invalid prim, so we pass. */
-    return;
-  }
-
   const USDMeshReadParams params = create_mesh_read_params(motionSampleTime,
                                                            import_params_.mesh_read_flag);
 
@@ -74,13 +57,8 @@ void USDPointsReader::read_object_data(Main *bmain, double motionSampleTime)
 
 void USDPointsReader::read_geometry(bke::GeometrySet &geometry_set,
                                     USDMeshReadParams params,
-                                    const char ** /*err_str*/)
+                                    const char ** /*r_err_str*/)
 {
-  if (!points_prim_) {
-    /* Invalid prim, so we pass. */
-    return;
-  }
-
   PointCloud *point_cloud = geometry_set.get_pointcloud_for_write();
 
   /* Get the existing point cloud data. */
@@ -102,7 +80,7 @@ void USDPointsReader::read_geometry(bke::GeometrySet &geometry_set,
 
   if (!usd_widths.empty()) {
     bke::MutableAttributeAccessor attributes = point_cloud->attributes_for_write();
-    bke::SpanAttributeWriter<float> radii = attributes.lookup_or_add_for_write_span<float>(
+    bke::SpanAttributeWriter<float> radii = attributes.lookup_or_add_for_write_only_span<float>(
         "radius", bke::AttrDomain::Point);
 
     const pxr::TfToken widths_interp = points_prim_.GetWidthsInterpolation();
@@ -135,12 +113,12 @@ void USDPointsReader::read_velocities(PointCloud *point_cloud, const double moti
 
   if (!velocities.empty()) {
     bke::MutableAttributeAccessor attributes = point_cloud->attributes_for_write();
-    bke::GSpanAttributeWriter attribute = attributes.lookup_or_add_for_write_span(
-        "velocity", bke::AttrDomain::Point, CD_PROP_FLOAT3);
+    bke::SpanAttributeWriter<float3> velocity =
+        attributes.lookup_or_add_for_write_only_span<float3>("velocity", bke::AttrDomain::Point);
 
     Span<pxr::GfVec3f> usd_data(velocities.data(), velocities.size());
-    attribute.span.typed<float3>().copy_from(usd_data.cast<float3>());
-    attribute.finish();
+    velocity.span.copy_from(usd_data.cast<float3>());
+    velocity.finish();
   }
 }
 
@@ -151,15 +129,13 @@ void USDPointsReader::read_custom_data(PointCloud *point_cloud,
 
   std::vector<pxr::UsdGeomPrimvar> primvars = pv_api.GetPrimvarsWithValues();
   for (const pxr::UsdGeomPrimvar &pv : primvars) {
-    if (!pv.HasValue()) {
-      continue;
-    }
-
     const pxr::SdfValueTypeName pv_type = pv.GetTypeName();
+    if (!pv_type.IsArray()) {
+      continue; /* Skip non-array primvar attributes. */
+    }
 
     const bke::AttrDomain domain = bke::AttrDomain::Point;
     const std::optional<eCustomDataType> type = convert_usd_type_to_blender(pv_type);
-
     if (!type.has_value()) {
       return;
     }

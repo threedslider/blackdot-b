@@ -6,6 +6,7 @@
  * \ingroup bke
  */
 
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
@@ -38,9 +39,7 @@
 
 #include "DEG_depsgraph_query.hh"
 
-#include "MEM_guardedalloc.h"
-
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /* for timing... */
 #if 0
@@ -113,6 +112,7 @@ bool BKE_shrinkwrap_init_tree(
   }
 
   data->mesh = mesh;
+  data->edges = mesh->edges();
   data->faces = mesh->faces();
   data->corner_edges = mesh->corner_edges();
   data->vert_normals = mesh->vert_normals();
@@ -120,8 +120,8 @@ bool BKE_shrinkwrap_init_tree(
   data->sharp_faces = *attributes.lookup<bool>("sharp_face", AttrDomain::Face);
 
   if (shrinkType == MOD_SHRINKWRAP_NEAREST_VERTEX) {
-    data->bvh = BKE_bvhtree_from_mesh_get(&data->treeData, mesh, BVHTREE_FROM_VERTS, 2);
-
+    data->treeData = mesh->bvh_verts();
+    data->bvh = data->treeData.tree;
     return data->bvh != nullptr;
   }
 
@@ -129,7 +129,8 @@ bool BKE_shrinkwrap_init_tree(
     return false;
   }
 
-  data->bvh = BKE_bvhtree_from_mesh_get(&data->treeData, mesh, BVHTREE_FROM_CORNER_TRIS, 4);
+  data->treeData = mesh->bvh_corner_tris();
+  data->bvh = data->treeData.tree;
 
   if (data->bvh == nullptr) {
     return false;
@@ -149,10 +150,7 @@ bool BKE_shrinkwrap_init_tree(
   return true;
 }
 
-void BKE_shrinkwrap_free_tree(ShrinkwrapTreeData *data)
-{
-  free_bvhtree_from_mesh(&data->treeData);
-}
+void BKE_shrinkwrap_free_tree(ShrinkwrapTreeData * /*data*/) {}
 
 namespace blender::bke::shrinkwrap {
 
@@ -312,7 +310,7 @@ static void shrinkwrap_calc_nearest_vertex_cb_ex(void *__restrict userdata,
   ShrinkwrapCalcCBData *data = static_cast<ShrinkwrapCalcCBData *>(userdata);
 
   ShrinkwrapCalcData *calc = data->calc;
-  BVHTreeFromMesh *treeData = &data->tree->treeData;
+  blender::bke::BVHTreeFromMesh *treeData = &data->tree->treeData;
   BVHTreeNearest *nearest = static_cast<BVHTreeNearest *>(tls->userdata_chunk);
 
   float *co = calc->vertexCos[i];
@@ -734,12 +732,8 @@ static void target_project_tri_jacobian(void *userdata, const float x[3], float 
 /* Clamp barycentric weights to the triangle. */
 static void target_project_tri_clamp(float x[3])
 {
-  if (x[0] < 0.0f) {
-    x[0] = 0.0f;
-  }
-  if (x[1] < 0.0f) {
-    x[1] = 0.0f;
-  }
+  x[0] = std::max(x[0], 0.0f);
+  x[1] = std::max(x[1], 0.0f);
   if (x[0] + x[1] > 1.0f) {
     x[0] = x[0] / (x[0] + x[1]);
     x[1] = 1.0f - x[0];
@@ -912,8 +906,8 @@ static void target_project_edge(const ShrinkwrapTreeData *tree,
                                 BVHTreeNearest *nearest,
                                 int eidx)
 {
-  const BVHTreeFromMesh *data = &tree->treeData;
-  const blender::int2 &edge = data->edges[eidx];
+  const blender::bke::BVHTreeFromMesh *data = &tree->treeData;
+  const blender::int2 &edge = tree->edges[eidx];
   const float *vedge_co[2] = {data->vert_positions[edge[0]], data->vert_positions[edge[1]]};
 
 #ifdef TRACE_TARGET_PROJECT
@@ -957,7 +951,7 @@ static void target_project_edge(const ShrinkwrapTreeData *tree,
   float c = d0co - d0v0;
   float det = b * b - 4 * a * c;
 
-  if (det >= 0) {
+  if (det >= 0 && a != 0) {
     const float epsilon = 1e-6f;
     float sdet = sqrtf(det);
     float hit_co[3], hit_no[3];
@@ -989,7 +983,7 @@ static void mesh_corner_tris_target_project(void *userdata,
 {
   using namespace blender;
   const ShrinkwrapTreeData *tree = (ShrinkwrapTreeData *)userdata;
-  const BVHTreeFromMesh *data = &tree->treeData;
+  const blender::bke::BVHTreeFromMesh *data = &tree->treeData;
   const int3 &tri = data->corner_tris[index];
   const int tri_verts[3] = {
       data->corner_verts[tri[0]],
@@ -1036,7 +1030,7 @@ static void mesh_corner_tris_target_project(void *userdata,
   {
     const BitSpan is_boundary = tree->boundary->edge_is_boundary;
     const int3 edges = bke::mesh::corner_tri_get_real_edges(
-        data->edges, data->corner_verts, tree->corner_edges, tri);
+        tree->edges, data->corner_verts, tree->corner_edges, tri);
 
     for (int i = 0; i < 3; i++) {
       if (edges[i] >= 0 && is_boundary[edges[i]]) {
@@ -1051,7 +1045,7 @@ void BKE_shrinkwrap_find_nearest_surface(ShrinkwrapTreeData *tree,
                                          float co[3],
                                          int type)
 {
-  BVHTreeFromMesh *treeData = &tree->treeData;
+  blender::bke::BVHTreeFromMesh *treeData = &tree->treeData;
 
   if (type == MOD_SHRINKWRAP_TARGET_PROJECT) {
 #ifdef TRACE_TARGET_PROJECT
@@ -1158,7 +1152,7 @@ void BKE_shrinkwrap_compute_smooth_normal(const ShrinkwrapTreeData *tree,
                                           float r_no[3])
 {
   using namespace blender;
-  const BVHTreeFromMesh *treeData = &tree->treeData;
+  const blender::bke::BVHTreeFromMesh *treeData = &tree->treeData;
   const int3 &tri = treeData->corner_tris[corner_tri_idx];
   const int face_i = tree->mesh->corner_tri_faces()[corner_tri_idx];
 
@@ -1461,55 +1455,6 @@ void shrinkwrapModifier_deform(ShrinkwrapModifierData *smd,
   /* free memory */
   if (ss_mesh) {
     ss_mesh->release(ss_mesh);
-  }
-}
-
-void shrinkwrapGpencilModifier_deform(ShrinkwrapGpencilModifierData *mmd,
-                                      Object *ob,
-                                      MDeformVert *dvert,
-                                      const int defgrp_index,
-                                      float (*vertexCos)[3],
-                                      int numVerts)
-{
-
-  ShrinkwrapCalcData calc = NULL_ShrinkwrapCalcData;
-  /* Convert gpencil struct to use the same struct and function used with meshes. */
-  ShrinkwrapModifierData smd;
-  smd.target = mmd->target;
-  smd.auxTarget = mmd->aux_target;
-  smd.keepDist = mmd->keep_dist;
-  smd.shrinkType = mmd->shrink_type;
-  smd.shrinkOpts = mmd->shrink_opts;
-  smd.shrinkMode = mmd->shrink_mode;
-  smd.projLimit = mmd->proj_limit;
-  smd.projAxis = mmd->proj_axis;
-
-  /* Configure Shrinkwrap calc data. */
-  calc.smd = &smd;
-  calc.ob = ob;
-  calc.numVerts = numVerts;
-  calc.vertexCos = vertexCos;
-  calc.dvert = dvert;
-  calc.vgroup = defgrp_index;
-  calc.invert_vgroup = (mmd->flag & GP_SHRINKWRAP_INVERT_VGROUP) != 0;
-
-  BLI_SPACE_TRANSFORM_SETUP(&calc.local2target, ob, mmd->target);
-  calc.keepDist = mmd->keep_dist;
-  calc.tree = mmd->cache_data;
-
-  switch (mmd->shrink_type) {
-    case MOD_SHRINKWRAP_NEAREST_SURFACE:
-    case MOD_SHRINKWRAP_TARGET_PROJECT:
-      TIMEIT_BENCH(shrinkwrap_calc_nearest_surface_point(&calc), gpdeform_surface);
-      break;
-
-    case MOD_SHRINKWRAP_PROJECT:
-      TIMEIT_BENCH(shrinkwrap_calc_normal_projection(&calc), gpdeform_project);
-      break;
-
-    case MOD_SHRINKWRAP_NEAREST_VERTEX:
-      TIMEIT_BENCH(shrinkwrap_calc_nearest_vertex(&calc), gpdeform_vertex);
-      break;
   }
 }
 

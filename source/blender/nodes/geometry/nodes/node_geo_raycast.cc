@@ -4,7 +4,6 @@
 
 #include "DNA_mesh_types.h"
 
-#include "BKE_attribute_math.hh"
 #include "BKE_bvhutils.hh"
 #include "BKE_mesh_sample.hh"
 
@@ -15,6 +14,8 @@
 #include "UI_resources.hh"
 
 #include "RNA_enum_types.hh"
+
+#include "FN_multi_function_builder.hh"
 
 #include "node_geometry_util.hh"
 
@@ -99,15 +100,10 @@ static void raycast_to_mesh(const IndexMask &mask,
                             const MutableSpan<float3> r_hit_normals,
                             const MutableSpan<float> r_hit_distances)
 {
-  BVHTreeFromMesh tree_data;
-  BKE_bvhtree_from_mesh_get(&tree_data, &mesh, BVHTREE_FROM_CORNER_TRIS, 4);
-  BLI_SCOPED_DEFER([&]() { free_bvhtree_from_mesh(&tree_data); });
-
+  bke::BVHTreeFromMesh tree_data = mesh.bvh_corner_tris();
   if (tree_data.tree == nullptr) {
     return;
   }
-  /* We shouldn't be rebuilding the BVH tree when calling this function in parallel. */
-  BLI_assert(tree_data.cached);
 
   mask.foreach_index([&](const int i) {
     const float ray_length = ray_lengths[i];
@@ -307,7 +303,13 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_RAYCAST, "Raycast", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeRaycast", GEO_NODE_RAYCAST);
+  ntype.ui_name = "Raycast";
+  ntype.ui_description =
+      "Cast rays from the context geometry onto a target geometry, and retrieve information from "
+      "each hit point";
+  ntype.enum_name_legacy = "RAYCAST";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   bke::node_type_size_preset(&ntype, bke::eNodeSizePreset::Middle);
   ntype.initfunc = node_init;
   blender::bke::node_type_storage(
@@ -316,7 +318,7 @@ static void node_register()
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
   ntype.gather_link_search_ops = node_gather_link_searches;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

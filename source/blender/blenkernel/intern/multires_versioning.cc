@@ -6,8 +6,6 @@
  * \ingroup bke
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "DNA_mesh_types.h"
 #include "DNA_modifier_types.h"
 #include "DNA_object_types.h"
@@ -18,6 +16,8 @@
 #include "multires_reshape.hh"
 #include "opensubdiv_converter_capi.hh"
 #include "subdiv_converter.hh"
+
+#ifdef WITH_OPENSUBDIV
 
 static float simple_to_catmull_clark_get_edge_sharpness(const OpenSubdiv_Converter * /*converter*/,
                                                         int /*manifold_edge_index*/)
@@ -49,7 +49,7 @@ static blender::bke::subdiv::Subdiv *subdiv_for_simple_to_catmull_clark(Object *
   subdiv::converter_free(&converter);
 
   if (!subdiv::eval_begin_from_mesh(
-          subdiv, base_mesh, nullptr, subdiv::SUBDIV_EVALUATOR_TYPE_CPU, nullptr))
+          subdiv, base_mesh, {}, subdiv::SUBDIV_EVALUATOR_TYPE_CPU, nullptr))
   {
     subdiv::free(subdiv);
     return nullptr;
@@ -58,8 +58,11 @@ static blender::bke::subdiv::Subdiv *subdiv_for_simple_to_catmull_clark(Object *
   return subdiv;
 }
 
+#endif
+
 void multires_do_versions_simple_to_catmull_clark(Object *object, MultiresModifierData *mmd)
 {
+#ifdef WITH_OPENSUBDIV
   const Mesh *base_mesh = static_cast<const Mesh *>(object->data);
   if (base_mesh->corners_num == 0) {
     return;
@@ -93,4 +96,7 @@ void multires_do_versions_simple_to_catmull_clark(Object *object, MultiresModifi
     multires_reshape_object_grids_to_tangent_displacement(&reshape_context);
     multires_reshape_context_free(&reshape_context);
   }
+#else
+  UNUSED_VARS(object, mmd);
+#endif
 }

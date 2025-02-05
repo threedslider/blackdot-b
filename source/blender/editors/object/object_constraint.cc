@@ -6,15 +6,16 @@
  * \ingroup edobj
  */
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_dynstr.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
@@ -28,7 +29,7 @@
 #include "DNA_text_types.h"
 
 #include "BIK_api.h"
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_armature.hh"
 #include "BKE_constraint.h"
 #include "BKE_context.hh"
@@ -44,7 +45,7 @@
 #include "DEG_depsgraph_query.hh"
 
 #ifdef WITH_PYTHON
-#  include "BPY_extern.h"
+#  include "BPY_extern.hh"
 #endif
 
 #include "WM_api.hh"
@@ -60,6 +61,7 @@
 #include "ED_screen.hh"
 
 #include "ANIM_action.hh"
+#include "ANIM_action_legacy.hh"
 #include "ANIM_animdata.hh"
 
 #include "UI_interface.hh"
@@ -255,21 +257,21 @@ static void set_constraint_nth_target(bConstraint *con,
 {
   ListBase targets = {nullptr, nullptr};
   bConstraintTarget *ct;
-  int num_targets, i;
+  int targets_num, i;
 
   if (BKE_constraint_targets_get(con, &targets)) {
-    num_targets = BLI_listbase_count(&targets);
+    targets_num = BLI_listbase_count(&targets);
 
     if (index < 0) {
-      if (abs(index) < num_targets) {
-        index = num_targets - abs(index);
+      if (abs(index) < targets_num) {
+        index = targets_num - abs(index);
       }
       else {
-        index = num_targets - 1;
+        index = targets_num - 1;
       }
     }
-    else if (index >= num_targets) {
-      index = num_targets - 1;
+    else if (index >= targets_num) {
+      index = targets_num - 1;
     }
 
     for (ct = static_cast<bConstraintTarget *>(targets.first), i = 0; ct; ct = ct->next, i++) {
@@ -357,10 +359,23 @@ static void test_constraint(
       /* must have action */
       con->flag |= CONSTRAINT_DISABLE;
     }
-    else if (data->act->idroot != ID_OB) {
-      /* only object-rooted actions can be used */
-      data->act = nullptr;
-      con->flag |= CONSTRAINT_DISABLE;
+    else {
+      if (animrig::legacy::action_treat_as_legacy(*data->act)) {
+        if (!ELEM(data->act->idroot, ID_OB, 0)) {
+          /* Only object-rooted actions can be used. */
+          data->act = nullptr;
+          con->flag |= CONSTRAINT_DISABLE;
+        }
+      }
+      else {
+        /* The slot was assigned, so assume that it is suitable to animate the
+         * owner (only suitable slots appear in the drop-down). */
+        animrig::Action &action = data->act->wrap();
+        animrig::Slot *slot = action.slot_for_handle(data->action_slot_handle);
+        if (!slot) {
+          con->flag |= CONSTRAINT_DISABLE;
+        }
+      }
     }
 
     /* Skip target checking if we're not using it */
@@ -1070,7 +1085,7 @@ static int followpath_path_animate_exec(bContext *C, wmOperator *op)
     Curve *cu = (Curve *)data->tar->data;
 
     if (ELEM(nullptr, cu->adt, cu->adt->action) ||
-        (BKE_fcurve_find(&cu->adt->action->curves, "eval_time", 0) == nullptr))
+        (animrig::fcurve_find_in_assigned_slot(*cu->adt, {"eval_time", 0}) == nullptr))
     {
       /* create F-Curve for path animation */
       act = animrig::id_action_ensure(bmain, &cu->id);
@@ -1091,7 +1106,7 @@ static int followpath_path_animate_exec(bContext *C, wmOperator *op)
     PropertyRNA *prop;
 
     /* get RNA pointer to constraint's "offset_factor" property - to build RNA path */
-    PointerRNA ptr = RNA_pointer_create(&ob->id, &RNA_FollowPathConstraint, con);
+    PointerRNA ptr = RNA_pointer_create_discrete(&ob->id, &RNA_FollowPathConstraint, con);
     prop = RNA_struct_find_property(&ptr, "offset_factor");
 
     const std::optional<std::string> path = RNA_path_from_ID_to_property(&ptr, prop);
@@ -1950,9 +1965,7 @@ static int constraint_move_to_index_exec(bContext *C, wmOperator *op)
   bConstraint *con = edit_constraint_property_get(C, op, ob, 0);
 
   int new_index = RNA_int_get(op->ptr, "index");
-  if (new_index < 0) {
-    new_index = 0;
-  }
+  new_index = std::max(new_index, 0);
 
   if (con) {
     constraint_move_to_index(ob, con, new_index);

@@ -9,8 +9,8 @@
  * interpolation.
  */
 
-#pragma BLENDER_REQUIRE(common_view_lib.glsl)
-#pragma BLENDER_REQUIRE(common_math_lib.glsl)
+#include "common_math_lib.glsl"
+#include "draw_view_lib.glsl"
 
 void main()
 {
@@ -32,7 +32,7 @@ void main()
 
   local_pos = vert_pos;
 
-  vec3 real_pos = cameraPos * plane_axes + vert_pos * grid_buf.size.xyz;
+  vec3 real_pos = drw_view_position() * plane_axes + vert_pos * grid_buf.size.xyz;
 
   /* Used for additional Z axis */
   if (flag_test(grid_flag, CLIP_ZPOS)) {

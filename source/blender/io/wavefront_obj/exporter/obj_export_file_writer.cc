@@ -7,7 +7,7 @@
  */
 
 #include <algorithm>
-#include <sstream>
+#include <system_error>
 
 #include "BKE_attribute.hh"
 #include "BKE_blender_version.h"
@@ -15,8 +15,9 @@
 
 #include "BLI_color.hh"
 #include "BLI_enumerable_thread_specific.hh"
+#include "BLI_fileops.h"
 #include "BLI_math_matrix.hh"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_task.hh"
 
@@ -27,6 +28,9 @@
 #include "obj_export_nurbs.hh"
 
 #include "obj_export_file_writer.hh"
+
+#include "CLG_log.h"
+static CLG_LogRef LOG = {"io.obj"};
 
 namespace blender::io::obj {
 /**
@@ -48,6 +52,23 @@ static const char *DEFORM_GROUP_DISABLED = "off";
  * If a material name is not specified, a white material is used.
  * So an empty material name is written. */
 static const char *MATERIAL_GROUP_DISABLED = "";
+
+OBJWriter::OBJWriter(const char *filepath, const OBJExportParams &export_params) noexcept(false)
+    : export_params_(export_params), outfile_path_(filepath), outfile_(nullptr)
+{
+  outfile_ = BLI_fopen(filepath, "wb");
+  if (!outfile_) {
+    throw std::system_error(errno, std::system_category(), "Cannot open file " + outfile_path_);
+  }
+}
+OBJWriter::~OBJWriter()
+{
+  if (outfile_ && std::fclose(outfile_)) {
+    CLOG_ERROR(&LOG,
+               "Error: could not close file '%s' properly, it may be corrupted.",
+               outfile_path_.c_str());
+  }
+}
 
 void OBJWriter::write_vert_uv_normal_indices(FormatHandler &fh,
                                              const IndexOffsets &offsets,
@@ -386,12 +407,16 @@ void OBJWriter::write_face_elements(FormatHandler &fh,
     }
 
     /* Write material name and material group if different from previous. */
-    if (export_params_.export_materials && obj_mesh_data.tot_materials() > 0) {
+    if ((export_params_.export_materials || export_params_.export_material_groups) &&
+        obj_mesh_data.tot_materials() > 0)
+    {
       const int16_t prev_mat = idx == 0 ? NEGATIVE_INIT : std::max(0, material_indices[prev_i]);
       const int16_t mat = std::max(0, material_indices[i]);
       if (mat != prev_mat) {
         if (mat == NOT_FOUND) {
-          buf.write_obj_usemtl(MATERIAL_GROUP_DISABLED);
+          if (export_params_.export_materials) {
+            buf.write_obj_usemtl(MATERIAL_GROUP_DISABLED);
+          }
         }
         else {
           const char *mat_name = matname_fn(mat);
@@ -403,7 +428,9 @@ void OBJWriter::write_face_elements(FormatHandler &fh,
             spaces_to_underscores(object_name);
             buf.write_obj_group(object_name + "_" + mat_name);
           }
-          buf.write_obj_usemtl(mat_name);
+          if (export_params_.export_materials) {
+            buf.write_obj_usemtl(mat_name);
+          }
         }
       }
     }
@@ -521,13 +548,14 @@ BLI_STATIC_ASSERT(ARRAY_SIZE(tex_map_type_to_string) == int(MTLTexMapType::Count
  */
 static std::string float3_to_string(const float3 &numbers)
 {
-  std::ostringstream r_string;
-  r_string << numbers[0] << " " << numbers[1] << " " << numbers[2];
-  return r_string.str();
-};
+  return fmt::format("{} {} {}", numbers[0], numbers[1], numbers[2]);
+}
 
-MTLWriter::MTLWriter(const char *obj_filepath) noexcept(false)
+MTLWriter::MTLWriter(const char *obj_filepath, bool write_file) noexcept(false)
 {
+  if (!write_file) {
+    return;
+  }
   char mtl_path[FILE_MAX];
   STRNCPY(mtl_path, obj_filepath);
 
@@ -547,8 +575,9 @@ MTLWriter::~MTLWriter()
   if (outfile_) {
     fmt_handler_.write_to_file(outfile_);
     if (std::fclose(outfile_)) {
-      std::cerr << "Error: could not close the file '" << mtl_filepath_
-                << "' properly, it may be corrupted." << std::endl;
+      CLOG_ERROR(&LOG,
+                 "Error: could not close file '%s' properly, it may be corrupted.",
+                 mtl_filepath_.c_str());
     }
   }
 }

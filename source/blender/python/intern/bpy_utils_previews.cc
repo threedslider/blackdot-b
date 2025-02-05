@@ -14,17 +14,13 @@
 #include <Python.h>
 #include <structmember.h>
 
-#include "BLI_utildefines.h"
-
 #include "RNA_access.hh"
 #include "RNA_prototypes.hh"
 
-#include "bpy_rna.h"
-#include "bpy_utils_previews.h"
+#include "bpy_rna.hh"
+#include "bpy_utils_previews.hh"
 
-#include "../generic/py_capi_utils.h"
-
-#include "MEM_guardedalloc.h"
+#include "../generic/py_capi_utils.hh"
 
 #include "IMB_thumbs.hh"
 
@@ -40,7 +36,7 @@ PyDoc_STRVAR(
     "   Generate a new empty preview.\n"
     "\n"
     "   :arg name: The name (unique id) identifying the preview.\n"
-    "   :type name: string\n"
+    "   :type name: str\n"
     "   :return: The Preview matching given name, or a new empty one.\n"
     "   :rtype: :class:`bpy.types.ImagePreview`\n"
     /* This is only true when accessed via 'bpy.utils.previews.ImagePreviewCollection.load',
@@ -56,7 +52,7 @@ static PyObject *bpy_utils_previews_new(PyObject * /*self*/, PyObject *args)
   }
 
   prv = BKE_previewimg_cached_ensure(name);
-  PointerRNA ptr = RNA_pointer_create(nullptr, &RNA_ImagePreview, prv);
+  PointerRNA ptr = RNA_pointer_create_discrete(nullptr, &RNA_ImagePreview, prv);
 
   return pyrna_struct_CreatePyObject(&ptr);
 }
@@ -69,12 +65,12 @@ PyDoc_STRVAR(
     "   Generate a new preview from given file path.\n"
     "\n"
     "   :arg name: The name (unique id) identifying the preview.\n"
-    "   :type name: string\n"
+    "   :type name: str\n"
     "   :arg filepath: The file path to generate the preview from.\n"
-    "   :type filepath: string or bytes\n"
+    "   :type filepath: str | bytes\n"
     "   :arg filetype: The type of file, needed to generate the preview in [" STR_SOURCE_TYPES
     "].\n"
-    "   :type filetype: string\n"
+    "   :type filetype: str\n"
     "   :arg force_reload: If True, force running thumbnail manager even if preview already "
     "exists in cache.\n"
     "   :type force_reload: bool\n"
@@ -124,7 +120,7 @@ static PyObject *bpy_utils_previews_load(PyObject * /*self*/, PyObject *args)
 
   Py_XDECREF(filepath_data.value_coerce);
 
-  PointerRNA ptr = RNA_pointer_create(nullptr, &RNA_ImagePreview, prv);
+  PointerRNA ptr = RNA_pointer_create_discrete(nullptr, &RNA_ImagePreview, prv);
   return pyrna_struct_CreatePyObject(&ptr);
 }
 
@@ -137,7 +133,7 @@ PyDoc_STRVAR(
     "\n"
     "\n"
     "   :arg name: The name (unique id) identifying the preview.\n"
-    "   :type name: string\n");
+    "   :type name: str\n");
 static PyObject *bpy_utils_previews_release(PyObject * /*self*/, PyObject *args)
 {
   char *name;

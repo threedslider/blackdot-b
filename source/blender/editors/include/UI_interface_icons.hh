@@ -16,7 +16,6 @@
 struct Collection;
 struct ID;
 struct ImBuf;
-struct ListBase;
 struct PointerRNA;
 struct PreviewImage;
 struct Scene;
@@ -97,6 +96,8 @@ void UI_icon_draw_ex(float x,
                      bool mono_border,
                      const IconTextOverlay *text_overlay,
                      const bool inverted = false);
+
+ImBuf *UI_svg_icon_bitmap(uint icon_id, float size, bool multicolor = false);
 
 void UI_icons_free();
 void UI_icons_free_drawinfo(void *drawinfo);

@@ -18,7 +18,6 @@
 
 #include "BLI_listbase.h"
 #include "BLI_math_color.h"
-#include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_matrix.hh"
 #include "BLI_math_vector.hh"
@@ -32,9 +31,9 @@
 #include "BKE_colortools.hh"
 #include "BKE_context.hh"
 #include "BKE_customdata.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_layer.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_mesh.hh"
 #include "BKE_mesh_sample.hh"
 #include "BKE_object.hh"
@@ -58,7 +57,6 @@
 #include "ED_select_utils.hh"
 #include "ED_view3d.hh"
 
-#include "BLI_sys_types.h"
 #include "ED_mesh.hh" /* for face mask functions */
 
 #include "WM_api.hh"
@@ -204,7 +202,14 @@ void paint_stroke_operator_properties(wmOperatorType *ot)
                       BRUSH_STROKE_NORMAL,
                       "Stroke Mode",
                       "Action taken when a paint stroke is made");
+  RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_OPERATOR_DEFAULT);
   RNA_def_property_flag(prop, PropertyFlag(PROP_SKIP_SAVE));
+
+  /* TODO: Pen flip logic should likely be combined into the stroke mode logic instead of being
+   * an entirely separate concept. */
+  prop = RNA_def_boolean(
+      ot->srna, "pen_flip", false, "Pen Flip", "Whether a tablet's eraser mode is being used");
+  RNA_def_property_flag(prop, PropertyFlag(PROP_HIDDEN | PROP_SKIP_SAVE));
 }
 
 /* 3D Paint */
@@ -277,9 +282,7 @@ static int imapaint_pick_face(ViewContext *vc,
   const float3 start_object = math::transform_point(world_to_object, start_world);
   const float3 end_object = math::transform_point(world_to_object, end_world);
 
-  BVHTreeFromMesh mesh_bvh;
-  BKE_bvhtree_from_mesh_get(&mesh_bvh, &mesh, BVHTREE_FROM_CORNER_TRIS, 2);
-  BLI_SCOPED_DEFER([&]() { free_bvhtree_from_mesh(&mesh_bvh); });
+  bke::BVHTreeFromMesh mesh_bvh = mesh.bvh_corner_tris();
 
   BVHTreeRayHit ray_hit;
   ray_hit.dist = FLT_MAX;
@@ -405,7 +408,7 @@ void paint_sample_color(
                 }
                 else {
                   linearrgb_to_srgb_v3_v3(rgba_f, rgba_f);
-                  BKE_brush_color_set(scene, br, rgba_f);
+                  BKE_brush_color_set(scene, paint, br, rgba_f);
                 }
               }
               else {
@@ -418,7 +421,7 @@ void paint_sample_color(
                 else {
                   float rgba_f[3];
                   rgb_uchar_to_float(rgba_f, rgba);
-                  BKE_brush_color_set(scene, br, rgba_f);
+                  BKE_brush_color_set(scene, paint, br, rgba_f);
                 }
               }
               BKE_image_release_ibuf(image, ibuf, nullptr);
@@ -445,7 +448,7 @@ void paint_sample_color(
         copy_v3_v3(color->rgb, rgba_f);
       }
       else {
-        BKE_brush_color_set(scene, br, rgba_f);
+        BKE_brush_color_set(scene, paint, br, rgba_f);
       }
       return;
     }
@@ -462,7 +465,7 @@ void paint_sample_color(
       copy_v3_v3(color->rgb, rgb_fl);
     }
     else {
-      BKE_brush_color_set(scene, br, rgb_fl);
+      BKE_brush_color_set(scene, paint, br, rgb_fl);
     }
   }
 }
@@ -526,6 +529,7 @@ static int brush_sculpt_curves_falloff_preset_exec(bContext *C, wmOperator *op)
   mapping->preset = RNA_enum_get(op->ptr, "shape");
   CurveMap *map = mapping->cm;
   BKE_curvemap_reset(map, &mapping->clipr, mapping->preset, CURVEMAP_SLOPE_POSITIVE);
+  BKE_brush_tag_unsaved_changes(brush);
   return OPERATOR_FINISHED;
 }
 
@@ -567,7 +571,7 @@ void PAINT_OT_face_select_linked(wmOperatorType *ot)
 static int paint_select_linked_pick_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   const bool select = !RNA_boolean_get(op->ptr, "deselect");
-  view3d_operator_needs_opengl(C);
+  view3d_operator_needs_gpu(C);
   paintface_select_linked(C, CTX_data_active_object(C), event->mval, select);
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
@@ -680,7 +684,7 @@ static int paintface_select_loop_invoke(bContext *C, wmOperator *op, const wmEve
   if (!extend) {
     paintface_deselect_all_visible(C, CTX_data_active_object(C), SEL_DESELECT, false);
   }
-  view3d_operator_needs_opengl(C);
+  view3d_operator_needs_gpu(C);
   paintface_select_loop(C, CTX_data_active_object(C), event->mval, select);
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
@@ -779,7 +783,7 @@ void PAINT_OT_vert_select_linked(wmOperatorType *ot)
 static int paintvert_select_linked_pick_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   const bool select = RNA_boolean_get(op->ptr, "select");
-  view3d_operator_needs_opengl(C);
+  view3d_operator_needs_gpu(C);
 
   paintvert_select_linked_pick(C, CTX_data_active_object(C), event->mval, select);
   ED_region_tag_redraw(CTX_wm_region(C));

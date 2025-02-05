@@ -22,9 +22,8 @@ import subprocess
 import sys
 import tempfile
 
-from typing import (
+from collections.abc import (
     Callable,
-    Optional,
 )
 
 VERBOSE = True
@@ -96,14 +95,10 @@ def system_path_contains(dirpath: str) -> bool:
     return False
 
 
-# When removing files to make way for newly copied file an `os.path.exists`
-# check isn't sufficient as the path may be a broken symbolic-link.
-def path_exists_or_is_link(path: str) -> bool:
-    return os.path.exists(path) or os.path.islink(path)
-
-
 def filepath_ensure_removed(path: str) -> bool:
-    if path_exists_or_is_link(path):
+    # When removing files to make way for newly copied file an `os.path.exists`
+    # check isn't sufficient as the path may be a broken symbolic-link.
+    if os.path.lexists(path):
         os.remove(path)
         return True
     return False
@@ -115,7 +110,7 @@ def filepath_ensure_removed(path: str) -> bool:
 # On registration when handlers return False this causes registration to fail and unregister to be called.
 # Non fatal errors should print a message and return True instead.
 
-def handle_bin(do_register: bool, all_users: bool) -> Optional[str]:
+def handle_bin(do_register: bool, all_users: bool) -> str | None:
     if all_users:
         dirpath_dst = os.path.join(SYSTEM_PREFIX, "bin")
     else:
@@ -169,7 +164,7 @@ def handle_bin(do_register: bool, all_users: bool) -> Optional[str]:
     return None
 
 
-def handle_desktop_file(do_register: bool, all_users: bool) -> Optional[str]:
+def handle_desktop_file(do_register: bool, all_users: bool) -> str | None:
     # `cp ./blender.desktop ~/.local/share/applications/`
 
     filename = BLENDER_DESKTOP
@@ -211,7 +206,7 @@ def handle_desktop_file(do_register: bool, all_users: bool) -> Optional[str]:
     return None
 
 
-def handle_thumbnailer(do_register: bool, all_users: bool) -> Optional[str]:
+def handle_thumbnailer(do_register: bool, all_users: bool) -> str | None:
     filename = "blender.thumbnailer"
 
     if all_users:
@@ -257,7 +252,7 @@ def handle_thumbnailer(do_register: bool, all_users: bool) -> Optional[str]:
     return None
 
 
-def handle_mime_association_xml(do_register: bool, all_users: bool) -> Optional[str]:
+def handle_mime_association_xml(do_register: bool, all_users: bool) -> str | None:
     # `xdg-mime install x-blender.xml`
     filename = "x-blender.xml"
 
@@ -330,7 +325,7 @@ def handle_mime_association_xml(do_register: bool, all_users: bool) -> Optional[
     return None
 
 
-def handle_mime_association_default(do_register: bool, all_users: bool) -> Optional[str]:
+def handle_mime_association_default(do_register: bool, all_users: bool) -> str | None:
     # `xdg-mime default blender.desktop application/x-blender`
 
     if VERBOSE:
@@ -352,7 +347,7 @@ def handle_mime_association_default(do_register: bool, all_users: bool) -> Optio
     return None
 
 
-def handle_icon(do_register: bool, all_users: bool) -> Optional[str]:
+def handle_icon(do_register: bool, all_users: bool) -> str | None:
     filename = "blender.svg"
     if all_users:
         base_dir = os.path.join(SYSTEM_PREFIX, "share")
@@ -393,21 +388,34 @@ def handle_icon(do_register: bool, all_users: bool) -> Optional[str]:
 # -----------------------------------------------------------------------------
 # Escalate Privileges
 
-def main_run_as_root(do_register: bool) -> Optional[str]:
+def main_run_as_root(
+        do_register: bool,
+        *,
+        python_args: tuple[str, ...],
+) -> str | None:
     # If the system prefix doesn't exist, fail with an error because it's highly likely that the
     # system won't use this when it has not been created.
     if not os.path.exists(SYSTEM_PREFIX):
         return "Error: system path does not exist {!r}".format(SYSTEM_PREFIX)
 
-    prog: Optional[str] = shutil.which("pkexec")
+    prog: str | None = shutil.which("pkexec")
     if prog is None:
         return "Error: command \"pkexec\" not found"
+
+    python_args_extra = (
+        # Skips users `site-packages` because they are only additional overhead for running this script.
+        "-s",
+    )
+
+    python_args = (
+        *python_args,
+        *(arg for arg in python_args_extra if arg not in python_args)
+    )
 
     cmd = [
         prog,
         sys.executable,
-        # Skips users `site-packages`.
-        "-s",
+        *python_args,
         __file__,
         BLENDER_BIN,
         "--action={:s}".format("register-allusers" if do_register else "unregister-allusers"),
@@ -432,14 +440,14 @@ def main_run_as_root(do_register: bool) -> Optional[str]:
 # Handle these cases gracefully.
 
 def call_handle_checked(
-        fn: Callable[[bool, bool], Optional[str]],
+        fn: Callable[[bool, bool], str | None],
         *,
         do_register: bool,
         all_users: bool,
-) -> Optional[str]:
+) -> str | None:
     try:
         result = fn(do_register, all_users)
-    except BaseException as ex:
+    except Exception as ex:
         # This should never happen.
         result = "Internal Error: {!r}".format(ex)
     return result
@@ -448,7 +456,7 @@ def call_handle_checked(
 # -----------------------------------------------------------------------------
 # Main Registration Functions
 
-def register_impl(do_register: bool, all_users: bool) -> Optional[str]:
+def register_impl(do_register: bool, all_users: bool) -> str | None:
     # A non-empty string indicates an error (which is forwarded to the user), otherwise None for success.
 
     global BLENDER_BIN
@@ -460,7 +468,7 @@ def register_impl(do_register: bool, all_users: bool) -> Optional[str]:
         # relative to the blender binary and in general it's not needed because system installations
         # are used by package managers which can handle file association themselves.
         # The Linux builds provided by https://blender.org are portable, register is intended to be used for these.
-        if __import__("bpy").utils.resource_path('SYSTEM'):
+        if not __import__("bpy").app.portable:
             return "System Installation, registration is handled by the package manager"
         # While snap builds are portable, the snap system handled file associations.
         # Blender is also launched via a wrapper, again, we could support this if it were
@@ -476,7 +484,10 @@ def register_impl(do_register: bool, all_users: bool) -> Optional[str]:
         if all_users:
             if os.geteuid() != 0:
                 # Run this script with escalated privileges.
-                return main_run_as_root(do_register)
+                return main_run_as_root(
+                    do_register,
+                    python_args=__import__("bpy").app.python_args,
+                )
     else:
         assert BLENDER_BIN != ""
 
@@ -523,12 +534,12 @@ def register_impl(do_register: bool, all_users: bool) -> Optional[str]:
     return error_or_none
 
 
-def register(all_users: bool = False) -> Optional[str]:
+def register(all_users: bool = False) -> str | None:
     # Return an empty string for success.
     return register_impl(True, all_users)
 
 
-def unregister(all_users: bool = False) -> Optional[str]:
+def unregister(all_users: bool = False) -> str | None:
     # Return an empty string for success.
     return register_impl(False, all_users)
 

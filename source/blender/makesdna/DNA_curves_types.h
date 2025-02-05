@@ -10,9 +10,8 @@
 
 #include "DNA_ID.h"
 #include "DNA_customdata_types.h"
-#include "DNA_object_types.h"
+#include "DNA_listBase.h"
 
-#include "BLI_listbase.h"
 #include "BLI_utildefines.h"
 
 #ifdef __cplusplus
@@ -142,7 +141,9 @@ typedef struct CurvesGeometry {
   ListBase vertex_group_names;
   /** The active index in the #vertex_group_names list. */
   int vertex_group_active_index;
-  char _pad[4];
+
+  /** Set to -1 when none is active. */
+  int attributes_active_index;
 
   /**
    * Runtime data for curves, stored as a pointer to allow defining this as a C++ class.
@@ -169,7 +170,7 @@ typedef struct Curves {
   CurvesGeometry geometry;
 
   int flag;
-  int attributes_active_index;
+  int attributes_active_index_legacy;
 
   /* Materials. */
   struct Material **mat;
@@ -202,6 +203,10 @@ typedef struct Curves {
    * domain.
    */
   char *surface_uv_map;
+
+  /* Distance to keep the curves away from the surface. */
+  float surface_collision_distance;
+  char _pad2[4];
 
   /* Draw cache to store data used for viewport drawing. */
   void *batch_cache;

@@ -7,33 +7,32 @@
  */
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
 #include "DNA_collection_types.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_fnmatch.h"
 #include "BLI_listbase.h"
 #include "BLI_mempool.h"
+#include "BLI_rect.h"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_layer.hh"
 #include "BKE_main.hh"
 #include "BKE_modifier.hh"
 #include "BKE_outliner_treehash.hh"
+#include "BKE_screen.hh"
 
 #include "ED_screen.hh"
 
 #include "UI_interface.hh"
 
 #include "outliner_intern.hh"
-#include "tree/common.hh"
 #include "tree/tree_display.hh"
 #include "tree/tree_element.hh"
-#include "tree/tree_element_overrides.hh"
 
 #ifdef WIN32
 #  include "BLI_math_base.h" /* M_PI */
@@ -199,7 +198,7 @@ static void outliner_add_line_styles(SpaceOutliner *space_outliner,
     for (lineset = view_layer->freestyle_config.linesets.first; lineset; lineset = lineset->next) {
       FreestyleLineStyle *linestyle = lineset->linestyle;
       if (linestyle) {
-        linestyle->id.tag |= LIB_TAG_DOIT;
+        linestyle->id.tag |= ID_TAG_DOIT;
       }
     }
   }
@@ -207,10 +206,10 @@ static void outliner_add_line_styles(SpaceOutliner *space_outliner,
     for (lineset = view_layer->freestyle_config.linesets.first; lineset; lineset = lineset->next) {
       FreestyleLineStyle *linestyle = lineset->linestyle;
       if (linestyle) {
-        if (!(linestyle->id.tag & LIB_TAG_DOIT)) {
+        if (!(linestyle->id.tag & ID_TAG_DOIT)) {
           continue;
         }
-        linestyle->id.tag &= ~LIB_TAG_DOIT;
+        linestyle->id.tag &= ~ID_TAG_DOIT;
         AbstractTreeDisplay::add_element(
             space_outliner, lb, reinterpret_cast<ID *>(linestyle), nullptr, te, TSE_SOME_ID, 0);
       }
@@ -299,7 +298,7 @@ TreeElement *AbstractTreeDisplay::add_element(ListBase *lb,
     te->abstract_element->display_ = this;
   }
 
-  if (ELEM(type, TSE_SEQUENCE, TSE_SEQ_STRIP, TSE_SEQUENCE_DUP)) {
+  if (ELEM(type, TSE_STRIP, TSE_STRIP_DATA, TSE_STRIP_DUP)) {
     /* pass */
   }
   else if (ELEM(type, TSE_RNA_STRUCT, TSE_RNA_PROPERTY, TSE_RNA_ARRAY_ELEM)) {
@@ -342,6 +341,9 @@ TreeElement *AbstractTreeDisplay::add_element(ListBase *lb,
     /* pass */
   }
   else if (ELEM(type, TSE_MODIFIER, TSE_MODIFIER_BASE)) {
+    /* pass */
+  }
+  else if (type == TSE_LINKED_NODE_TREE) {
     /* pass */
   }
   else if (type == TSE_LINKED_OB) {
@@ -579,7 +581,7 @@ static void outliner_sort(ListBase *lb)
         if (!ELEM(tselem->type, TSE_SOME_ID, TSE_DEFGROUP)) {
           tp->idcode = 0; /* Don't sort this. */
         }
-        if (tselem->type == TSE_ID_BASE) {
+        if (ELEM(tselem->type, TSE_ID_BASE, TSE_DEFGROUP)) {
           tp->idcode = 1; /* Do sort this. */
         }
 
@@ -907,8 +909,8 @@ static bool outliner_element_visible_get(const Scene *scene,
             return false;
           }
           break;
-        case OB_GPENCIL_LEGACY:
-          if (exclude_filter & SO_FILTER_NO_OB_GPENCIL_LEGACY) {
+        case OB_GREASE_PENCIL:
+          if (exclude_filter & SO_FILTER_NO_OB_GREASE_PENCIL) {
             return false;
           }
           break;
@@ -982,7 +984,12 @@ static bool outliner_element_visible_get(const Scene *scene,
 
 static bool outliner_filter_has_name(TreeElement *te, const char *name, int flags)
 {
-  int fn_flag = 0;
+  /* Use `fnmatch` for shell-style globing.
+   * - Case-insensitive (optionally).
+   * - Don't handle escape characters as "special" characters are not expected in names.
+   *   Unlike shell input - `\` should be treated like any other character.
+   */
+  int fn_flag = FNM_NOESCAPE;
 
   if ((flags & SO_FIND_CASE_SENSITIVE) == 0) {
     fn_flag |= FNM_CASEFOLD;
@@ -1158,7 +1165,7 @@ void outliner_build_tree(Main *mainvar,
   }
   space_outliner->storeflag &= ~SO_TREESTORE_REBUILD;
 
-  if (region->do_draw & RGN_DRAW_NO_REBUILD) {
+  if (region->runtime->do_draw & RGN_DRAW_NO_REBUILD) {
     BLI_assert_msg(space_outliner->runtime->tree_display != nullptr,
                    "Skipping rebuild before tree was built properly, a full redraw should be "
                    "triggered instead");

@@ -2,7 +2,9 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma BLENDER_REQUIRE(common_view_lib.glsl)
+#include "draw_model_lib.glsl"
+#include "draw_view_lib.glsl"
+#include "select_lib.glsl"
 
 /* Straight Port from BKE_defvert_weight_to_rgb()
  * TODO: port this to a color ramp. */
@@ -89,6 +91,8 @@ vec3 get_vector_mac(ivec3 cell_co)
 
 void main()
 {
+  select_id_set(in_select_id);
+
 #ifdef USE_NEEDLE
   int cell = gl_VertexID / 12;
 #elif defined(USE_MAC)
@@ -175,12 +179,12 @@ void main()
 #  ifdef USE_NEEDLE
   /* NOTE(Metal): Declaring constant arrays in function scope to avoid increasing local shader
    * memory pressure. */
-  const vec3 corners[4] = vec3[4](vec3(0.0, 0.2, -0.5),
-                                  vec3(-0.2 * 0.866, -0.2 * 0.5, -0.5),
-                                  vec3(0.2 * 0.866, -0.2 * 0.5, -0.5),
-                                  vec3(0.0, 0.0, 0.5));
+  const vec3 corners[4] = float3_array(vec3(0.0, 0.2, -0.5),
+                                       vec3(-0.2 * 0.866, -0.2 * 0.5, -0.5),
+                                       vec3(0.2 * 0.866, -0.2 * 0.5, -0.5),
+                                       vec3(0.0, 0.0, 0.5));
 
-  const int indices[12] = int[12](0, 1, 1, 2, 2, 0, 0, 3, 1, 3, 2, 3);
+  const int indices[12] = int_array(0, 1, 1, 2, 2, 0, 0, 3, 1, 3, 2, 3);
 
   vec3 rotated_pos = rot_mat * corners[indices[gl_VertexID % 12]];
   pos += rotated_pos * vector_length * displaySize * cellSize;
@@ -191,6 +195,6 @@ void main()
 #  endif
 #endif
 
-  vec3 world_pos = point_object_to_world(pos);
-  gl_Position = point_world_to_ndc(world_pos);
+  vec3 world_pos = drw_point_object_to_world(pos);
+  gl_Position = drw_point_world_to_homogenous(world_pos);
 }

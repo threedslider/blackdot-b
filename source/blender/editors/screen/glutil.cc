@@ -23,10 +23,6 @@
 #include "GPU_immediate.hh"
 #include "GPU_texture.hh"
 
-#ifdef __APPLE__
-#  include "GPU_state.hh"
-#endif
-
 /* ******************************************** */
 
 static void immDrawPixelsTexSetupAttributes(IMMDrawPixelsTexState *state)
@@ -46,7 +42,6 @@ IMMDrawPixelsTexState immDrawPixelsTexSetup(int builtin)
 
   /* Shader will be unbind by immUnbindProgram in a `immDrawPixelsTex` function. */
   immBindBuiltinProgram(eGPUBuiltinShader(builtin));
-  immUniform1i("image", 0);
   state.do_shader_unbind = true;
 
   return state;

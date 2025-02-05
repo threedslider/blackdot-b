@@ -23,13 +23,13 @@
 
 #include "BKE_context.hh"
 #include "BKE_main.hh"
-#include "BKE_report.hh"
+#include "BKE_screen.hh"
 #include "BKE_workspace.hh"
 
 #include "RNA_access.hh"
-#include "RNA_define.hh"
 
 #include "WM_api.hh"
+#include "WM_keymap.hh"
 #include "WM_types.hh"
 #include "wm_event_system.hh"
 
@@ -41,8 +41,10 @@
 #include "wm_gizmo_wmapi.hh"
 
 #ifdef WITH_PYTHON
-#  include "BPY_extern.h"
+#  include "BPY_extern.hh"
 #endif
+
+using blender::StringRef;
 
 /* -------------------------------------------------------------------- */
 /** \name wmGizmoGroup
@@ -275,7 +277,7 @@ void WM_gizmo_group_remove_by_tool(bContext *C,
     LISTBASE_FOREACH (ScrArea *, area, &screen->areabase) {
       if (area->runtime.tool == tref) {
         LISTBASE_FOREACH (ARegion *, region, &area->regionbase) {
-          wmGizmoMap *gzmap = region->gizmo_map;
+          wmGizmoMap *gzmap = region->runtime->gizmo_map;
           if (gzmap && gzmap->type == gzmap_type) {
             wmGizmoGroup *gzgroup, *gzgroup_next;
             for (gzgroup = static_cast<wmGizmoGroup *>(gzmap->groups.first); gzgroup;
@@ -332,7 +334,7 @@ bool wm_gizmogroup_is_any_selected(const wmGizmoGroup *gzgroup)
 static int gizmo_select_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
   ARegion *region = CTX_wm_region(C);
-  wmGizmoMap *gzmap = region->gizmo_map;
+  wmGizmoMap *gzmap = region->runtime->gizmo_map;
   wmGizmoMapSelectState *msel = &gzmap->gzmap_context.select;
   wmGizmo *highlight = gzmap->gzmap_context.highlight;
 
@@ -467,8 +469,10 @@ static void gizmo_tweak_finish(bContext *C, wmOperator *op, const bool cancel, b
       wm_gizmomap_modal_set(mtweak->gzmap, C, mtweak->gz_modal, nullptr, false);
     }
   }
-  if (mtweak->gz_modal->flag & WM_GIZMO_NEEDS_UNDO) {
-    ED_undo_push(C, "Gizmo");
+  if (cancel == false) {
+    if (mtweak->gz_modal->flag & WM_GIZMO_NEEDS_UNDO) {
+      ED_undo_push(C, mtweak->gz_modal->parent_gzgroup->type->name);
+    }
   }
   MEM_freeN(mtweak);
 }
@@ -560,7 +564,7 @@ static int gizmo_tweak_modal(bContext *C, wmOperator *op, const wmEvent *event)
 static int gizmo_tweak_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   ARegion *region = CTX_wm_region(C);
-  wmGizmoMap *gzmap = region->gizmo_map;
+  wmGizmoMap *gzmap = region->runtime->gizmo_map;
   wmGizmo *gz = gzmap->gzmap_context.highlight;
 
   /* Needed for single click actions which don't enter modal state. */
@@ -937,18 +941,18 @@ wmGizmoGroupTypeRef *WM_gizmomaptype_group_find_ptr(wmGizmoMapType *gzmap_type,
   return nullptr;
 }
 
-wmGizmoGroupTypeRef *WM_gizmomaptype_group_find(wmGizmoMapType *gzmap_type, const char *idname)
+wmGizmoGroupTypeRef *WM_gizmomaptype_group_find(wmGizmoMapType *gzmap_type, const StringRef idname)
 {
   /* Could use hash lookups as operator types do, for now simple search. */
   LISTBASE_FOREACH (wmGizmoGroupTypeRef *, gzgt_ref, &gzmap_type->grouptype_refs) {
-    if (STREQ(idname, gzgt_ref->type->idname)) {
+    if (idname == gzgt_ref->type->idname) {
       return gzgt_ref;
     }
   }
   return nullptr;
 }
 
-wmGizmoGroupTypeRef *WM_gizmomaptype_group_link(wmGizmoMapType *gzmap_type, const char *idname)
+wmGizmoGroupTypeRef *WM_gizmomaptype_group_link(wmGizmoMapType *gzmap_type, const StringRef idname)
 {
   wmGizmoGroupType *gzgt = WM_gizmogrouptype_find(idname, false);
   BLI_assert(gzgt != nullptr);
@@ -989,7 +993,7 @@ void WM_gizmomaptype_group_init_runtime(const Main *bmain,
       LISTBASE_FOREACH (SpaceLink *, sl, &area->spacedata) {
         ListBase *lb = (sl == area->spacedata.first) ? &area->regionbase : &sl->regionbase;
         LISTBASE_FOREACH (ARegion *, region, lb) {
-          wmGizmoMap *gzmap = region->gizmo_map;
+          wmGizmoMap *gzmap = region->runtime->gizmo_map;
           if (gzmap && gzmap->type == gzmap_type) {
             WM_gizmomaptype_group_init_runtime_with_region(gzmap_type, gzgt, region);
           }
@@ -1003,7 +1007,7 @@ wmGizmoGroup *WM_gizmomaptype_group_init_runtime_with_region(wmGizmoMapType *gzm
                                                              wmGizmoGroupType *gzgt,
                                                              ARegion *region)
 {
-  wmGizmoMap *gzmap = region->gizmo_map;
+  wmGizmoMap *gzmap = region->runtime->gizmo_map;
   BLI_assert(gzmap && gzmap->type == gzmap_type);
   UNUSED_VARS_NDEBUG(gzmap_type);
 
@@ -1043,7 +1047,7 @@ void WM_gizmomaptype_group_unlink(bContext *C,
       LISTBASE_FOREACH (SpaceLink *, sl, &area->spacedata) {
         ListBase *lb = (sl == area->spacedata.first) ? &area->regionbase : &sl->regionbase;
         LISTBASE_FOREACH (ARegion *, region, lb) {
-          wmGizmoMap *gzmap = region->gizmo_map;
+          wmGizmoMap *gzmap = region->runtime->gizmo_map;
           if (gzmap && gzmap->type == gzmap_type) {
             wmGizmoGroup *gzgroup, *gzgroup_next;
             for (gzgroup = static_cast<wmGizmoGroup *>(gzmap->groups.first); gzgroup;
@@ -1117,7 +1121,7 @@ void WM_gizmo_group_type_add_ptr(wmGizmoGroupType *gzgt)
   wmGizmoMapType *gzmap_type = WM_gizmomaptype_ensure(&gzgt->gzmap_params);
   WM_gizmo_group_type_add_ptr_ex(gzgt, gzmap_type);
 }
-void WM_gizmo_group_type_add(const char *idname)
+void WM_gizmo_group_type_add(const StringRef idname)
 {
   wmGizmoGroupType *gzgt = WM_gizmogrouptype_find(idname, false);
   BLI_assert(gzgt != nullptr);
@@ -1138,7 +1142,7 @@ bool WM_gizmo_group_type_ensure_ptr(wmGizmoGroupType *gzgt)
   wmGizmoMapType *gzmap_type = WM_gizmomaptype_ensure(&gzgt->gzmap_params);
   return WM_gizmo_group_type_ensure_ptr_ex(gzgt, gzmap_type);
 }
-bool WM_gizmo_group_type_ensure(const char *idname)
+bool WM_gizmo_group_type_ensure(const StringRef idname)
 {
   wmGizmoGroupType *gzgt = WM_gizmogrouptype_find(idname, false);
   BLI_assert(gzgt != nullptr);
@@ -1156,7 +1160,7 @@ void WM_gizmo_group_type_remove_ptr(Main *bmain, wmGizmoGroupType *gzgt)
   wmGizmoMapType *gzmap_type = WM_gizmomaptype_ensure(&gzgt->gzmap_params);
   WM_gizmo_group_type_remove_ptr_ex(bmain, gzgt, gzmap_type);
 }
-void WM_gizmo_group_type_remove(Main *bmain, const char *idname)
+void WM_gizmo_group_type_remove(Main *bmain, const StringRef idname)
 {
   wmGizmoGroupType *gzgt = WM_gizmogrouptype_find(idname, false);
   BLI_assert(gzgt != nullptr);
@@ -1178,7 +1182,7 @@ void WM_gizmo_group_type_reinit_ptr(Main *bmain, wmGizmoGroupType *gzgt)
   wmGizmoMapType *gzmap_type = WM_gizmomaptype_ensure(&gzgt->gzmap_params);
   WM_gizmo_group_type_reinit_ptr_ex(bmain, gzgt, gzmap_type);
 }
-void WM_gizmo_group_type_reinit(Main *bmain, const char *idname)
+void WM_gizmo_group_type_reinit(Main *bmain, const StringRef idname)
 {
   wmGizmoGroupType *gzgt = WM_gizmogrouptype_find(idname, false);
   BLI_assert(gzgt != nullptr);
@@ -1198,7 +1202,7 @@ void WM_gizmo_group_type_unlink_delayed_ptr(wmGizmoGroupType *gzgt)
   WM_gizmo_group_type_unlink_delayed_ptr_ex(gzgt, gzmap_type);
 }
 
-void WM_gizmo_group_type_unlink_delayed(const char *idname)
+void WM_gizmo_group_type_unlink_delayed(const StringRef idname)
 {
   wmGizmoGroupType *gzgt = WM_gizmogrouptype_find(idname, false);
   BLI_assert(gzgt != nullptr);
@@ -1210,7 +1214,7 @@ void WM_gizmo_group_unlink_delayed_ptr_from_space(wmGizmoGroupType *gzgt,
                                                   ScrArea *area)
 {
   LISTBASE_FOREACH (ARegion *, region, &area->regionbase) {
-    wmGizmoMap *gzmap = region->gizmo_map;
+    wmGizmoMap *gzmap = region->runtime->gizmo_map;
     if (gzmap && gzmap->type == gzmap_type) {
       LISTBASE_FOREACH (wmGizmoGroup *, gzgroup, &gzmap->groups) {
         if (gzgroup->type == gzgt) {
@@ -1255,7 +1259,7 @@ void WM_gizmo_group_refresh(const bContext *C, wmGizmoGroup *gzgroup)
     if (!gz || gz->parent_gzgroup != gzgroup) {
       wmWindow *win = CTX_wm_window(C);
       ARegion *region = CTX_wm_region(C);
-      BLI_assert(region->gizmo_map == gzmap);
+      BLI_assert(region->runtime->gizmo_map == gzmap);
       /* Check if the tweak event originated from this region. */
       if ((win->eventstate != nullptr) && (win->event_queue_check_drag) &&
           BLI_rcti_isect_pt_v(&region->winrct, win->eventstate->prev_press_xy))

@@ -13,7 +13,7 @@
 #include "DNA_defs.h"
 
 struct GPUTexture;
-struct ImBufAnim;
+struct MovieReader;
 struct MovieCache;
 struct PackedFile;
 struct RenderResult;
@@ -49,7 +49,7 @@ typedef struct ImageUser {
 
 typedef struct ImageAnim {
   struct ImageAnim *next, *prev;
-  struct ImBufAnim *anim;
+  struct MovieReader *anim;
 } ImageAnim;
 
 typedef struct ImageView {
@@ -120,7 +120,7 @@ typedef enum eGPUTextureTarget {
   TEXTARGET_COUNT,
 } eGPUTextureTarget;
 
-/* Defined in BKE_image.h. */
+/* Defined in BKE_image.hh. */
 struct PartialUpdateRegister;
 struct PartialUpdateUser;
 

@@ -41,13 +41,13 @@ namespace blender::draw {
 /** \name Mesh Render Data
  * \{ */
 
-enum eMRExtractType {
-  MR_EXTRACT_BMESH,
-  MR_EXTRACT_MESH,
+enum class MeshExtractType {
+  BMesh,
+  Mesh,
 };
 
 struct MeshRenderData {
-  eMRExtractType extract_type;
+  MeshExtractType extract_type;
 
   int verts_num;
   int edges_num;
@@ -190,7 +190,6 @@ std::unique_ptr<MeshRenderData> mesh_render_data_create(Object &object,
                                                         Mesh &mesh,
                                                         bool is_editmode,
                                                         bool is_paint_mode,
-                                                        bool edit_mode_active,
                                                         const float4x4 &object_to_world,
                                                         bool do_final,
                                                         bool do_uvedit,
@@ -270,7 +269,8 @@ void extract_face_dots_subdiv(const DRWSubdivCache &subdiv_cache,
                               gpu::IndexBuf &fdots);
 
 void extract_normals(const MeshRenderData &mr, bool use_hq, gpu::VertBuf &vbo);
-void extract_normals_subdiv(const DRWSubdivCache &subdiv_cache,
+void extract_normals_subdiv(const MeshRenderData &mr,
+                            const DRWSubdivCache &subdiv_cache,
                             gpu::VertBuf &pos_nor,
                             gpu::VertBuf &lnor);
 void extract_vert_normals(const MeshRenderData &mr, gpu::VertBuf &vbo);

@@ -19,8 +19,8 @@ import subprocess
 import time
 
 from typing import (
-    Dict,
     TextIO,
+    Dict,
 )
 
 

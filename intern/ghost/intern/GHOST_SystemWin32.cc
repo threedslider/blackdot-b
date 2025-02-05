@@ -7,6 +7,7 @@
  */
 
 #include <limits>
+#include <map>
 
 #include "GHOST_EventDragnDrop.hh"
 #include "GHOST_EventTrackpad.hh"
@@ -101,6 +102,33 @@
 #define BROKEN_PEEK_TOUCHPAD
 
 static bool isStartedFromCommandPrompt();
+
+/**
+ * SpaceMouse devices ship with an internal identifier number for each long press event.
+ * These values can be found in `<3DxWare installation path>/3DxWinCore/Cfg/Base.xml`.
+ * For input processing purposes these identifiers have to be mapped to particular button events.
+ */
+static const std::map<uint16_t, GHOST_NDOF_ButtonT> longButtonHIDsToGHOST_NDOFButtons = {
+    {3, GHOST_NDOF_BUTTON_BOTTOM},
+    {5, GHOST_NDOF_BUTTON_LEFT},
+    {6, GHOST_NDOF_BUTTON_BACK},
+    {9, GHOST_NDOF_BUTTON_ROLL_CCW},
+    {11, GHOST_NDOF_BUTTON_ISO2},
+    {32, GHOST_NDOF_BUTTON_SPIN_CCW},
+    {34, GHOST_NDOF_BUTTON_TILT_CCW},
+    {103, GHOST_NDOF_BUTTON_SAVE_V1},
+    {104, GHOST_NDOF_BUTTON_SAVE_V2},
+    {105, GHOST_NDOF_BUTTON_SAVE_V3},
+};
+
+static GHOST_NDOF_ButtonT translateLongButtonToNDOFButton(uint16_t longKey)
+{
+  const auto iter = longButtonHIDsToGHOST_NDOFButtons.find(longKey);
+  if (iter == longButtonHIDsToGHOST_NDOFButtons.end()) {
+    return static_cast<GHOST_NDOF_ButtonT>(longKey);
+  }
+  return iter->second;
+}
 
 static void initRawInput()
 {
@@ -260,7 +288,8 @@ GHOST_IWindow *GHOST_SystemWin32::createWindow(const char *title,
       false,
       (GHOST_WindowWin32 *)parentWindow,
       ((gpuSettings.flags & GHOST_gpuDebugContext) != 0),
-      is_dialog);
+      is_dialog,
+      gpuSettings.preferred_device);
 
   if (window->getValid()) {
     /* Store the pointer to the window */
@@ -288,7 +317,8 @@ GHOST_IContext *GHOST_SystemWin32::createOffscreenContext(GHOST_GPUSettings gpuS
   switch (gpuSettings.context_type) {
 #ifdef WITH_VULKAN_BACKEND
     case GHOST_kDrawingContextTypeVulkan: {
-      GHOST_Context *context = new GHOST_ContextVK(false, (HWND)0, 1, 2, debug_context);
+      GHOST_Context *context = new GHOST_ContextVK(
+          false, (HWND)0, 1, 2, debug_context, gpuSettings.preferred_device);
       if (context->initializeDrawingContext()) {
         return context;
       }
@@ -1228,6 +1258,19 @@ GHOST_EventKey *GHOST_SystemWin32::processKeyEvent(GHOST_WindowWin32 *window, RA
   GHOST_TKey key = system->hardKey(raw, &key_down);
   GHOST_EventKey *event;
 
+  /* Scan code (device-dependent identifier for the key on the keyboard) for the Alt key.
+   * https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input#scan-codes */
+  constexpr USHORT ALTGR_MAKE_CODE = 0x38;
+
+  /* If the keyboard layout includes AltGr and the virtual key is Control, yet the
+   * scan-code is actually for Right Alt (ALTGR_MAKE_CODE scan code with E0 prefix).
+   * Ignore these, so treating AltGR as regular Alt. #68256 */
+  if (system->m_hasAltGr && vk == VK_CONTROL && raw.data.keyboard.MakeCode == ALTGR_MAKE_CODE &&
+      (raw.data.keyboard.Flags & RI_KEY_E0))
+  {
+    return nullptr;
+  }
+
   /* NOTE(@ideasman42): key repeat in WIN32 also applies to modifier-keys.
    * Check for this case and filter out modifier-repeat.
    * Typically keyboard events are *not* filtered as part of GHOST's event handling.
@@ -1253,12 +1296,16 @@ GHOST_EventKey *GHOST_SystemWin32::processKeyEvent(GHOST_WindowWin32 *window, RA
     const BOOL has_state = GetKeyboardState((PBYTE)state);
     const bool ctrl_pressed = has_state && state[VK_CONTROL] & 0x80;
     const bool alt_pressed = has_state && state[VK_MENU] & 0x80;
+    const bool win_pressed = has_state && (state[VK_LWIN] | state[VK_RWIN]) & 0x80;
 
     /* We can be here with !key_down if processing dead keys (diacritics). See #103119. */
 
     /* No text with control key pressed (Alt can be used to insert special characters though!). */
     if (ctrl_pressed && !alt_pressed) {
       /* Pass. */
+    }
+    else if (win_pressed) {
+      /* Pass. No text if either Win key is pressed. #79702. */
     }
     /* Don't call #ToUnicodeEx on dead keys as it clears the buffer and so won't allow diacritical
      * composition. XXX: we are not checking return of MapVirtualKeyW for high bit set, which is
@@ -1403,20 +1450,17 @@ bool GHOST_SystemWin32::processNDOF(RAWINPUT const &raw)
   bool eventSent = false;
   uint64_t now = getMilliSeconds();
 
-  static bool firstEvent = true;
-  if (firstEvent) { /* Determine exactly which device is plugged in. */
-    RID_DEVICE_INFO info;
-    unsigned infoSize = sizeof(RID_DEVICE_INFO);
-    info.cbSize = infoSize;
+  RID_DEVICE_INFO info;
+  unsigned infoSize = sizeof(RID_DEVICE_INFO);
+  info.cbSize = infoSize;
 
-    GetRawInputDeviceInfo(raw.header.hDevice, RIDI_DEVICEINFO, &info, &infoSize);
-    if (info.dwType == RIM_TYPEHID) {
-      m_ndofManager->setDevice(info.hid.dwVendorId, info.hid.dwProductId);
-    }
-    else {
-      GHOST_PRINT("<!> not a HID device... mouse/kb perhaps?\n");
-    }
-    firstEvent = false;
+  GetRawInputDeviceInfo(raw.header.hDevice, RIDI_DEVICEINFO, &info, &infoSize);
+  /* Since there can be multiple NDOF devices connected, always set the current device. */
+  if (info.dwType == RIM_TYPEHID) {
+    m_ndofManager->setDevice(info.hid.dwVendorId, info.hid.dwProductId);
+  }
+  else {
+    GHOST_PRINT("<!> not a HID device... mouse/kb perhaps?\n");
   }
 
   /* The NDOF manager sends button changes immediately, and *pretends* to
@@ -1427,7 +1471,7 @@ bool GHOST_SystemWin32::processNDOF(RAWINPUT const &raw)
 
   BYTE packetType = data[0];
   switch (packetType) {
-    case 1: { /* Translation. */
+    case 0x1: { /* Translation. */
       const short *axis = (short *)(data + 1);
       /* Massage into blender view coords (same goes for rotation). */
       const int t[3] = {axis[0], -axis[2], axis[1]};
@@ -1443,17 +1487,35 @@ bool GHOST_SystemWin32::processNDOF(RAWINPUT const &raw)
       }
       break;
     }
-    case 2: { /* Rotation. */
+    case 0x2: { /* Rotation. */
 
       const short *axis = (short *)(data + 1);
       const int r[3] = {-axis[0], axis[2], -axis[1]};
       m_ndofManager->updateRotation(r, now);
       break;
     }
-    case 3: { /* Buttons. */
+    case 0x3: { /* Buttons bitmask (older devices). */
       int button_bits;
       memcpy(&button_bits, data + 1, sizeof(button_bits));
-      m_ndofManager->updateButtons(button_bits, now);
+      m_ndofManager->updateButtonsBitmask(button_bits, now);
+      break;
+    }
+    case 0x1c: { /* Buttons numbers (newer devices). */
+      NDOF_Button_Array buttons;
+      const uint16_t *payload = reinterpret_cast<const uint16_t *>(data + 1);
+      for (int i = 0; i < buttons.size(); i++) {
+        buttons[i] = static_cast<GHOST_NDOF_ButtonT>(*(payload + i));
+      }
+      m_ndofManager->updateButtonsArray(buttons, now, NDOF_Button_Type::ShortButton);
+      break;
+    }
+    case 0x1d: { /* Buttons (long press, newer devices). */
+      NDOF_Button_Array buttons;
+      const uint16_t *payload = reinterpret_cast<const uint16_t *>(data + 1);
+      for (int i = 0; i < buttons.size(); i++) {
+        buttons[i] = translateLongButtonToNDOFButton(*(payload + i));
+      }
+      m_ndofManager->updateButtonsArray(buttons, now, NDOF_Button_Type::LongButton);
       break;
     }
   }
@@ -2356,7 +2418,69 @@ GHOST_TSuccess GHOST_SystemWin32::hasClipboardImage(void) const
     return GHOST_kSuccess;
   }
 
-  return GHOST_kFailure;
+  /* This could be a file path to an image file. */
+  GHOST_TSuccess result = GHOST_kFailure;
+  if (IsClipboardFormatAvailable(CF_HDROP)) {
+    if (OpenClipboard(nullptr)) {
+      if (HANDLE hGlobal = GetClipboardData(CF_HDROP)) {
+        if (HDROP hDrop = static_cast<HDROP>(GlobalLock(hGlobal))) {
+          UINT fileCount = DragQueryFile(hDrop, 0xffffffff, nullptr, 0);
+          if (fileCount == 1) {
+            WCHAR lpszFile[MAX_PATH] = {0};
+            DragQueryFileW(hDrop, 0, lpszFile, MAX_PATH);
+            char *filepath = alloc_utf_8_from_16(lpszFile, 0);
+            ImBuf *ibuf = IMB_testiffname(filepath, IB_rect | IB_multilayer);
+            free(filepath);
+            if (ibuf) {
+              IMB_freeImBuf(ibuf);
+              result = GHOST_kSuccess;
+            }
+          }
+          GlobalUnlock(hGlobal);
+        }
+      }
+      CloseClipboard();
+    }
+  }
+  return result;
+}
+
+static uint *getClipboardImageFilepath(int *r_width, int *r_height)
+{
+  char *filepath = nullptr;
+
+  if (OpenClipboard(nullptr)) {
+    if (HANDLE hGlobal = GetClipboardData(CF_HDROP)) {
+      if (HDROP hDrop = static_cast<HDROP>(GlobalLock(hGlobal))) {
+        UINT fileCount = DragQueryFile(hDrop, 0xffffffff, nullptr, 0);
+        if (fileCount == 1) {
+          WCHAR lpszFile[MAX_PATH] = {0};
+          DragQueryFileW(hDrop, 0, lpszFile, MAX_PATH);
+          filepath = alloc_utf_8_from_16(lpszFile, 0);
+        }
+        GlobalUnlock(hGlobal);
+      }
+    }
+    CloseClipboard();
+  }
+
+  if (filepath) {
+    ImBuf *ibuf = IMB_loadiffname(filepath, IB_rect | IB_multilayer, nullptr);
+    free(filepath);
+    if (ibuf) {
+      *r_width = ibuf->x;
+      *r_height = ibuf->y;
+      const uint64_t byte_count = static_cast<uint64_t>(ibuf->x) * ibuf->y * 4;
+      uint *rgba = static_cast<uint *>(malloc(byte_count));
+      if (rgba) {
+        memcpy(rgba, ibuf->byte_buffer.data, byte_count);
+      }
+      IMB_freeImBuf(ibuf);
+      return rgba;
+    }
+  }
+
+  return nullptr;
 }
 
 static uint *getClipboardImageDibV5(int *r_width, int *r_height)
@@ -2477,6 +2601,10 @@ static uint *getClipboardImageImBuf(int *r_width, int *r_height, UINT format)
 
 uint *GHOST_SystemWin32::getClipboardImage(int *r_width, int *r_height) const
 {
+  if (IsClipboardFormatAvailable(CF_HDROP)) {
+    return getClipboardImageFilepath(r_width, r_height);
+  }
+
   if (!OpenClipboard(nullptr)) {
     return nullptr;
   }

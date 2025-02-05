@@ -16,6 +16,10 @@ eg:
 
     ./tools/utils/blender_theme_as_c.py $(find ~/.config/blender -name "userpref.blend" | sort | tail -1)
 """
+__all__ = (
+    "main",
+)
+
 
 C_SOURCE_HEADER = r'''/* SPDX-FileCopyrightText: 2018 Blender Authors
  *
@@ -95,7 +99,7 @@ def dna_rename_defs(blend):
     )
 
     re_dna_struct_rename_elem = re.compile(
-        r'DNA_STRUCT_RENAME_ELEM+\('
+        r'DNA_STRUCT_RENAME_MEMBER+\('
         r'([a-zA-Z0-9_]+)' r',\s*'
         r'([a-zA-Z0-9_]+)' r',\s*'
         r'([a-zA-Z0-9_]+)' r'\)',
@@ -174,7 +178,7 @@ def is_ignore_dna_name(name):
         return False
 
 
-def write_member(fw, indent, b, theme, ls):
+def write_member(fw, indent, _blend, _theme, ls):
     path_old = ()
 
     for key, value in ls:

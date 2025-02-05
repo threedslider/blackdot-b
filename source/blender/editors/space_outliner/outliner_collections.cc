@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "BLI_listbase.h"
+#include "BLI_set.hh"
 #include "BLI_utildefines.h"
 
 #include "DNA_ID.h"
@@ -299,13 +300,17 @@ void OUTLINER_OT_collection_new(wmOperatorType *ot)
 struct CollectionEditData {
   Scene *scene;
   SpaceOutliner *space_outliner;
-  GSet *collections_to_edit;
+  Set<Collection *> collections_to_edit;
+  Set<LayerCollection *> layer_collections_to_edit;
 
   /* Whether the processed operation should be allowed on liboverride collections, or not. */
   bool is_liboverride_allowed;
   /* Whether the processed operation should be allowed on hierarchy roots of liboverride
    * collections, or not. */
   bool is_liboverride_hierarchy_root_allowed;
+  /* When true, do not skip the hierarchy of children when a parent collection is selected. This is
+   * useful for deleting selected child collections, see: #126860. */
+  bool is_recursive = false;
 };
 
 static TreeTraversalAction collection_collect_data_to_edit(TreeElement *te, void *customdata)
@@ -338,8 +343,8 @@ static TreeTraversalAction collection_collect_data_to_edit(TreeElement *te, void
 
   /* Delete, duplicate and link don't edit children, those will come along
    * with the parents. */
-  BLI_gset_add(data->collections_to_edit, collection);
-  return TRAVERSE_SKIP_CHILDS;
+  data->collections_to_edit.add(collection);
+  return data->is_recursive ? TRAVERSE_CONTINUE : TRAVERSE_SKIP_CHILDS;
 }
 
 void outliner_collection_delete(
@@ -352,8 +357,7 @@ void outliner_collection_delete(
   data.space_outliner = space_outliner;
   data.is_liboverride_allowed = false;
   data.is_liboverride_hierarchy_root_allowed = do_hierarchy;
-
-  data.collections_to_edit = BLI_gset_ptr_new(__func__);
+  data.is_recursive = !do_hierarchy;
 
   /* We first walk over and find the Collections we actually want to delete
    * (ignoring duplicates). */
@@ -365,18 +369,14 @@ void outliner_collection_delete(
                          &data);
 
   /* Effectively delete the collections. */
-  GSetIterator collections_to_edit_iter;
-  GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-    Collection *collection = static_cast<Collection *>(
-        BLI_gsetIterator_getKey(&collections_to_edit_iter));
-
+  for (Collection *collection : data.collections_to_edit) {
     /* Test in case collection got deleted as part of another one. */
     if (BLI_findindex(&bmain->collections, collection) != -1) {
       /* We cannot allow deleting collections that are indirectly linked,
        * or that are used by (linked to...) other linked scene/collection. */
       bool skip = false;
       if (!ID_IS_EDITABLE(collection)) {
-        if (collection->id.tag & LIB_TAG_INDIRECT) {
+        if (collection->id.tag & ID_TAG_INDIRECT) {
           skip = true;
         }
         else {
@@ -387,7 +387,7 @@ void outliner_collection_delete(
               break;
             }
             if (parent->flag & COLLECTION_IS_MASTER) {
-              BLI_assert(parent->id.flag & LIB_EMBEDDED_DATA);
+              BLI_assert(parent->id.flag & ID_FLAG_EMBEDDED_DATA);
 
               ID *scene_owner = BKE_id_owner_get(&parent->id);
               BLI_assert(scene_owner != nullptr);
@@ -413,8 +413,6 @@ void outliner_collection_delete(
       }
     }
   }
-
-  BLI_gset_free(data.collections_to_edit, nullptr);
 }
 
 static int collection_hierarchy_delete_exec(bContext *C, wmOperator *op)
@@ -625,6 +623,7 @@ static int collection_duplicate_exec(bContext *C, wmOperator *op)
 
   Collection *collection = outliner_collection_from_tree_element(te);
   Collection *parent = (te->parent) ? outliner_collection_from_tree_element(te->parent) : nullptr;
+  CollectionChild *child = BKE_collection_child_find(parent, collection);
 
   /* We are allowed to duplicated linked collections (they will become local IDs then),
    * but we should not allow its parent to be a linked ID, ever.
@@ -635,7 +634,7 @@ static int collection_duplicate_exec(bContext *C, wmOperator *op)
                                                                          scene->master_collection;
   }
   else if (parent != nullptr && (parent->flag & COLLECTION_IS_MASTER) != 0) {
-    BLI_assert(parent->id.flag & LIB_EMBEDDED_DATA);
+    BLI_assert(parent->id.flag & ID_FLAG_EMBEDDED_DATA);
 
     Scene *scene_owner = reinterpret_cast<Scene *>(BKE_id_owner_get(&parent->id));
     BLI_assert(scene_owner != nullptr);
@@ -663,7 +662,8 @@ static int collection_duplicate_exec(bContext *C, wmOperator *op)
 
   const eDupli_ID_Flags dupli_flags = (eDupli_ID_Flags)(USER_DUP_OBJECT |
                                                         (linked ? 0 : U.dupflag));
-  BKE_collection_duplicate(bmain, parent, collection, dupli_flags, LIB_ID_DUPLICATE_IS_ROOT_ID);
+  BKE_collection_duplicate(
+      bmain, parent, child, collection, dupli_flags, LIB_ID_DUPLICATE_IS_ROOT_ID);
 
   DEG_relations_tag_update(bmain);
   WM_main_add_notifier(NC_SCENE | ND_LAYER, CTX_data_scene(C));
@@ -733,8 +733,6 @@ static int collection_link_exec(bContext *C, wmOperator *op)
     return OPERATOR_CANCELLED;
   }
 
-  data.collections_to_edit = BLI_gset_ptr_new(__func__);
-
   /* We first walk over and find the Collections we actually want to link (ignoring duplicates). */
   outliner_tree_traverse(space_outliner,
                          &space_outliner->tree,
@@ -744,15 +742,10 @@ static int collection_link_exec(bContext *C, wmOperator *op)
                          &data);
 
   /* Effectively link the collections. */
-  GSetIterator collections_to_edit_iter;
-  GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-    Collection *collection = static_cast<Collection *>(
-        BLI_gsetIterator_getKey(&collections_to_edit_iter));
+  for (Collection *collection : data.collections_to_edit) {
     BKE_collection_child_add(bmain, active_collection, collection);
     id_fake_user_clear(&collection->id);
   }
-
-  BLI_gset_free(data.collections_to_edit, nullptr);
 
   DEG_id_tag_update(&active_collection->id, ID_RECALC_SYNC_TO_EVAL);
   DEG_relations_tag_update(bmain);
@@ -792,10 +785,8 @@ static int collection_instance_exec(bContext *C, wmOperator * /*op*/)
   CollectionEditData data{};
   data.scene = scene;
   data.space_outliner = space_outliner;
-  data.is_liboverride_allowed = false; /* No instancing of non-root collections. */
+  data.is_liboverride_allowed = true;
   data.is_liboverride_hierarchy_root_allowed = true;
-
-  data.collections_to_edit = BLI_gset_ptr_new(__func__);
 
   /* We first walk over and find the Collections we actually want to instance
    * (ignoring duplicates). */
@@ -809,28 +800,20 @@ static int collection_instance_exec(bContext *C, wmOperator * /*op*/)
   /* Find an active collection to add to, that doesn't give dependency cycles. */
   LayerCollection *active_lc = BKE_layer_collection_get_active(view_layer);
 
-  GSetIterator collections_to_edit_iter;
-  GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-    Collection *collection = static_cast<Collection *>(
-        BLI_gsetIterator_getKey(&collections_to_edit_iter));
-
+  for (Collection *collection : data.collections_to_edit) {
     while (BKE_collection_cycle_find(active_lc->collection, collection)) {
       active_lc = BKE_layer_collection_activate_parent(view_layer, active_lc);
     }
   }
 
   /* Effectively instance the collections. */
-  GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-    Collection *collection = static_cast<Collection *>(
-        BLI_gsetIterator_getKey(&collections_to_edit_iter));
+  for (Collection *collection : data.collections_to_edit) {
     Object *ob = object::add_type(
         C, OB_EMPTY, collection->id.name + 2, scene->cursor.location, nullptr, false, 0);
     ob->instance_collection = collection;
     ob->transflag |= OB_DUPLICOLLECTION;
     id_us_plus(&collection->id);
   }
-
-  BLI_gset_free(data.collections_to_edit, nullptr);
 
   DEG_relations_tag_update(bmain);
 
@@ -878,7 +861,7 @@ static TreeTraversalAction layer_collection_collect_data_to_edit(TreeElement *te
   else {
     /* Delete, duplicate and link don't edit children, those will come along
      * with the parents. */
-    BLI_gset_add(data->collections_to_edit, lc);
+    data->layer_collections_to_edit.add(lc);
   }
 
   return TRAVERSE_CONTINUE;
@@ -898,7 +881,6 @@ static bool collections_view_layer_poll(bContext *C, bool clear, int flag)
   data.space_outliner = space_outliner;
   data.is_liboverride_allowed = true;
   data.is_liboverride_hierarchy_root_allowed = true;
-  data.collections_to_edit = BLI_gset_ptr_new(__func__);
   bool result = false;
 
   outliner_tree_traverse(space_outliner,
@@ -908,11 +890,7 @@ static bool collections_view_layer_poll(bContext *C, bool clear, int flag)
                          layer_collection_collect_data_to_edit,
                          &data);
 
-  GSetIterator collections_to_edit_iter;
-  GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-    LayerCollection *lc = static_cast<LayerCollection *>(
-        BLI_gsetIterator_getKey(&collections_to_edit_iter));
-
+  for (LayerCollection *lc : data.layer_collections_to_edit) {
     if (clear && (lc->flag & flag)) {
       result = true;
     }
@@ -921,7 +899,6 @@ static bool collections_view_layer_poll(bContext *C, bool clear, int flag)
     }
   }
 
-  BLI_gset_free(data.collections_to_edit, nullptr);
   return result;
 }
 
@@ -971,8 +948,6 @@ static int collection_view_layer_exec(bContext *C, wmOperator *op)
              strstr(op->idname, "indirect_only") ? LAYER_COLLECTION_INDIRECT_ONLY :
                                                    LAYER_COLLECTION_EXCLUDE;
 
-  data.collections_to_edit = BLI_gset_ptr_new(__func__);
-
   outliner_tree_traverse(space_outliner,
                          &space_outliner->tree,
                          0,
@@ -980,14 +955,9 @@ static int collection_view_layer_exec(bContext *C, wmOperator *op)
                          layer_collection_collect_data_to_edit,
                          &data);
 
-  GSetIterator collections_to_edit_iter;
-  GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-    LayerCollection *lc = static_cast<LayerCollection *>(
-        BLI_gsetIterator_getKey(&collections_to_edit_iter));
+  for (LayerCollection *lc : data.layer_collections_to_edit) {
     BKE_layer_collection_set_flag(lc, flag, !clear);
   }
-
-  BLI_gset_free(data.collections_to_edit, nullptr);
 
   BKE_view_layer_need_resync_tag(view_layer);
   DEG_relations_tag_update(bmain);
@@ -1106,7 +1076,6 @@ static int collection_isolate_exec(bContext *C, wmOperator *op)
   data.space_outliner = space_outliner;
   data.is_liboverride_allowed = true;
   data.is_liboverride_hierarchy_root_allowed = true;
-  data.collections_to_edit = BLI_gset_ptr_new(__func__);
   outliner_tree_traverse(space_outliner,
                          &space_outliner->tree,
                          0,
@@ -1114,17 +1083,14 @@ static int collection_isolate_exec(bContext *C, wmOperator *op)
                          layer_collection_collect_data_to_edit,
                          &data);
 
-  GSetIterator collections_to_edit_iter;
-  GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-    LayerCollection *layer_collection = static_cast<LayerCollection *>(
-        BLI_gsetIterator_getKey(&collections_to_edit_iter));
-
+  for (LayerCollection *layer_collection : data.layer_collections_to_edit) {
     if (extend) {
       BKE_layer_collection_isolate_global(scene, view_layer, layer_collection, true);
     }
     else {
       PropertyRNA *prop = RNA_struct_type_find_property(&RNA_LayerCollection, "hide_viewport");
-      PointerRNA ptr = RNA_pointer_create(&scene->id, &RNA_LayerCollection, layer_collection);
+      PointerRNA ptr = RNA_pointer_create_discrete(
+          &scene->id, &RNA_LayerCollection, layer_collection);
 
       /* We need to flip the value because the isolate flag routine was designed to work from the
        * outliner as a callback. That means the collection visibility was set before the callback
@@ -1135,7 +1101,6 @@ static int collection_isolate_exec(bContext *C, wmOperator *op)
       break;
     }
   }
-  BLI_gset_free(data.collections_to_edit, nullptr);
 
   BKE_view_layer_need_resync_tag(view_layer);
   DEG_id_tag_update(&scene->id, ID_RECALC_BASE_FLAGS);
@@ -1204,7 +1169,6 @@ static int collection_visibility_exec(bContext *C, wmOperator *op)
   data.space_outliner = space_outliner;
   data.is_liboverride_allowed = true;
   data.is_liboverride_hierarchy_root_allowed = true;
-  data.collections_to_edit = BLI_gset_ptr_new(__func__);
 
   outliner_tree_traverse(space_outliner,
                          &space_outliner->tree,
@@ -1213,13 +1177,9 @@ static int collection_visibility_exec(bContext *C, wmOperator *op)
                          layer_collection_collect_data_to_edit,
                          &data);
 
-  GSetIterator collections_to_edit_iter;
-  GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-    LayerCollection *layer_collection = static_cast<LayerCollection *>(
-        BLI_gsetIterator_getKey(&collections_to_edit_iter));
+  for (LayerCollection *layer_collection : data.layer_collections_to_edit) {
     BKE_layer_collection_set_visible(scene, view_layer, layer_collection, show, is_inside);
   }
-  BLI_gset_free(data.collections_to_edit, nullptr);
 
   BKE_view_layer_need_resync_tag(view_layer);
   DEG_id_tag_update(&scene->id, ID_RECALC_BASE_FLAGS);
@@ -1354,7 +1314,6 @@ static int collection_flag_exec(bContext *C, wmOperator *op)
   data.space_outliner = space_outliner;
   data.is_liboverride_allowed = true;
   data.is_liboverride_hierarchy_root_allowed = true;
-  data.collections_to_edit = BLI_gset_ptr_new(__func__);
   const bool has_layer_collection = space_outliner->outlinevis == SO_VIEW_LAYER;
 
   if (has_layer_collection) {
@@ -1364,10 +1323,7 @@ static int collection_flag_exec(bContext *C, wmOperator *op)
                            TSE_SELECTED,
                            layer_collection_collect_data_to_edit,
                            &data);
-    GSetIterator collections_to_edit_iter;
-    GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-      LayerCollection *layer_collection = static_cast<LayerCollection *>(
-          BLI_gsetIterator_getKey(&collections_to_edit_iter));
+    for (LayerCollection *layer_collection : data.layer_collections_to_edit) {
       Collection *collection = layer_collection->collection;
       if (!BKE_id_is_editable(bmain, &collection->id)) {
         continue;
@@ -1384,7 +1340,6 @@ static int collection_flag_exec(bContext *C, wmOperator *op)
         layer_collection->flag &= ~LAYER_COLLECTION_HIDE;
       }
     }
-    BLI_gset_free(data.collections_to_edit, nullptr);
   }
   else {
     outliner_tree_traverse(space_outliner,
@@ -1393,10 +1348,7 @@ static int collection_flag_exec(bContext *C, wmOperator *op)
                            TSE_SELECTED,
                            collection_collect_data_to_edit,
                            &data);
-    GSetIterator collections_to_edit_iter;
-    GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-      Collection *collection = static_cast<Collection *>(
-          BLI_gsetIterator_getKey(&collections_to_edit_iter));
+    for (Collection *collection : data.collections_to_edit) {
       if (!BKE_id_is_editable(bmain, &collection->id)) {
         continue;
       }
@@ -1408,7 +1360,6 @@ static int collection_flag_exec(bContext *C, wmOperator *op)
         collection->flag |= flag;
       }
     }
-    BLI_gset_free(data.collections_to_edit, nullptr);
   }
 
   BKE_view_layer_need_resync_tag(view_layer);
@@ -1486,8 +1437,8 @@ struct OutlinerHideEditData {
   Scene *scene;
   ViewLayer *view_layer;
   SpaceOutliner *space_outliner;
-  GSet *collections_to_edit;
-  GSet *bases_to_edit;
+  Set<LayerCollection *> collections_to_edit;
+  Set<Base *> bases_to_edit;
 };
 
 /** \} */
@@ -1515,14 +1466,14 @@ static TreeTraversalAction outliner_hide_collect_data_to_edit(TreeElement *te, v
     else {
       /* Delete, duplicate and link don't edit children,
        * those will come along with the parents. */
-      BLI_gset_add(data->collections_to_edit, lc);
+      data->collections_to_edit.add(lc);
     }
   }
   else if ((tselem->type == TSE_SOME_ID) && (te->idcode == ID_OB)) {
     Object *ob = (Object *)tselem->id;
     BKE_view_layer_synced_ensure(data->scene, data->view_layer);
     Base *base = BKE_view_layer_base_find(data->view_layer, ob);
-    BLI_gset_add(data->bases_to_edit, base);
+    data->bases_to_edit.add(base);
   }
 
   return TRAVERSE_CONTINUE;
@@ -1537,8 +1488,6 @@ static int outliner_hide_exec(bContext *C, wmOperator * /*op*/)
   data.scene = scene;
   data.view_layer = view_layer;
   data.space_outliner = space_outliner;
-  data.collections_to_edit = BLI_gset_ptr_new("outliner_hide_exec__collections_to_edit");
-  data.bases_to_edit = BLI_gset_ptr_new("outliner_hide_exec__bases_to_edit");
 
   outliner_tree_traverse(space_outliner,
                          &space_outliner->tree,
@@ -1547,20 +1496,13 @@ static int outliner_hide_exec(bContext *C, wmOperator * /*op*/)
                          outliner_hide_collect_data_to_edit,
                          &data);
 
-  GSetIterator collections_to_edit_iter;
-  GSET_ITER (collections_to_edit_iter, data.collections_to_edit) {
-    LayerCollection *layer_collection = static_cast<LayerCollection *>(
-        BLI_gsetIterator_getKey(&collections_to_edit_iter));
+  for (LayerCollection *layer_collection : data.collections_to_edit) {
     BKE_layer_collection_set_visible(scene, view_layer, layer_collection, false, false);
   }
-  BLI_gset_free(data.collections_to_edit, nullptr);
 
-  GSetIterator bases_to_edit_iter;
-  GSET_ITER (bases_to_edit_iter, data.bases_to_edit) {
-    Base *base = static_cast<Base *>(BLI_gsetIterator_getKey(&bases_to_edit_iter));
+  for (Base *base : data.bases_to_edit) {
     base->flag |= BASE_HIDDEN;
   }
-  BLI_gset_free(data.bases_to_edit, nullptr);
 
   BKE_view_layer_need_resync_tag(view_layer);
   DEG_id_tag_update(&scene->id, ID_RECALC_BASE_FLAGS);

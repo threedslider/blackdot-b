@@ -16,6 +16,7 @@ struct Text;
 struct TextLine;
 
 #include "BLI_compiler_attrs.h"
+#include "BLI_sys_types.h"
 
 /**
  * \note caller must handle `compiled` member.
@@ -130,9 +131,16 @@ bool text_check_identifier_nodigit(char ch);
 bool text_check_whitespace(char ch);
 int text_find_identifier_start(const char *str, int i);
 
-/* EVIL: defined in `bpy_interface.cc`. */
+/* -------------------------------------------------------------------- */
+/** \name Character Classification
+ *
+ * Defined in `bpy_interface.cc` (not ideal).
+ * \{ */
+
 extern int text_check_identifier_unicode(unsigned int ch);
 extern int text_check_identifier_nodigit_unicode(unsigned int ch);
+
+/** \} */
 
 enum {
   TXT_MOVE_LINE_UP = -1,

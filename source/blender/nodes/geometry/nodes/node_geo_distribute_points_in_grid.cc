@@ -6,13 +6,14 @@
 #  include <openvdb/openvdb.h>
 #  include <openvdb/tools/Interpolation.h>
 #  include <openvdb/tools/PointScatter.h>
+
+#  include <algorithm>
 #endif
 
 #include "DNA_node_types.h"
 #include "DNA_pointcloud_types.h"
 
 #include "BKE_pointcloud.hh"
-#include "BKE_volume.hh"
 #include "BKE_volume_grid.hh"
 
 #include "NOD_rna_define.hh"
@@ -34,27 +35,37 @@ enum class DistributeMode {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Float>("Grid").hide_value();
-  b.add_input<decl::Float>("Density")
-      .default_value(1.0f)
-      .min(0.0f)
-      .max(100000.0f)
-      .subtype(PROP_NONE)
-      .description(
-          "When combined with each voxel's value, determines the number of points to sample per "
-          "unit volume");
-  b.add_input<decl::Int>("Seed").min(-10000).max(10000).description(
+  auto &density = b.add_input<decl::Float>("Density")
+                      .default_value(1.0f)
+                      .min(0.0f)
+                      .max(100000.0f)
+                      .subtype(PROP_NONE)
+                      .description(
+                          "When combined with each voxel's value, determines the number of points "
+                          "to sample per unit volume");
+  auto &seed = b.add_input<decl::Int>("Seed").min(-10000).max(10000).description(
       "Seed used by the random number generator to generate random points");
-  b.add_input<decl::Vector>("Spacing")
-      .default_value({0.3, 0.3, 0.3})
-      .min(0.0001f)
-      .subtype(PROP_XYZ)
-      .description("Spacing between grid points");
-  b.add_input<decl::Float>("Threshold")
-      .default_value(0.1f)
-      .min(0.0f)
-      .max(FLT_MAX)
-      .description("Minimum density of a voxel to contain a grid point");
+  auto &spacing = b.add_input<decl::Vector>("Spacing")
+                      .default_value({0.3, 0.3, 0.3})
+                      .min(0.0001f)
+                      .subtype(PROP_XYZ)
+                      .description("Spacing between grid points");
+  auto &threshold = b.add_input<decl::Float>("Threshold")
+                        .default_value(0.1f)
+                        .min(0.0f)
+                        .max(FLT_MAX)
+                        .description("Minimum density of a voxel to contain a grid point");
   b.add_output<decl::Geometry>("Points").propagate_all();
+
+  const bNode *node = b.node_or_null();
+  if (node != nullptr) {
+    const auto mode = DistributeMode(node->custom1);
+
+    density.available(mode == DistributeMode::Random);
+    seed.available(mode == DistributeMode::Random);
+    spacing.available(mode == DistributeMode::Grid);
+    threshold.available(mode == DistributeMode::Grid);
+  }
 }
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
@@ -65,21 +76,6 @@ static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 static void node_init(bNodeTree * /*tree*/, bNode *node)
 {
   node->custom1 = int16_t(DistributeMode::Random);
-}
-
-static void node_update(bNodeTree *ntree, bNode *node)
-{
-  const auto mode = DistributeMode(node->custom1);
-
-  bNodeSocket *sock_density = static_cast<bNodeSocket *>(node->inputs.first)->next;
-  bNodeSocket *sock_seed = sock_density->next;
-  bNodeSocket *sock_spacing = sock_seed->next;
-  bNodeSocket *sock_threshold = sock_spacing->next;
-
-  bke::nodeSetSocketAvailability(ntree, sock_density, mode == DistributeMode::Random);
-  bke::nodeSetSocketAvailability(ntree, sock_seed, mode == DistributeMode::Random);
-  bke::nodeSetSocketAvailability(ntree, sock_spacing, mode == DistributeMode::Grid);
-  bke::nodeSetSocketAvailability(ntree, sock_threshold, mode == DistributeMode::Grid);
 }
 
 #ifdef WITH_OPENVDB
@@ -136,8 +132,7 @@ static void point_scatter_density_grid(const openvdb::FloatGrid &grid,
                                      double(spacing.z) / grid.voxelSize().z());
 
   /* Abort if spacing is zero. */
-  const double min_spacing = std::min(voxel_spacing.x(),
-                                      std::min(voxel_spacing.y(), voxel_spacing.z()));
+  const double min_spacing = std::min({voxel_spacing.x(), voxel_spacing.y(), voxel_spacing.z()});
   if (std::abs(min_spacing) < 0.0001) {
     return;
   }
@@ -258,18 +253,19 @@ static void node_rna(StructRNA *srna)
 static void node_register()
 {
   static blender::bke::bNodeType ntype;
-  geo_node_type_base(&ntype,
-                     GEO_NODE_DISTRIBUTE_POINTS_IN_GRID,
-                     "Distribute Points in Grid",
-                     NODE_CLASS_GEOMETRY);
+  geo_node_type_base(
+      &ntype, "GeometryNodeDistributePointsInGrid", GEO_NODE_DISTRIBUTE_POINTS_IN_GRID);
+  ntype.ui_name = "Distribute Points in Grid";
+  ntype.ui_description = "Generate points inside a volume grid";
+  ntype.enum_name_legacy = "DISTRIBUTE_POINTS_IN_GRID";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.initfunc = node_init;
-  ntype.updatefunc = node_update;
   blender::bke::node_type_size(&ntype, 170, 100, 320);
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
   ntype.gather_link_search_ops = search_link_ops_for_volume_grid_node;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

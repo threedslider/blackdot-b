@@ -2,6 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "BKE_context.hh"
+
 #include "DNA_camera_types.h"
 #include "DRW_render.hh"
 #include "draw_manager.hh"
@@ -33,7 +35,7 @@ class StaticShader : NonCopyable {
 
   ~StaticShader()
   {
-    DRW_SHADER_FREE_SAFE(shader_);
+    GPU_SHADER_FREE_SAFE(shader_);
   }
 
   GPUShader *get()
@@ -172,8 +174,6 @@ struct SceneState {
   bool reset_taa_next_sample = false;
   bool render_finished = false;
 
-  bool overlays_enabled = false;
-
   /* Used when material_type == eMaterialType::SINGLE */
   Material material_override = Material(float3(1.0f));
   /* When r == -1.0 the shader uses the vertex color */
@@ -297,6 +297,10 @@ struct SceneResources {
   Texture missing_tx = "missing_tx";
   MaterialTexture missing_texture;
 
+  Texture dummy_texture_tx = {"dummy_texture"};
+  Texture dummy_tile_data_tx = {"dummy_tile_data"};
+  Texture dummy_tile_array_tx = {"dummy_tile_array"};
+
   void init(const SceneState &scene_state);
   void load_jitter_tx(int total_samples);
 };
@@ -410,6 +414,7 @@ class ShadowPass {
 
    protected:
     virtual void compute_visibility(ObjectBoundsBuf &bounds,
+                                    ObjectInfosBuf &infos,
                                     uint resource_len,
                                     bool debug_freeze) override;
     virtual VisibilityBuf &get_visibility_buffer() override;

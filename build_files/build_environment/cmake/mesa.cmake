@@ -2,10 +2,6 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-set(MESA_CFLAGS "-static-libgcc")
-set(MESA_CXXFLAGS "-static-libgcc -static-libstdc++ -Bstatic -lstdc++ -Bdynamic -l:libstdc++.a")
-set(MESA_LDFLAGS "-L${LIBDIR}/zlib/lib -pthread -static-libgcc -static-libstdc++ -Bstatic -lstdc++ -Bdynamic -l:libstdc++.a -l:libz_pic.a")
-
 # The 'native-file', used for overrides with the meson build system.
 # meson does not provide a way to do this using command line arguments.
 #
@@ -15,6 +11,10 @@ file(WRITE ${BUILD_DIR}/mesa/tmp/native-file.ini "\
 [binaries]
 llvm-config = '${LIBDIR}/llvm/bin/llvm-config'"
 )
+
+# llvm-config will add -lmxl2. Make sure it can be found and that no system
+# library is used instead.
+set(MESA_LDFLAGS "-L${LIBDIR}/xml2/lib")
 
 set(MESA_EXTRA_FLAGS
   ${MESON_BUILD_TYPE}
@@ -35,8 +35,8 @@ set(MESA_EXTRA_FLAGS
   # At some point we will likely want to support Wayland.
   # Disable for now since it's not officially supported.
   -Dplatforms=x11
-  # Needed to find the local expat.
-  --pkg-config-path=${LIBDIR}/expat/lib/pkgconfig
+  # Needed to find the local expat,zlib,zstd.
+  --pkg-config-path=${LIBDIR}/expat/lib/pkgconfig,${LIBDIR}/zstd/lib/pkgconfig,${LIBDIR}/zlib/share/pkgconfig
   --native-file ${BUILD_DIR}/mesa/tmp/native-file.ini
 )
 
@@ -68,6 +68,7 @@ add_dependencies(
   external_mesa
   ll
   external_zlib
+  external_zstd
   # Run-time dependency.
   external_expat
   # Needed for `MESON`.

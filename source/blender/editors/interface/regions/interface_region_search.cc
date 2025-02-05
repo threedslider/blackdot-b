@@ -8,13 +8,11 @@
  * Search Box Region & Interaction
  */
 
+#include "MEM_guardedalloc.h"
+
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
-
-#include "DNA_ID.h"
-#include "MEM_guardedalloc.h"
 
 #include "DNA_userdef_types.h"
 
@@ -314,7 +312,7 @@ static ARegion *wm_searchbox_tooltip_init(
 {
   *r_exit_on_event = true;
 
-  LISTBASE_FOREACH (uiBlock *, block, &region->uiblocks) {
+  LISTBASE_FOREACH (uiBlock *, block, &region->runtime->uiblocks) {
     LISTBASE_FOREACH (uiBut *, but, &block->buttons) {
       if (but->type != UI_BTYPE_SEARCH_MENU) {
         continue;
@@ -769,7 +767,7 @@ static void ui_searchbox_region_layout_fn(const bContext *C, ARegion *region)
     }
   }
   else {
-    int searchbox_width = UI_searchbox_size_x();
+    int searchbox_width = int(float(UI_searchbox_size_x()) * 1.4f);
 
     /* We should make this wider if there is a path or hint on the right. */
     if (ui_searchbox_item_separator(data) != UI_MENU_ITEM_SEPARATOR_NONE) {
@@ -802,7 +800,7 @@ static void ui_searchbox_region_layout_fn(const bContext *C, ARegion *region)
 
     BLI_rcti_translate(&rect_i, butregion->winrct.xmin, butregion->winrct.ymin);
 
-    int winx = WM_window_pixels_x(win);
+    int winx = WM_window_native_pixel_x(win);
     // winy = WM_window_pixels_y(win);  /* UNUSED */
     // wm_window_get_size(win, &winx, &winy);
 
@@ -868,7 +866,7 @@ static ARegion *ui_searchbox_create_generic_ex(bContext *C,
   type.free = ui_searchbox_region_free_fn;
   type.listener = ui_searchbox_region_listen_fn;
   type.regionid = RGN_TYPE_TEMPORARY;
-  region->type = &type;
+  region->runtime->type = &type;
 
   /* Create search-box data. */
   uiSearchboxData *data = MEM_cnew<uiSearchboxData>(__func__);
@@ -1054,7 +1052,7 @@ ARegion *ui_searchbox_create_operator(bContext *C, ARegion *butregion, uiButSear
 {
   ARegion *region = ui_searchbox_create_generic_ex(C, butregion, search_but, true);
 
-  region->type->draw = ui_searchbox_region_draw_cb__operator;
+  region->runtime->type->draw = ui_searchbox_region_draw_cb__operator;
 
   return region;
 }
@@ -1074,7 +1072,7 @@ ARegion *ui_searchbox_create_menu(bContext *C, ARegion *butregion, uiButSearch *
   ARegion *region = ui_searchbox_create_generic_ex(C, butregion, search_but, true);
 
   if (false) {
-    region->type->draw = ui_searchbox_region_draw_cb__menu;
+    region->runtime->type->draw = ui_searchbox_region_draw_cb__menu;
   }
 
   return region;

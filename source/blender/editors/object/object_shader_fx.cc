@@ -6,14 +6,10 @@
  * \ingroup edobj
  */
 
-#include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-#include "MEM_guardedalloc.h"
-
-#include "DNA_gpencil_legacy_types.h"
+#include "DNA_grease_pencil_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_shader_fx_types.h"
@@ -61,7 +57,7 @@ ShaderFxData *shaderfx_add(
   ShaderFxData *new_fx = nullptr;
   const ShaderFxTypeInfo *fxi = BKE_shaderfx_get_info(ShaderFxType(type));
 
-  if (!ELEM(ob->type, OB_GPENCIL_LEGACY, OB_GREASE_PENCIL)) {
+  if (!ELEM(ob->type, OB_GREASE_PENCIL)) {
     BKE_reportf(reports, RPT_WARNING, "Effect cannot be added to object '%s'", ob->id.name + 2);
     return nullptr;
   }
@@ -85,8 +81,9 @@ ShaderFxData *shaderfx_add(
   /* make sure effect data has unique name */
   BKE_shaderfx_unique_name(&ob->shader_fx, new_fx);
 
-  bGPdata *gpd = static_cast<bGPdata *>(ob->data);
-  DEG_id_tag_update(&gpd->id, ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY);
+  BLI_assert(ob->type == OB_GREASE_PENCIL);
+  GreasePencil *grease_pencil = static_cast<GreasePencil *>(ob->data);
+  DEG_id_tag_update(&grease_pencil->id, ID_RECALC_TRANSFORM | ID_RECALC_GEOMETRY);
 
   DEG_id_tag_update(&ob->id, ID_RECALC_GEOMETRY);
   DEG_relations_tag_update(bmain);
@@ -510,7 +507,7 @@ static int shaderfx_remove_invoke(bContext *C, wmOperator *op, const wmEvent *ev
 void OBJECT_OT_shaderfx_remove(wmOperatorType *ot)
 {
   ot->name = "Remove Grease Pencil Effect";
-  ot->description = "Remove a effect from the active grease pencil object";
+  ot->description = "Remove a effect from the active Grease Pencil object";
   ot->idname = "OBJECT_OT_shaderfx_remove";
 
   ot->invoke = shaderfx_remove_invoke;

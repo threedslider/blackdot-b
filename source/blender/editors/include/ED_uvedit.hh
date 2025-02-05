@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "BLI_function_ref.hh"
+
 #include "BKE_customdata.hh"
 
 struct ARegion;
@@ -18,6 +20,7 @@ struct BMLoop;
 struct BMesh;
 struct Image;
 struct ImageUser;
+struct ListBase;
 struct Main;
 struct Object;
 struct Scene;
@@ -29,6 +32,7 @@ struct bContext;
 struct bNode;
 struct bNodeTree;
 struct wmKeyConfig;
+struct wmTimer;
 
 /* `uvedit_ops.cc` */
 
@@ -260,9 +264,15 @@ void ED_uvedit_select_sync_flush(const ToolSettings *ts, BMEditMesh *em, bool se
 
 /* `uvedit_unwrap_ops.cc` */
 
-void ED_uvedit_live_unwrap_begin(Scene *scene, Object *obedit);
+/** Return true if the timer is managed by live-unwrap. */
+bool ED_uvedit_live_unwrap_timer_check(const wmTimer *timer);
+
+/**
+ * \param win_modal: Support interactive (modal) unwrapping that updates with a timer.
+ */
+void ED_uvedit_live_unwrap_begin(Scene *scene, Object *obedit, struct wmWindow *win_modal);
 void ED_uvedit_live_unwrap_re_solve();
-void ED_uvedit_live_unwrap_end(short cancel);
+void ED_uvedit_live_unwrap_end(bool cancel);
 
 void ED_uvedit_live_unwrap(const Scene *scene, blender::Span<Object *> objects);
 void ED_uvedit_add_simple_uvs(Main *bmain, const Scene *scene, Object *ob);

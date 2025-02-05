@@ -774,7 +774,7 @@ int FieldEvaluator::add(GField field)
 
 static IndexMask evaluate_selection(const Field<bool> &selection_field,
                                     const FieldContext &context,
-                                    IndexMask full_mask,
+                                    const IndexMask &full_mask,
                                     ResourceScope &scope)
 {
   if (selection_field) {
@@ -819,7 +819,7 @@ IndexMask FieldEvaluator::get_evaluated_as_mask(const int field_index)
   return index_mask_from_selection(mask_, varray, scope_);
 }
 
-IndexMask FieldEvaluator::get_evaluated_selection_as_mask()
+IndexMask FieldEvaluator::get_evaluated_selection_as_mask() const
 {
   BLI_assert(is_evaluated_);
   return selection_mask_;

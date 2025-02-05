@@ -2,13 +2,20 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma BLENDER_REQUIRE(common_view_clipping_lib.glsl)
-#pragma BLENDER_REQUIRE(common_view_lib.glsl)
+#include "common_view_clipping_lib.glsl"
+#include "draw_model_lib.glsl"
+#include "draw_view_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
-uint outline_colorid_get(void)
+uint outline_colorid_get()
 {
+#ifdef OBINFO_NEW
+  eObjectInfoFlag ob_flag = eObjectInfoFlag(floatBitsToUint(drw_infos[resource_id].infos.w));
+  bool is_active = flag_test(ob_flag, OBJECT_ACTIVE);
+#else
   int flag = int(abs(ObjectInfo.w));
   bool is_active = (flag & DRW_BASE_ACTIVE) != 0;
+#endif
 
   if (isTransform) {
     return 0u; /* colorTransform */
@@ -30,11 +37,11 @@ uint outline_colorid_get(void)
 
 void main()
 {
-  vec3 world_pos = point_object_to_world(pos);
+  vec3 world_pos = drw_point_object_to_world(pos);
 
-  gl_Position = point_world_to_ndc(world_pos);
+  gl_Position = drw_point_world_to_homogenous(world_pos);
 #ifdef USE_GEOM
-  vert.pos = point_world_to_view(world_pos);
+  vert.pos = drw_point_world_to_view(world_pos);
 #endif
 
   /* Small bias to always be on top of the geom. */

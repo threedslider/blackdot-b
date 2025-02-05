@@ -16,6 +16,11 @@ struct SpaceLink;
 struct bGPdata;
 struct wmTimer;
 
+#ifdef __cplusplus
+#  include "BLI_math_matrix_types.hh"
+#  include "BLI_math_quaternion_types.hh"
+#endif
+
 #include "DNA_defs.h"
 #include "DNA_image_types.h"
 #include "DNA_listBase.h"
@@ -112,9 +117,9 @@ typedef struct RegionView3D {
   char lview_axis_roll;
   char _pad8[1];
 
-  /** Active rotation from NDOF or elsewhere. */
-  float rot_angle;
-  float rot_axis[3];
+  /** Active rotation from NDOF (run-time only). */
+  float ndof_rot_angle;
+  float ndof_rot_axis[3];
 } RegionView3D;
 
 typedef struct View3DCursor {
@@ -126,6 +131,15 @@ typedef struct View3DCursor {
   short rotation_mode;
 
   char _pad[6];
+
+#ifdef __cplusplus
+  template<typename T> T matrix() const;
+  blender::math::Quaternion rotation() const;
+
+  void set_rotation(const blender::math::Quaternion &quat, bool use_compat);
+  void set_matrix(const blender::float3x3 &mat, bool use_compat);
+  void set_matrix(const blender::float4x4 &mat, bool use_compat);
+#endif
 } View3DCursor;
 
 /** 3D Viewport Shading settings. */
@@ -223,6 +237,12 @@ typedef struct View3DOverlay {
   float gpencil_paper_opacity;
   float gpencil_grid_opacity;
   float gpencil_fade_layer;
+
+  /* Grease Pencil canvas settings. */
+  float gpencil_grid_color[3];
+  float gpencil_grid_scale[2];
+  float gpencil_grid_offset[2];
+  int gpencil_grid_subdivisions;
 
   /** Factor for mixing vertex paint with original color */
   float gpencil_vertex_paint_opacity;
@@ -389,6 +409,8 @@ enum {
   V3D_RUNTIME_XR_SESSION_ROOT = (1 << 0),
   /** Some operators override the depth buffer for dedicated occlusion operations. */
   V3D_RUNTIME_DEPTHBUF_OVERRIDDEN = (1 << 1),
+  /** Local view may have become empty, and may need to be exited. */
+  V3D_RUNTIME_LOCAL_MAYBE_EMPTY = (1 << 2),
 };
 
 /** #RegionView3D::persp */
@@ -414,6 +436,12 @@ enum {
 
 /** #RegionView3D.viewlock */
 enum {
+  /**
+   * Used to lock axis views when quad-view is enabled.
+   *
+   * \note this implies locking the perspective as these views
+   * should use an orthographic projection.
+   */
   RV3D_LOCK_ROTATION = (1 << 0),
   RV3D_BOXVIEW = (1 << 1),
   RV3D_BOXCLIP = (1 << 2),
@@ -504,6 +532,8 @@ enum {
   V3D_GP_SHOW_MATERIAL_NAME = 1 << 8,
   /** Show Canvas Grid on Top. */
   V3D_GP_SHOW_GRID_XRAY = 1 << 9,
+  /** Force 3D depth rendering and ignore per-object stroke depth mode. */
+  V3D_GP_FORCE_STROKE_ORDER_3D = 1 << 10,
 };
 
 /** #View3DShading.flag */

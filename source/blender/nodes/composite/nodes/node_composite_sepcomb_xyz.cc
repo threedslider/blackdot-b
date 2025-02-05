@@ -6,6 +6,12 @@
  * \ingroup cmpnodes
  */
 
+#include "BLI_math_vector_types.hh"
+
+#include "FN_multi_function_builder.hh"
+
+#include "NOD_multi_function.hh"
+
 #include "GPU_material.hh"
 
 #include "COM_shader_node.hh"
@@ -24,7 +30,7 @@ static void cmp_node_separate_xyz_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Float>("Z");
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class SeparateXYZShaderNode : public ShaderNode {
  public:
@@ -44,6 +50,19 @@ static ShaderNode *get_compositor_shader_node(DNode node)
   return new SeparateXYZShaderNode(node);
 }
 
+static void node_build_multi_function(blender::nodes::NodeMultiFunctionBuilder &builder)
+{
+  static auto function = mf::build::SI1_SO3<float4, float, float, float>(
+      "Separate XYZ",
+      [](const float4 &vector, float &x, float &y, float &z) -> void {
+        x = vector.x;
+        y = vector.y;
+        z = vector.z;
+      },
+      mf::build::exec_presets::AllSpanOrSingle());
+  builder.set_matching_fn(function);
+}
+
 }  // namespace blender::nodes::node_composite_separate_xyz_cc
 
 void register_node_type_cmp_separate_xyz()
@@ -52,11 +71,16 @@ void register_node_type_cmp_separate_xyz()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(&ntype, CMP_NODE_SEPARATE_XYZ, "Separate XYZ", NODE_CLASS_CONVERTER);
+  cmp_node_type_base(&ntype, "CompositorNodeSeparateXYZ", CMP_NODE_SEPARATE_XYZ);
+  ntype.ui_name = "Separate XYZ";
+  ntype.ui_description = "Split a vector into its individual components";
+  ntype.enum_name_legacy = "SEPARATE_XYZ";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = file_ns::cmp_node_separate_xyz_declare;
   ntype.get_compositor_shader_node = file_ns::get_compositor_shader_node;
+  ntype.build_multi_function = file_ns::node_build_multi_function;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 
 /* **************** COMBINE XYZ ******************** */
@@ -71,7 +95,7 @@ static void cmp_node_combine_xyz_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Vector>("Vector");
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class CombineXYZShaderNode : public ShaderNode {
  public:
@@ -91,6 +115,15 @@ static ShaderNode *get_compositor_shader_node(DNode node)
   return new CombineXYZShaderNode(node);
 }
 
+static void node_build_multi_function(blender::nodes::NodeMultiFunctionBuilder &builder)
+{
+  static auto function = mf::build::SI3_SO<float, float, float, float4>(
+      "Combine XYZ",
+      [](const float x, const float y, const float z) -> float4 { return float4(x, y, z, 0.0f); },
+      mf::build::exec_presets::Materialized());
+  builder.set_matching_fn(function);
+}
+
 }  // namespace blender::nodes::node_composite_combine_xyz_cc
 
 void register_node_type_cmp_combine_xyz()
@@ -99,9 +132,14 @@ void register_node_type_cmp_combine_xyz()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(&ntype, CMP_NODE_COMBINE_XYZ, "Combine XYZ", NODE_CLASS_CONVERTER);
+  cmp_node_type_base(&ntype, "CompositorNodeCombineXYZ", CMP_NODE_COMBINE_XYZ);
+  ntype.ui_name = "Combine XYZ";
+  ntype.ui_description = "Combine a vector from its individual components";
+  ntype.enum_name_legacy = "COMBINE_XYZ";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = file_ns::cmp_node_combine_xyz_declare;
   ntype.get_compositor_shader_node = file_ns::get_compositor_shader_node;
+  ntype.build_multi_function = file_ns::node_build_multi_function;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

@@ -16,7 +16,7 @@
 #define LINE_SMOOTH_START (0.5 - DISC_RADIUS)
 #define LINE_SMOOTH_END (0.5 + DISC_RADIUS)
 
-#pragma BLENDER_REQUIRE(common_math_lib.glsl)
+#include "common_math_lib.glsl"
 
 /**
  * Returns coverage of a line onto a sample that is distance_to_line (in pixels) far from the line.
@@ -99,6 +99,11 @@ void main()
 
   float dist_raw = texelFetch(lineTex, center_texel, 0).b;
   float dist = decode_line_dist(dist_raw);
+
+  if (!doSmoothLines && dist <= 1.0f) {
+    /* No expansion or AA should be applied. */
+    return;
+  }
 
   /* TODO: Optimization: use textureGather. */
   vec4 neightbor_col0 = texelFetchOffset(colorTex, center_texel, 0, ivec2(1, 0));

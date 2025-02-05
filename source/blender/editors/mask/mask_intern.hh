@@ -8,9 +8,15 @@
 
 #pragma once
 
+#include "BKE_mask.h"
+
 #include "ED_clip.hh"
 
 struct Mask;
+struct MaskLayer;
+struct MaskSpline;
+struct MaskSplinePoint;
+struct MaskSplinePointUW;
 struct bContext;
 struct wmOperatorType;
 
@@ -102,7 +108,7 @@ void ED_mask_view_lock_state_restore_no_jump(const bContext *C, const MaskViewLo
 /* `mask_query.cc` */
 
 bool ED_mask_find_nearest_diff_point(const bContext *C,
-                                     Mask *mask,
+                                     Mask *mask_orig,
                                      const float normal_co[2],
                                      int threshold,
                                      bool feather,
@@ -115,7 +121,7 @@ bool ED_mask_find_nearest_diff_point(const bContext *C,
                                      float *r_u,
                                      float *r_score);
 bool ED_mask_feather_find_nearest(const bContext *C,
-                                  Mask *mask,
+                                  Mask *mask_orig,
                                   const float normal_co[2],
                                   float threshold,
                                   MaskLayer **r_mask_layer,
@@ -124,7 +130,7 @@ bool ED_mask_feather_find_nearest(const bContext *C,
                                   MaskSplinePointUW **r_uw,
                                   float *r_score);
 MaskSplinePoint *ED_mask_point_find_nearest(const bContext *C,
-                                            Mask *mask,
+                                            Mask *mask_orig,
                                             const float normal_co[2],
                                             float threshold,
                                             MaskLayer **r_mask_layer,

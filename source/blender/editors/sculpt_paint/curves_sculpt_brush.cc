@@ -8,7 +8,8 @@
 
 #include "BLI_math_geom.h"
 
-#include "BKE_attribute_math.hh"
+#include "DNA_mesh_types.h"
+
 #include "BKE_bvhutils.hh"
 #include "BKE_context.hh"
 #include "BKE_curves.hh"
@@ -190,9 +191,7 @@ std::optional<CurvesBrush3D> sample_curves_3d_brush(const Depsgraph &depsgraph,
     const float4x4 world_to_surface_mat = math::invert(surface_to_world_mat);
 
     Mesh *surface_eval = BKE_object_get_evaluated_mesh(surface_object_eval);
-    BVHTreeFromMesh surface_bvh;
-    BKE_bvhtree_from_mesh_get(&surface_bvh, surface_eval, BVHTREE_FROM_CORNER_TRIS, 2);
-    BLI_SCOPED_DEFER([&]() { free_bvhtree_from_mesh(&surface_bvh); });
+    bke::BVHTreeFromMesh surface_bvh = surface_eval->bvh_corner_tris();
 
     const float3 center_ray_start_su = math::transform_point(world_to_surface_mat,
                                                              center_ray_start_wo);
@@ -270,7 +269,7 @@ std::optional<CurvesBrush3D> sample_curves_surface_3d_brush(
     const ARegion &region,
     const View3D &v3d,
     const CurvesSurfaceTransforms &transforms,
-    const BVHTreeFromMesh &surface_bvh,
+    const bke::BVHTreeFromMesh &surface_bvh,
     const float2 &brush_pos_re,
     const float brush_radius_re)
 {
@@ -346,6 +345,14 @@ Vector<float4x4> get_symmetry_brush_transforms(const eCurvesSymmetryType symmetr
   return matrices;
 }
 
+void remember_stroke_position(Scene &scene, const float3 &brush_position_wo)
+{
+  UnifiedPaintSettings &ups = scene.toolsettings->unified_paint_settings;
+  copy_v3_v3(ups.average_stroke_accum, brush_position_wo);
+  ups.average_stroke_counter = 1;
+  ups.last_stroke_valid = true;
+}
+
 float transform_brush_radius(const float4x4 &transform,
                              const float3 &brush_position,
                              const float old_radius)
@@ -362,7 +369,7 @@ void move_last_point_and_resample(MoveAndResampleBuffers &buffer,
 {
   /* Find the accumulated length of each point in the original curve,
    * treating it as a poly curve for performance reasons and simplicity. */
-  buffer.orig_lengths.reinitialize(length_parameterize::segments_num(positions.size(), false));
+  buffer.orig_lengths.resize(length_parameterize::segments_num(positions.size(), false));
   length_parameterize::accumulate_lengths<float3>(positions, false, buffer.orig_lengths);
   const float orig_total_length = buffer.orig_lengths.last();
 
@@ -372,18 +379,18 @@ void move_last_point_and_resample(MoveAndResampleBuffers &buffer,
   const float length_factor = math::safe_divide(new_total_length, orig_total_length);
 
   /* Calculate the lengths to sample the original curve with by scaling the original lengths. */
-  buffer.new_lengths.reinitialize(positions.size() - 1);
+  buffer.new_lengths.resize(positions.size() - 1);
   buffer.new_lengths.first() = 0.0f;
   for (const int i : buffer.new_lengths.index_range().drop_front(1)) {
     buffer.new_lengths[i] = buffer.orig_lengths[i - 1] * length_factor;
   }
 
-  buffer.sample_indices.reinitialize(positions.size() - 1);
-  buffer.sample_factors.reinitialize(positions.size() - 1);
+  buffer.sample_indices.resize(positions.size() - 1);
+  buffer.sample_factors.resize(positions.size() - 1);
   length_parameterize::sample_at_lengths(
       buffer.orig_lengths, buffer.new_lengths, buffer.sample_indices, buffer.sample_factors);
 
-  buffer.new_positions.reinitialize(positions.size() - 1);
+  buffer.new_positions.resize(positions.size() - 1);
   length_parameterize::interpolate<float3>(
       positions, buffer.sample_indices, buffer.sample_factors, buffer.new_positions);
   positions.drop_back(1).copy_from(buffer.new_positions);
@@ -431,9 +438,11 @@ void report_invalid_uv_map(ReportList *reports)
 
 void CurvesConstraintSolver::initialize(const bke::CurvesGeometry &curves,
                                         const IndexMask &curve_selection,
-                                        const bool use_surface_collision)
+                                        const bool use_surface_collision,
+                                        const float surface_collision_distance)
 {
   use_surface_collision_ = use_surface_collision;
+  surface_collision_distance_ = surface_collision_distance;
   segment_lengths_.reinitialize(curves.points_num());
   geometry::curve_constraints::compute_segment_lengths(
       curves.points_by_curve(), curves.positions(), curve_selection, segment_lengths_);
@@ -455,7 +464,8 @@ void CurvesConstraintSolver::solve_step(bke::CurvesGeometry &curves,
         start_positions_,
         *surface,
         transforms,
-        curves.positions_for_write());
+        curves.positions_for_write(),
+        surface_collision_distance_);
     start_positions_ = curves.positions();
   }
   else {

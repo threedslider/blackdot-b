@@ -45,17 +45,17 @@ bool AbcCameraReader::valid() const
 bool AbcCameraReader::accepts_object_type(
     const Alembic::AbcCoreAbstract::ObjectHeader &alembic_header,
     const Object *const ob,
-    const char **err_str) const
+    const char **r_err_str) const
 {
   if (!Alembic::AbcGeom::ICamera::matches(alembic_header)) {
-    *err_str = RPT_(
+    *r_err_str = RPT_(
         "Object type mismatch, Alembic object path pointed to Camera when importing, but not any "
         "more");
     return false;
   }
 
   if (ob->type != OB_CAMERA) {
-    *err_str = RPT_("Object type mismatch, Alembic object path points to Camera");
+    *r_err_str = RPT_("Object type mismatch, Alembic object path points to Camera");
     return false;
   }
 
@@ -64,7 +64,7 @@ bool AbcCameraReader::accepts_object_type(
 
 void AbcCameraReader::readObjectData(Main *bmain, const ISampleSelector &sample_sel)
 {
-  Camera *bcam = static_cast<Camera *>(BKE_camera_add(bmain, m_data_name.c_str()));
+  Camera *bcam = BKE_camera_add(bmain, m_data_name.c_str());
 
   CameraSample cam_sample;
   m_schema.get(cam_sample, sample_sel);

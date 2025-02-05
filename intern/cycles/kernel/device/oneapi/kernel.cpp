@@ -123,7 +123,7 @@ bool oneapi_run_test_kernel(SyclQueue *queue_)
     sycl::free(B_device, *queue);
     queue->wait_and_throw();
   }
-  catch (sycl::exception const &e) {
+  catch (const sycl::exception &e) {
     if (s_error_cb) {
       s_error_cb(e.what(), s_error_user_ptr);
     }
@@ -133,19 +133,16 @@ bool oneapi_run_test_kernel(SyclQueue *queue_)
   return is_computation_correct;
 }
 
-bool oneapi_zero_memory_on_device(SyclQueue *queue_, void *device_pointer, size_t num_bytes)
+bool oneapi_zero_memory_on_device(SyclQueue *queue_, void *device_pointer, const size_t num_bytes)
 {
   assert(queue_);
   sycl::queue *queue = reinterpret_cast<sycl::queue *>(queue_);
   try {
-    queue->submit([&](sycl::handler &cgh) {
-      cgh.parallel_for(num_bytes,
-                       [=](sycl::id<1> idx) { ((char *)device_pointer)[idx.get(0)] = (char)0; });
-    });
+    queue->memset(device_pointer, 0, num_bytes);
     queue->wait_and_throw();
     return true;
   }
-  catch (sycl::exception const &e) {
+  catch (const sycl::exception &e) {
     if (s_error_cb) {
       s_error_cb(e.what(), s_error_user_ptr);
     }
@@ -157,20 +154,43 @@ bool oneapi_kernel_is_required_for_features(const std::string &kernel_name,
                                             const uint kernel_features)
 {
   /* Skip all non-Cycles kernels */
-  if (kernel_name.find("oneapi_kernel_") == std::string::npos)
+  if (kernel_name.find("oneapi_kernel_") == std::string::npos) {
     return false;
+  }
+
   if ((kernel_features & KERNEL_FEATURE_NODE_RAYTRACE) == 0 &&
       kernel_name.find(device_kernel_as_string(DEVICE_KERNEL_INTEGRATOR_SHADE_SURFACE_RAYTRACE)) !=
           std::string::npos)
+  {
     return false;
+  }
+
   if ((kernel_features & KERNEL_FEATURE_MNEE) == 0 &&
       kernel_name.find(device_kernel_as_string(DEVICE_KERNEL_INTEGRATOR_SHADE_SURFACE_MNEE)) !=
           std::string::npos)
+  {
     return false;
+  }
+
   if ((kernel_features & KERNEL_FEATURE_VOLUME) == 0 &&
       kernel_name.find(device_kernel_as_string(DEVICE_KERNEL_INTEGRATOR_INTERSECT_VOLUME_STACK)) !=
           std::string::npos)
+  {
     return false;
+  }
+
+  if (((kernel_features & (KERNEL_FEATURE_PATH_TRACING | KERNEL_FEATURE_BAKING)) == 0) &&
+      ((kernel_name.find(device_kernel_as_string(DEVICE_KERNEL_INTEGRATOR_INTERSECT_CLOSEST)) !=
+        std::string::npos) ||
+       (kernel_name.find(device_kernel_as_string(DEVICE_KERNEL_INTEGRATOR_INTERSECT_SHADOW)) !=
+        std::string::npos) ||
+       (kernel_name.find(device_kernel_as_string(DEVICE_KERNEL_INTEGRATOR_INTERSECT_SUBSURFACE)) !=
+        std::string::npos) ||
+       (kernel_name.find(device_kernel_as_string(
+            DEVICE_KERNEL_INTEGRATOR_INTERSECT_DEDICATED_LIGHT)) != std::string::npos)))
+  {
+    return false;
+  }
 
   return true;
 }
@@ -245,7 +265,7 @@ bool oneapi_load_kernels(SyclQueue *queue_,
         }
       }
     }
-    catch (sycl::exception const &e) {
+    catch (const sycl::exception &e) {
       if (s_error_cb) {
         s_error_cb(e.what(), s_error_user_ptr);
       }
@@ -288,7 +308,7 @@ bool oneapi_load_kernels(SyclQueue *queue_,
                                                                     {kernel_id});
     }
   }
-  catch (sycl::exception const &e) {
+  catch (const sycl::exception &e) {
     if (s_error_cb) {
       s_error_cb(e.what(), s_error_user_ptr);
     }
@@ -298,9 +318,9 @@ bool oneapi_load_kernels(SyclQueue *queue_,
 }
 
 bool oneapi_enqueue_kernel(KernelContext *kernel_context,
-                           int kernel,
-                           size_t global_size,
-                           size_t local_size,
+                           const int kernel,
+                           const size_t global_size,
+                           const size_t local_size,
                            const uint kernel_features,
                            bool use_hardware_raytracing,
                            void **args)
@@ -670,7 +690,7 @@ bool oneapi_enqueue_kernel(KernelContext *kernel_context,
       }
     });
   }
-  catch (sycl::exception const &e) {
+  catch (const sycl::exception &e) {
     if (s_error_cb) {
       s_error_cb(e.what(), s_error_user_ptr);
       success = false;

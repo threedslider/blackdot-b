@@ -16,6 +16,7 @@ from bpy.props import (
     EnumProperty,
     FloatVectorProperty,
     StringProperty,
+    IntProperty,
 )
 from mathutils import (
     Vector,
@@ -24,10 +25,7 @@ from mathutils import (
 from bpy.app.translations import (
     pgettext_tip as tip_,
     pgettext_rpt as rpt_,
-    pgettext_data as data_,
 )
-
-from nodeitems_builtins import node_tree_group_type
 
 
 class NodeSetting(PropertyGroup):
@@ -152,6 +150,8 @@ class NODE_OT_add_node(NodeAddOperator, Operator):
 
     @classmethod
     def description(cls, _context, properties):
+        from nodeitems_builtins import node_tree_group_type
+
         nodetype = properties["type"]
         if nodetype in node_tree_group_type.values():
             for setting in properties.settings:
@@ -174,6 +174,8 @@ class NodeAddZoneOperator(NodeAddOperator):
         default=(150, 0),
     )
 
+    add_default_geometry_link = True
+
     def execute(self, context):
         space = context.space_data
         tree = space.edit_tree
@@ -190,11 +192,12 @@ class NodeAddZoneOperator(NodeAddOperator):
         input_node.location -= Vector(self.offset)
         output_node.location += Vector(self.offset)
 
-        # Connect geometry sockets by default.
-        # Get the sockets by their types, because the name is not guaranteed due to i18n.
-        from_socket = next(s for s in input_node.outputs if s.type == 'GEOMETRY')
-        to_socket = next(s for s in output_node.inputs if s.type == 'GEOMETRY')
-        tree.links.new(to_socket, from_socket)
+        if self.add_default_geometry_link:
+            # Connect geometry sockets by default if available.
+            # Get the sockets by their types, because the name is not guaranteed due to i18n.
+            from_socket = next(s for s in input_node.outputs if s.type == 'GEOMETRY')
+            to_socket = next(s for s in output_node.inputs if s.type == 'GEOMETRY')
+            tree.links.new(to_socket, from_socket)
 
         return {'FINISHED'}
 
@@ -217,6 +220,17 @@ class NODE_OT_add_repeat_zone(NodeAddZoneOperator, Operator):
 
     input_node_type = "GeometryNodeRepeatInput"
     output_node_type = "GeometryNodeRepeatOutput"
+
+
+class NODE_OT_add_foreach_geometry_element_zone(NodeAddZoneOperator, Operator):
+    """Add a For Each Geometry Element zone that allows executing nodes e.g. for each vertex separately"""
+    bl_idname = "node.add_foreach_geometry_element_zone"
+    bl_label = "Add For Each Geometry Element Zone"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    input_node_type = "GeometryNodeForeachGeometryElementInput"
+    output_node_type = "GeometryNodeForeachGeometryElementOutput"
+    add_default_geometry_link = False
 
 
 class NODE_OT_collapse_hide_unused_toggle(Operator):
@@ -282,7 +296,7 @@ class NodeInterfaceOperator():
 
 
 class NODE_OT_interface_item_new(NodeInterfaceOperator, Operator):
-    '''Add a new item to the interface'''
+    """Add a new item to the interface"""
     bl_idname = "node.interface_item_new"
     bl_label = "New Item"
     bl_options = {'REGISTER', 'UNDO'}
@@ -348,7 +362,7 @@ class NODE_OT_interface_item_new(NodeInterfaceOperator, Operator):
 
 
 class NODE_OT_interface_item_duplicate(NodeInterfaceOperator, Operator):
-    '''Add a copy of the active item to the interface'''
+    """Add a copy of the active item to the interface"""
     bl_idname = "node.interface_item_duplicate"
     bl_label = "Duplicate Item"
     bl_options = {'REGISTER', 'UNDO'}
@@ -377,7 +391,7 @@ class NODE_OT_interface_item_duplicate(NodeInterfaceOperator, Operator):
 
 
 class NODE_OT_interface_item_remove(NodeInterfaceOperator, Operator):
-    '''Remove active item from the interface'''
+    """Remove active item from the interface"""
     bl_idname = "node.interface_item_remove"
     bl_label = "Remove Item"
     bl_options = {'REGISTER', 'UNDO'}
@@ -391,6 +405,119 @@ class NODE_OT_interface_item_remove(NodeInterfaceOperator, Operator):
         if item:
             interface.remove(item)
             interface.active_index = min(interface.active_index, len(interface.items_tree) - 1)
+
+        return {'FINISHED'}
+
+
+class NODE_OT_viewer_shortcut_set(Operator):
+    """Create a compositor viewer shortcut for the selected node by pressing ctrl+1,2,..9"""
+    bl_idname = "node.viewer_shortcut_set"
+    bl_label = "Fast Preview"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    viewer_index: IntProperty(
+        name="Viewer Index",
+        description="Index corresponding to the shortcut, e.g. number key 1 corresponds to index 1 etc..")
+
+    def get_connected_viewer(self, node):
+        for out in node.outputs:
+            for link in out.links:
+                nv = link.to_node
+                if nv.type == 'VIEWER':
+                    return nv
+        return None
+
+    @classmethod
+    def poll(cls, context):
+        del cls
+        space = context.space_data
+        return (
+            space.type == 'NODE_EDITOR' and
+            space.node_tree is not None and
+            space.tree_type == 'CompositorNodeTree'
+        )
+
+    def execute(self, context):
+        nodes = context.space_data.edit_tree.nodes
+        selected_nodes = context.selected_nodes
+
+        if len(selected_nodes) == 0:
+            self.report({'ERROR'}, "Select a node to assign a shortcut")
+            return {'CANCELLED'}
+
+        fav_node = selected_nodes[0]
+
+        # Only viewer nodes can be set to favorites. However, the user can
+        # create a new favorite viewer by selecting any node and pressing ctrl+1.
+        old_active = nodes.active
+        if fav_node.type == 'VIEWER':
+            viewer_node = fav_node
+        else:
+            viewer_node = self.get_connected_viewer(fav_node)
+            if not viewer_node:
+                # Calling `link_viewer()` if a viewer node is connected
+                # will connect the next available socket to the viewer node.
+                # This behavior is not desired as we want to create a shortcut to the existing connected viewer node.
+                # Therefore `link_viewer()` is called only when no viewer node is connected.
+                bpy.ops.node.link_viewer()
+                viewer_node = self.get_connected_viewer(fav_node)
+
+        if not viewer_node:
+            self.report(
+                {'ERROR'},
+                "Unable to set shortcut, selected node is not a viewer node or does not support viewing",
+            )
+            return {'CANCELLED'}
+
+        # Use the node active status to enable this viewer node and disable others.
+        nodes.active = viewer_node
+        if old_active.type != 'VIEWER':
+            nodes.active = old_active
+
+        viewer_node.ui_shortcut = self.viewer_index
+        self.report({'INFO'}, "Assigned shortcut {:d} to {:s}".format(self.viewer_index, viewer_node.name))
+
+        return {'FINISHED'}
+
+
+class NODE_OT_viewer_shortcut_get(Operator):
+    """Activate a specific compositor viewer node using 1,2,..,9 keys"""
+    bl_idname = "node.viewer_shortcut_get"
+    bl_label = "Fast Preview"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    viewer_index: IntProperty(
+        name="Viewer Index",
+        description="Index corresponding to the shortcut, e.g. number key 1 corresponds to index 1 etc..")
+
+    @classmethod
+    def poll(cls, context):
+        del cls
+        space = context.space_data
+        return (
+            space.type == 'NODE_EDITOR' and
+            space.node_tree is not None and
+            space.tree_type == 'CompositorNodeTree'
+        )
+
+    def execute(self, context):
+        nodes = context.space_data.edit_tree.nodes
+
+        # Get viewer node with existing shortcut.
+        viewer_node = None
+        for n in nodes:
+            if n.type == 'VIEWER' and n.ui_shortcut == self.viewer_index:
+                viewer_node = n
+
+        if not viewer_node:
+            self.report({'INFO'}, "Shortcut {:d} is not assigned to a Viewer node yet".format(self.viewer_index))
+            return {'CANCELLED'}
+
+        # Use the node active status to enable this viewer node and disable others.
+        old_active = nodes.active
+        nodes.active = viewer_node
+        if old_active.type != "VIEWER":
+            nodes.active = old_active
 
         return {'FINISHED'}
 
@@ -419,9 +546,12 @@ classes = (
     NODE_OT_add_node,
     NODE_OT_add_simulation_zone,
     NODE_OT_add_repeat_zone,
+    NODE_OT_add_foreach_geometry_element_zone,
     NODE_OT_collapse_hide_unused_toggle,
     NODE_OT_interface_item_new,
     NODE_OT_interface_item_duplicate,
     NODE_OT_interface_item_remove,
     NODE_OT_tree_path_parent,
+    NODE_OT_viewer_shortcut_get,
+    NODE_OT_viewer_shortcut_set,
 )

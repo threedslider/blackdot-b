@@ -19,6 +19,8 @@
 #include "DRW_render.hh"
 #include "GPU_compute.hh"
 
+#include "draw_cache.hh"
+
 #include "workbench_private.hh"
 
 namespace blender::workbench {
@@ -97,10 +99,8 @@ void ShadowPass::ShadowView::setup(View &view, float3 light_direction, bool forc
       {3, 7},
   };
 
-  BoundBox frustum_corners;
-  DRW_culling_frustum_corners_get(nullptr, &frustum_corners);
-  float4 frustum_planes[6];
-  DRW_culling_frustum_planes_get(nullptr, (float(*)[4])frustum_planes);
+  std::array<float3, 8> frustum_corners = this->frustum_corners_get();
+  std::array<float4, 6> frustum_planes = this->frustum_planes_get();
 
   Vector<float4> faces_result;
   Vector<float3> corners_result;
@@ -126,8 +126,8 @@ void ShadowPass::ShadowView::setup(View &view, float3 light_direction, bool forc
     bool b_lit = face_lit[f[1]];
     if (a_lit != b_lit) {
       /* Extrude Face */
-      float3 corner_a = frustum_corners.vec[edge_corners[i][0]];
-      float3 corner_b = frustum_corners.vec[edge_corners[i][1]];
+      float3 corner_a = frustum_corners[edge_corners[i][0]];
+      float3 corner_b = frustum_corners[edge_corners[i][1]];
       float3 edge_direction = math::normalize(corner_b - corner_a);
       float3 normal = math::normalize(math::cross(light_direction_, edge_direction));
 
@@ -135,7 +135,7 @@ void ShadowPass::ShadowView::setup(View &view, float3 light_direction, bool forc
 
       /* Ensure the plane faces outwards */
       bool flipped = false;
-      for (float3 corner : frustum_corners.vec) {
+      for (float3 corner : frustum_corners) {
         if (math::dot(float3(extruded_face), corner) > (extruded_face.w + 0.1)) {
           BLI_assert(!flipped);
           UNUSED_VARS_NDEBUG(flipped);
@@ -155,11 +155,11 @@ void ShadowPass::ShadowView::setup(View &view, float3 light_direction, bool forc
     }
     if (lit_faces < 3) {
       /* Add original corner */
-      corners_result.append(frustum_corners.vec[i_corner]);
+      corners_result.append(frustum_corners[i_corner]);
 
       if (lit_faces > 0) {
         /* Add extruded corner */
-        corners_result.append(float3(frustum_corners.vec[i_corner]) - (light_direction_ * 1e4f));
+        corners_result.append(float3(frustum_corners[i_corner]) - (light_direction_ * 1e4f));
       }
     }
   }
@@ -208,6 +208,7 @@ void ShadowPass::ShadowView::set_mode(ShadowPass::PassType type)
 }
 
 void ShadowPass::ShadowView::compute_visibility(ObjectBoundsBuf &bounds,
+                                                ObjectInfosBuf & /*infos*/,
                                                 uint resource_len,
                                                 bool /*debug_freeze*/)
 {
@@ -304,16 +305,14 @@ void ShadowPass::init(const SceneState &scene_state, SceneResources &resources)
   std::swap(direction_ws.y, direction_ws.z);
   direction_ws *= float3(-1, 1, -1);
 
-  float planes[6][4];
-  DRW_culling_frustum_planes_get(nullptr, planes);
+  std::array<float4, 6> planes = View::default_get().frustum_planes_get();
 
   pass_data_.light_direction_ws = direction_ws;
   pass_data_.far_plane = planes[2] * float4(-1, -1, -1, 1);
   pass_data_.push_update();
 
   /* Shadow direction. */
-  float4x4 view_matrix;
-  DRW_view_viewmat_get(nullptr, view_matrix.ptr(), false);
+  float4x4 view_matrix = blender::draw::View::default_get().viewmat();
   resources.world_buf.shadow_direction_vs = float4(
       math::transform_direction(view_matrix, direction_ws), 0.0f);
 
@@ -409,13 +408,19 @@ void ShadowPass::object_sync(SceneState &scene_state,
   /* Unless we force the FAIL Method we add draw commands to both methods,
    * then the visibility compute shader selects the one needed */
 
+  GPUPrimType prim = GPU_PRIM_TRIS;
+  int tri_len = is_manifold ? 2 : 4;
+
   if (!force_fail_pass) {
     PassMain::Sub &ps = *get_pass_ptr(PASS, is_manifold);
-    ps.draw(geom_shadow, handle);
+    ps.draw_expand(geom_shadow, prim, tri_len, 1, handle);
   }
 
-  get_pass_ptr(fail_type, is_manifold, true)->draw(DRW_cache_object_surface_get(ob), handle);
-  get_pass_ptr(fail_type, is_manifold, false)->draw(geom_shadow, handle);
+  blender::gpu::Batch *geom_faces = DRW_cache_object_surface_get(ob);
+  /* Caps. */
+  get_pass_ptr(fail_type, is_manifold, true)->draw_expand(geom_faces, prim, 2, 1, handle);
+  /* Sides extrusion. */
+  get_pass_ptr(fail_type, is_manifold, false)->draw_expand(geom_shadow, prim, tri_len, 1, handle);
 }
 
 void ShadowPass::draw(Manager &manager,

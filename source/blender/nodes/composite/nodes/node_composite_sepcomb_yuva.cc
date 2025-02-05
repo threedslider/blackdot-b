@@ -6,6 +6,13 @@
  * \ingroup cmpnodes
  */
 
+#include "BLI_math_color.h"
+#include "BLI_math_vector_types.hh"
+
+#include "FN_multi_function_builder.hh"
+
+#include "NOD_multi_function.hh"
+
 #include "GPU_material.hh"
 
 #include "COM_shader_node.hh"
@@ -27,7 +34,7 @@ static void cmp_node_sepyuva_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Float>("A").translation_context(BLT_I18NCONTEXT_COLOR);
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class SeparateYUVAShaderNode : public ShaderNode {
  public:
@@ -47,6 +54,18 @@ static ShaderNode *get_compositor_shader_node(DNode node)
   return new SeparateYUVAShaderNode(node);
 }
 
+static void node_build_multi_function(blender::nodes::NodeMultiFunctionBuilder &builder)
+{
+  static auto function = mf::build::SI1_SO4<float4, float, float, float, float>(
+      "Separate Color YUVA",
+      [](const float4 &color, float &y, float &u, float &v, float &a) -> void {
+        rgb_to_yuv(color.x, color.y, color.z, &y, &u, &v, BLI_YUV_ITU_BT709);
+        a = color.w;
+      },
+      mf::build::exec_presets::AllSpanOrSingle());
+  builder.set_matching_fn(function);
+}
+
 }  // namespace blender::nodes::node_composite_separate_yuva_cc
 
 void register_node_type_cmp_sepyuva()
@@ -55,13 +74,17 @@ void register_node_type_cmp_sepyuva()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(
-      &ntype, CMP_NODE_SEPYUVA_LEGACY, "Separate YUVA (Legacy)", NODE_CLASS_CONVERTER);
+  cmp_node_type_base(&ntype, "CompositorNodeSepYUVA", CMP_NODE_SEPYUVA_LEGACY);
+  ntype.ui_name = "Separate YUVA (Legacy)";
+  ntype.ui_description = "Deprecated";
+  ntype.enum_name_legacy = "SEPYUVA";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = file_ns::cmp_node_sepyuva_declare;
   ntype.gather_link_search_ops = nullptr;
   ntype.get_compositor_shader_node = file_ns::get_compositor_shader_node;
+  ntype.build_multi_function = file_ns::node_build_multi_function;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 
 /* **************** COMBINE YUVA ******************** */
@@ -94,7 +117,7 @@ static void cmp_node_combyuva_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Color>("Image");
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class CombineYUVAShaderNode : public ShaderNode {
  public:
@@ -114,6 +137,20 @@ static ShaderNode *get_compositor_shader_node(DNode node)
   return new CombineYUVAShaderNode(node);
 }
 
+static void node_build_multi_function(blender::nodes::NodeMultiFunctionBuilder &builder)
+{
+  static auto function = mf::build::SI4_SO<float, float, float, float, float4>(
+      "Combine Color YUVA",
+      [](const float y, const float u, const float v, const float a) -> float4 {
+        float4 result;
+        yuv_to_rgb(y, u, v, &result.x, &result.y, &result.z, BLI_YUV_ITU_BT709);
+        result.w = a;
+        return result;
+      },
+      mf::build::exec_presets::Materialized());
+  builder.set_matching_fn(function);
+}
+
 }  // namespace blender::nodes::node_composite_combine_yuva_cc
 
 void register_node_type_cmp_combyuva()
@@ -122,11 +159,15 @@ void register_node_type_cmp_combyuva()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(
-      &ntype, CMP_NODE_COMBYUVA_LEGACY, "Combine YUVA (Legacy)", NODE_CLASS_CONVERTER);
+  cmp_node_type_base(&ntype, "CompositorNodeCombYUVA", CMP_NODE_COMBYUVA_LEGACY);
+  ntype.ui_name = "Combine YUVA (Legacy)";
+  ntype.ui_description = "Deprecated";
+  ntype.enum_name_legacy = "COMBYUVA";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = file_ns::cmp_node_combyuva_declare;
   ntype.gather_link_search_ops = nullptr;
   ntype.get_compositor_shader_node = file_ns::get_compositor_shader_node;
+  ntype.build_multi_function = file_ns::node_build_multi_function;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

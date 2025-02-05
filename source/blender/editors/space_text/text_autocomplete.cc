@@ -13,8 +13,9 @@
 
 #include "DNA_text_types.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_ghash.h"
+#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
@@ -521,9 +522,9 @@ static int text_autocomplete_modal(bContext *C, wmOperator *op, const wmEvent *e
     ED_area_tag_redraw(area);
   }
 
-  //  if (swallow) {
-  //      retval = OPERATOR_RUNNING_MODAL;
-  //  }
+  if (swallow) {
+    // retval = OPERATOR_RUNNING_MODAL;
+  }
 
   if (texttool_suggest_first()) {
     if (retval != OPERATOR_RUNNING_MODAL) {

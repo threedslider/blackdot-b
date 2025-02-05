@@ -25,25 +25,25 @@ class GHOST_Context : public GHOST_IContext {
   /**
    * Destructor.
    */
-  virtual ~GHOST_Context() {}
+  ~GHOST_Context() override = default;
 
   /**
    * Swaps front and back buffers of a window.
    * \return A boolean success indicator.
    */
-  virtual GHOST_TSuccess swapBuffers() override = 0;
+  GHOST_TSuccess swapBuffers() override = 0;
 
   /**
    * Activates the drawing context of this window.
    * \return A boolean success indicator.
    */
-  virtual GHOST_TSuccess activateDrawingContext() override = 0;
+  GHOST_TSuccess activateDrawingContext() override = 0;
 
   /**
    * Release the drawing context of the calling thread.
    * \return A boolean success indicator.
    */
-  virtual GHOST_TSuccess releaseDrawingContext() override = 0;
+  GHOST_TSuccess releaseDrawingContext() override = 0;
 
   /**
    * Call immediately after new to initialize.  If this fails then immediately delete the object.
@@ -82,7 +82,7 @@ class GHOST_Context : public GHOST_IContext {
    * \param intervalOut: Variable to store the swap interval if it can be read.
    * \return Whether the swap interval can be read.
    */
-  virtual GHOST_TSuccess getSwapInterval(int &)
+  virtual GHOST_TSuccess getSwapInterval(int & /*interval*/)
   {
     return GHOST_kFailure;
   }
@@ -108,7 +108,7 @@ class GHOST_Context : public GHOST_IContext {
    * ie quad buffered stereo. This is not always possible, depends on
    * the graphics h/w
    */
-  inline bool isStereoVisual() const
+  bool isStereoVisual() const
   {
     return m_stereoVisual;
   }
@@ -116,7 +116,7 @@ class GHOST_Context : public GHOST_IContext {
   /**
    * Returns if the context is rendered upside down compared to OpenGL.
    */
-  virtual inline bool isUpsideDown() const
+  virtual bool isUpsideDown() const
   {
     return false;
   }
@@ -125,7 +125,7 @@ class GHOST_Context : public GHOST_IContext {
    * Gets the OpenGL frame-buffer associated with the OpenGL context
    * \return The ID of an OpenGL frame-buffer object.
    */
-  virtual unsigned int getDefaultFramebuffer() override
+  unsigned int getDefaultFramebuffer() override
   {
     return 0;
   }
@@ -154,6 +154,9 @@ class GHOST_Context : public GHOST_IContext {
    * \param r_queue: After calling this function the VkQueue
    *     referenced by this parameter will contain the VKQueue handle
    *     of the context associated with the `context` parameter.
+   * \param r_queue_mutex: After calling this function the std::mutex referred
+   *     by this parameter will contain the mutex of the context associated
+   *     with the context parameter.
    * \returns GHOST_kFailure when context isn't a Vulkan context.
    *     GHOST_kSuccess when the context is a Vulkan context and the
    *     handles have been set.
@@ -162,13 +165,14 @@ class GHOST_Context : public GHOST_IContext {
                                           void * /*r_physical_device*/,
                                           void * /*r_device*/,
                                           uint32_t * /*r_graphic_queue_family*/,
-                                          void * /*r_queue*/) override
+                                          void * /*r_queue*/,
+                                          void ** /*r_queue_mutex*/) override
   {
     return GHOST_kFailure;
   };
 
   virtual GHOST_TSuccess getVulkanSwapChainFormat(
-      GHOST_VulkanSwapChainData * /*r_swap_chain_data */) override
+      GHOST_VulkanSwapChainData * /*r_swap_chain_data*/) override
   {
     return GHOST_kFailure;
   }
@@ -191,9 +195,7 @@ class GHOST_Context : public GHOST_IContext {
   static void initClearGL();
 #endif
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("GHOST:GHOST_Context")
-#endif
 };
 
 #ifdef _WIN32

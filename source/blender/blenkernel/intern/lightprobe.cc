@@ -14,7 +14,6 @@
 #include "DNA_object_types.h"
 
 #include "BLI_math_base.h"
-#include "BLI_span.hh"
 #include "BLI_utildefines.h"
 
 #include "BKE_idtype.hh"
@@ -104,7 +103,7 @@ void BKE_lightprobe_type_set(LightProbe *probe, const short lightprobe_type)
   }
 }
 
-void *BKE_lightprobe_add(Main *bmain, const char *name)
+LightProbe *BKE_lightprobe_add(Main *bmain, const char *name)
 {
   LightProbe *probe;
 

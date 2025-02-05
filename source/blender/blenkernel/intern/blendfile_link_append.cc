@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
-#include <list>
 
 #include "CLG_log.h"
 
@@ -21,24 +20,25 @@
 
 #include "DNA_ID.h"
 #include "DNA_collection_types.h"
+#include "DNA_gpencil_legacy_types.h"
 #include "DNA_key_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
-#include "DNA_screen_types.h"
 #include "DNA_space_types.h"
 
-#include "BLI_bitmap.h"
-#include "BLI_blenlib.h"
-#include "BLI_ghash.h"
 #include "BLI_linklist.h"
-#include "BLI_map.hh"
 #include "BLI_math_vector.h"
-#include "BLI_memarena.h"
+#include "BLI_string.h"
+#include "BLI_string_ref.hh"
 #include "BLI_utildefines.h"
 #include "BLI_vector.hh"
 
 #include "BLT_translation.hh"
 
+#include "RNA_access.hh"
+#include "RNA_prototypes.hh"
+
+#include "BKE_callbacks.hh"
 #include "BKE_grease_pencil_legacy_convert.hh"
 #include "BKE_idtype.hh"
 #include "BKE_key.hh"
@@ -50,7 +50,7 @@
 #include "BKE_library.hh"
 #include "BKE_main.hh"
 #include "BKE_main_namemap.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_mesh_legacy_convert.hh"
 #include "BKE_object.hh"
 #include "BKE_report.hh"
@@ -59,82 +59,15 @@
 
 #include "BKE_blendfile_link_append.hh"
 
-#include "BLO_readfile.hh"
 #include "BLO_writefile.hh"
 
 static CLG_LogRef LOG = {"bke.blendfile_link_append"};
 
+using namespace blender::bke;
+
 /* -------------------------------------------------------------------- */
 /** \name Link/append context implementation and public management API.
  * \{ */
-
-struct BlendfileLinkAppendContextItem {
-  /** Name of the ID (without the heading two-chars IDcode). */
-  char *name;
-  /** All libraries (from #BlendfileLinkAppendContext.libraries) to try to load this ID from. */
-  BLI_bitmap *libraries;
-  /** ID type. */
-  short idcode;
-
-  /** Type of action to perform on this item, and general status tag information.
-   *  NOTE: Mostly used by append post-linking processing. */
-  char action;
-  char tag;
-
-  /** Newly linked ID (nullptr until it has been successfully linked). */
-  ID *new_id;
-  /** Library ID from which the #new_id has been linked (nullptr until it has been successfully
-   * linked). */
-  Library *source_library;
-  /** Liboverride of the linked ID (nullptr until it has been successfully created or an existing
-   * one has been found). */
-  ID *liboverride_id;
-  /**
-   * Whether the item has a matching local ID that was already appended from the same source
-   * before, and has not been modified. In 'Append & Reuse' case, this local ID _may_ be reused
-   * instead of making linked data local again.
-   */
-  ID *reusable_local_id;
-
-  /** Opaque user data pointer. */
-  void *userdata;
-};
-
-/* A blendfile library entry in the `libraries` list of #BlendfileLinkAppendContext. */
-struct BlendfileLinkAppendContextLibrary {
-  char *path;               /* Absolute .blend file path. */
-  BlendHandle *blo_handle;  /* Blend file handle, if any. */
-  bool blo_handle_is_owned; /* Whether the blend file handle is owned, or borrowed. */
-  /* The blendfile report associated with the `blo_handle`, if owned. */
-  BlendFileReadReport bf_reports;
-};
-
-struct BlendfileLinkAppendContext {
-  /** List of library paths to search IDs in. */
-  blender::Vector<BlendfileLinkAppendContextLibrary *> libraries;
-  /**
-   * List of all ID to try to link from #libraries. This is a linked list because iterators must
-   * not be invalidated when adding more items.
-   */
-  std::list<BlendfileLinkAppendContextItem *> items;
-  int num_libraries = 0;
-  int num_items = 0;
-  /** Linking/appending parameters. Including `bmain`, `scene`, `viewlayer` and `view3d`. */
-  LibraryLink_Params *params = nullptr;
-
-  /** Allows to easily find an existing items from an ID pointer. */
-  blender::Map<ID *, BlendfileLinkAppendContextItem *> new_id_to_item;
-
-  /** Runtime info used by append code to manage re-use of already appended matching IDs. */
-  MainLibraryWeakReferenceMap *library_weak_reference_mapping = nullptr;
-
-  /** Embedded blendfile and its size, if needed. */
-  const void *blendfile_mem = nullptr;
-  size_t blendfile_memsize = 0;
-
-  /** Internal 'private' data */
-  MemArena *memarena = nullptr;
-};
 
 struct BlendfileLinkAppendContextCallBack {
   BlendfileLinkAppendContext *lapp_context;
@@ -159,89 +92,57 @@ struct BlendfileLinkAppendContextCallBack {
   bool is_liboverride_dependency_only;
 };
 
-/** Actions to apply to an item (i.e. linked ID). */
-enum {
-  LINK_APPEND_ACT_UNSET = 0,
-  LINK_APPEND_ACT_KEEP_LINKED,
-  LINK_APPEND_ACT_REUSE_LOCAL,
-  LINK_APPEND_ACT_MAKE_LOCAL,
-  LINK_APPEND_ACT_COPY_LOCAL,
-};
-
-/** Various status info about an item (i.e. linked ID). */
-enum {
-  /** An indirectly linked ID. */
-  LINK_APPEND_TAG_INDIRECT = 1 << 0,
-  /**
-   * An ID also used as liboverride dependency (either directly, as a liboverride reference, or
-   * indirectly, as data used by a liboverride reference). It should never be directly made local.
-   *
-   * Mutually exclusive with #LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY.
-   */
-  LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY = 1 << 1,
-  /**
-   * An ID only used as liboverride dependency (either directly or indirectly, see
-   * #LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY for precisions). It should not be considered during
-   * the 'make local' process, and remain purely linked data.
-   *
-   * Mutually exclusive with #LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY.
-   */
-  LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY = 1 << 2,
-};
-
 static BlendHandle *link_append_context_library_blohandle_ensure(
-    BlendfileLinkAppendContext *lapp_context,
-    BlendfileLinkAppendContextLibrary *lib_context,
+    BlendfileLinkAppendContext &lapp_context,
+    BlendfileLinkAppendContextLibrary &lib_context,
     ReportList *reports)
 {
   if (reports != nullptr) {
-    lib_context->bf_reports.reports = reports;
+    lib_context.bf_reports.reports = reports;
   }
 
-  const char *libname = lib_context->path;
-  BlendHandle *blo_handle = lib_context->blo_handle;
+  const blender::StringRefNull libname = lib_context.path;
+  BlendHandle *blo_handle = lib_context.blo_handle;
   if (blo_handle == nullptr) {
-    if (STREQ(libname, BLO_EMBEDDED_STARTUP_BLEND)) {
-      blo_handle = BLO_blendhandle_from_memory(lapp_context->blendfile_mem,
-                                               int(lapp_context->blendfile_memsize),
-                                               &lib_context->bf_reports);
+    if (libname == BLO_EMBEDDED_STARTUP_BLEND) {
+      blo_handle = BLO_blendhandle_from_memory(lapp_context.blendfile_mem,
+                                               int(lapp_context.blendfile_memsize),
+                                               &lib_context.bf_reports);
     }
     else {
-      blo_handle = BLO_blendhandle_from_file(libname, &lib_context->bf_reports);
+      blo_handle = BLO_blendhandle_from_file(libname.c_str(), &lib_context.bf_reports);
     }
-    lib_context->blo_handle = blo_handle;
-    lib_context->blo_handle_is_owned = true;
+    lib_context.blo_handle = blo_handle;
+    lib_context.blo_handle_is_owned = true;
   }
 
   return blo_handle;
 }
 
 static void link_append_context_library_blohandle_release(
-    BlendfileLinkAppendContext * /*lapp_context*/, BlendfileLinkAppendContextLibrary *lib_context)
+    BlendfileLinkAppendContext & /*lapp_context*/, BlendfileLinkAppendContextLibrary &lib_context)
 {
-  if (lib_context->blo_handle_is_owned && lib_context->blo_handle != nullptr) {
-    BLO_blendhandle_close(lib_context->blo_handle);
-    lib_context->blo_handle = nullptr;
+  if (lib_context.blo_handle_is_owned && lib_context.blo_handle != nullptr) {
+    BLO_blendhandle_close(lib_context.blo_handle);
+    lib_context.blo_handle = nullptr;
   }
 }
 
 BlendfileLinkAppendContext *BKE_blendfile_link_append_context_new(LibraryLink_Params *params)
 {
   BlendfileLinkAppendContext *lapp_context = MEM_new<BlendfileLinkAppendContext>(__func__);
-  lapp_context->memarena = BLI_memarena_new(BLI_MEMARENA_STD_BUFSIZE, __func__);
   lapp_context->params = params;
+  lapp_context->process_stage = BlendfileLinkAppendContext::ProcessStage::Init;
   return lapp_context;
 }
 
 void BKE_blendfile_link_append_context_free(BlendfileLinkAppendContext *lapp_context)
 {
-  for (BlendfileLinkAppendContextLibrary *lib_context : lapp_context->libraries) {
-    link_append_context_library_blohandle_release(lapp_context, lib_context);
+  for (BlendfileLinkAppendContextLibrary &lib_context : lapp_context->libraries) {
+    link_append_context_library_blohandle_release(*lapp_context, lib_context);
   }
 
   BLI_assert(lapp_context->library_weak_reference_mapping == nullptr);
-
-  BLI_memarena_free(lapp_context->memarena);
 
   MEM_delete(lapp_context);
 }
@@ -280,25 +181,17 @@ void BKE_blendfile_link_append_context_library_add(BlendfileLinkAppendContext *l
                                                    BlendHandle *blo_handle)
 {
   BLI_assert(lapp_context->items.empty());
+  BLI_assert(lapp_context->process_stage == BlendfileLinkAppendContext::ProcessStage::Init);
 
-  static_assert(std::is_trivial_v<BlendfileLinkAppendContextLibrary>);
-  BlendfileLinkAppendContextLibrary *lib_context =
-      static_cast<BlendfileLinkAppendContextLibrary *>(
-          BLI_memarena_calloc(lapp_context->memarena, sizeof(*lib_context)));
+  BlendfileLinkAppendContextLibrary lib_context = {};
 
-  const size_t libname_size = strlen(libname) + 1;
-  char *libpath = static_cast<char *>(BLI_memarena_alloc(lapp_context->memarena, libname_size));
-  memcpy(libpath, libname, libname_size);
-
-  lib_context->path = libpath;
-  lib_context->blo_handle = blo_handle;
+  lib_context.path = libname;
+  lib_context.blo_handle = blo_handle;
   /* Always steal the ownership on the blendfile handle, as it may be freed by readfile code in
    * case of endianness conversion. */
-  lib_context->blo_handle_is_owned = true;
+  lib_context.blo_handle_is_owned = true;
 
   lapp_context->libraries.append(lib_context);
-
-  lapp_context->num_libraries++;
 }
 
 BlendfileLinkAppendContextItem *BKE_blendfile_link_append_context_item_add(
@@ -307,23 +200,21 @@ BlendfileLinkAppendContextItem *BKE_blendfile_link_append_context_item_add(
     const short idcode,
     void *userdata)
 {
-  BlendfileLinkAppendContextItem *item = static_cast<BlendfileLinkAppendContextItem *>(
-      BLI_memarena_calloc(lapp_context->memarena, sizeof(*item)));
-  const size_t idname_size = strlen(idname) + 1;
+  BlendfileLinkAppendContextItem item = {};
 
-  item->name = static_cast<char *>(BLI_memarena_alloc(lapp_context->memarena, idname_size));
-  memcpy(item->name, idname, idname_size);
-  item->idcode = idcode;
-  item->libraries = BLI_BITMAP_NEW_MEMARENA(lapp_context->memarena, lapp_context->num_libraries);
+  item.lapp_context = lapp_context;
 
-  item->new_id = nullptr;
-  item->action = LINK_APPEND_ACT_UNSET;
-  item->userdata = userdata;
+  item.name = idname;
+  item.idcode = idcode;
+  item.libraries = blender::BitVector<>(lapp_context->libraries.size(), false);
+
+  item.new_id = nullptr;
+  item.action = LINK_APPEND_ACT_UNSET;
+  item.userdata = userdata;
 
   lapp_context->items.push_back(item);
-  lapp_context->num_items++;
 
-  return item;
+  return &lapp_context->items.back();
 }
 
 int BKE_blendfile_link_append_context_item_idtypes_from_library_add(
@@ -332,13 +223,15 @@ int BKE_blendfile_link_append_context_item_idtypes_from_library_add(
     const uint64_t id_types_filter,
     const int library_index)
 {
+  BLI_assert(lapp_context->process_stage == BlendfileLinkAppendContext::ProcessStage::Init);
+
   int id_num = 0;
   int id_code_iter = 0;
   short id_code;
 
-  BlendfileLinkAppendContextLibrary *lib_context = lapp_context->libraries[library_index];
+  BlendfileLinkAppendContextLibrary &lib_context = lapp_context->libraries[library_index];
   BlendHandle *blo_handle = link_append_context_library_blohandle_ensure(
-      lapp_context, lib_context, reports);
+      *lapp_context, lib_context, reports);
 
   if (blo_handle == nullptr) {
     return BLENDFILE_LINK_APPEND_INVALID;
@@ -377,16 +270,18 @@ int BKE_blendfile_link_append_context_item_idtypes_from_library_add(
 }
 
 void BKE_blendfile_link_append_context_item_library_index_enable(
-    BlendfileLinkAppendContext * /*lapp_context*/,
+    BlendfileLinkAppendContext *lapp_context,
     BlendfileLinkAppendContextItem *item,
     const int library_index)
 {
-  BLI_BITMAP_ENABLE(item->libraries, library_index);
+  BLI_assert(lapp_context->process_stage == BlendfileLinkAppendContext::ProcessStage::Init);
+  UNUSED_VARS_NDEBUG(lapp_context);
+  item->libraries[library_index].set();
 }
 
 bool BKE_blendfile_link_append_context_is_empty(BlendfileLinkAppendContext *lapp_context)
 {
-  return lapp_context->num_items == 0;
+  return lapp_context->items.empty();
 }
 
 void *BKE_blendfile_link_append_context_item_userdata_get(
@@ -395,15 +290,34 @@ void *BKE_blendfile_link_append_context_item_userdata_get(
   return item->userdata;
 }
 
-ID *BKE_blendfile_link_append_context_item_newid_get(BlendfileLinkAppendContext * /*lapp_context*/,
+ID *BKE_blendfile_link_append_context_item_newid_get(BlendfileLinkAppendContext *lapp_context,
                                                      BlendfileLinkAppendContextItem *item)
 {
+  BLI_assert(lapp_context->process_stage != BlendfileLinkAppendContext::ProcessStage::Init);
+  UNUSED_VARS_NDEBUG(lapp_context);
   return item->new_id;
 }
 
-ID *BKE_blendfile_link_append_context_item_liboverrideid_get(
-    BlendfileLinkAppendContext * /*lapp_context*/, BlendfileLinkAppendContextItem *item)
+void BKE_blendfile_link_append_context_item_newid_set(BlendfileLinkAppendContext *lapp_context,
+                                                      BlendfileLinkAppendContextItem *item,
+                                                      ID *new_id)
 {
+  BLI_assert(lapp_context->process_stage != BlendfileLinkAppendContext::ProcessStage::Init);
+  BLI_assert(item->new_id);
+  BLI_assert(!item->liboverride_id);
+  BLI_assert(new_id->lib == item->new_id->lib);
+  BLI_assert(!lapp_context->new_id_to_item.contains(new_id));
+
+  lapp_context->new_id_to_item.remove(item->new_id);
+  item->new_id = new_id;
+  lapp_context->new_id_to_item.add(new_id, item);
+}
+
+ID *BKE_blendfile_link_append_context_item_liboverrideid_get(
+    BlendfileLinkAppendContext *lapp_context, BlendfileLinkAppendContextItem *item)
+{
+  BLI_assert(lapp_context->process_stage != BlendfileLinkAppendContext::ProcessStage::Init);
+  UNUSED_VARS_NDEBUG(lapp_context);
   return item->liboverride_id;
 }
 
@@ -415,26 +329,48 @@ short BKE_blendfile_link_append_context_item_idcode_get(
 
 void BKE_blendfile_link_append_context_item_foreach(
     BlendfileLinkAppendContext *lapp_context,
-    BKE_BlendfileLinkAppendContexteItemFunction callback_function,
-    const eBlendfileLinkAppendForeachItemFlag flag,
-    void *userdata)
+    blender::FunctionRef<bool(BlendfileLinkAppendContext *lapp_context,
+                              BlendfileLinkAppendContextItem *item)> callback_function,
+    const eBlendfileLinkAppendForeachItemFlag flag)
 {
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
     if ((flag & BKE_BLENDFILE_LINK_APPEND_FOREACH_ITEM_FLAG_DO_DIRECT) == 0 &&
-        (item->tag & LINK_APPEND_TAG_INDIRECT) == 0)
+        (item.tag & LINK_APPEND_TAG_INDIRECT) == 0)
     {
       continue;
     }
     if ((flag & BKE_BLENDFILE_LINK_APPEND_FOREACH_ITEM_FLAG_DO_INDIRECT) == 0 &&
-        (item->tag & LINK_APPEND_TAG_INDIRECT) != 0)
+        (item.tag & LINK_APPEND_TAG_INDIRECT) != 0)
     {
       continue;
     }
 
-    if (!callback_function(lapp_context, item, userdata)) {
+    if (!callback_function(lapp_context, &item)) {
       break;
     }
   }
+}
+
+void BKE_blendfile_link_append_context_init_done(BlendfileLinkAppendContext *lapp_context)
+{
+  BLI_assert(lapp_context->process_stage == BlendfileLinkAppendContext::ProcessStage::Init);
+
+  PointerRNA ctx_ptr = RNA_pointer_create_discrete(nullptr, &RNA_BlendImportContext, lapp_context);
+  PointerRNA *pointers[1] = {&ctx_ptr};
+  BKE_callback_exec(lapp_context->params->bmain, pointers, 1, BKE_CB_EVT_BLENDIMPORT_PRE);
+}
+
+void BKE_blendfile_link_append_context_finalize(BlendfileLinkAppendContext *lapp_context)
+{
+  BLI_assert(ELEM(lapp_context->process_stage,
+                  BlendfileLinkAppendContext::ProcessStage::Linking,
+                  BlendfileLinkAppendContext::ProcessStage::Appending,
+                  BlendfileLinkAppendContext::ProcessStage::Instantiating));
+  lapp_context->process_stage = BlendfileLinkAppendContext::ProcessStage::Done;
+
+  PointerRNA ctx_ptr = RNA_pointer_create_discrete(nullptr, &RNA_BlendImportContext, lapp_context);
+  PointerRNA *pointers[1] = {&ctx_ptr};
+  BKE_callback_exec(lapp_context->params->bmain, pointers, 1, BKE_CB_EVT_BLENDIMPORT_POST);
 }
 
 /** \} */
@@ -596,8 +532,8 @@ static void loose_data_instantiate_obdata_preprocess(
 
   /* First pass on obdata to enable their instantiation by default, then do a second pass on
    * objects to clear it for any obdata already in use. */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = loose_data_instantiate_process_check(instantiate_context, item);
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *id = loose_data_instantiate_process_check(instantiate_context, &item);
     if (id == nullptr) {
       continue;
     }
@@ -605,22 +541,28 @@ static void loose_data_instantiate_obdata_preprocess(
     if (!OB_DATA_SUPPORT_ID(idcode)) {
       continue;
     }
+    if (idcode == ID_GD_LEGACY) {
+      const bGPdata *legacy_gpd = reinterpret_cast<bGPdata *>(id);
+      if ((legacy_gpd->flag & GP_DATA_ANNOTATIONS) != 0) {
+        continue;
+      }
+    }
 
-    id->tag |= LIB_TAG_DOIT;
+    id->tag |= ID_TAG_DOIT;
   }
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = item->new_id;
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *id = item.new_id;
     if (id == nullptr || GS(id->name) != ID_OB) {
       continue;
     }
 
-    Object *ob = (Object *)id;
-    Object *new_ob = (Object *)id->newid;
+    Object *ob = reinterpret_cast<Object *>(id);
+    Object *new_ob = reinterpret_cast<Object *>(id->newid);
     if (ob->data != nullptr) {
-      ((ID *)(ob->data))->tag &= ~LIB_TAG_DOIT;
+      (static_cast<ID *>(ob->data))->tag &= ~ID_TAG_DOIT;
     }
     if (new_ob != nullptr && new_ob->data != nullptr) {
-      ((ID *)(new_ob->data))->tag &= ~LIB_TAG_DOIT;
+      (static_cast<ID *>(new_ob->data))->tag &= ~ID_TAG_DOIT;
     }
   }
 }
@@ -634,7 +576,7 @@ static bool loose_data_instantiate_collection_parents_check_recursive(Collection
        parent_collection != nullptr;
        parent_collection = parent_collection->next)
   {
-    if ((parent_collection->collection->id.tag & LIB_TAG_DOIT) != 0) {
+    if ((parent_collection->collection->id.tag & ID_TAG_DOIT) != 0) {
       return true;
     }
     if (loose_data_instantiate_collection_parents_check_recursive(parent_collection->collection)) {
@@ -661,8 +603,8 @@ static void loose_data_instantiate_collection_process(
    * non-instantiated objects in them.
    * NOTE: Also avoid view-layer-instantiating of collections children of other instantiated
    * collections. This is why we need two passes here. */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = loose_data_instantiate_process_check(instantiate_context, item);
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *id = loose_data_instantiate_process_check(instantiate_context, &item);
     if (id == nullptr || GS(id->name) != ID_GR) {
       continue;
     }
@@ -684,7 +626,7 @@ static void loose_data_instantiate_collection_process(
     const bool collection_is_instantiated = collection_instantiated_by_any_object(bmain,
                                                                                   collection);
     /* Always consider adding collections directly selected by the user. */
-    bool do_add_collection = (item->tag & LINK_APPEND_TAG_INDIRECT) == 0 &&
+    bool do_add_collection = (item.tag & LINK_APPEND_TAG_INDIRECT) == 0 &&
                              !collection_is_instantiated;
     /* In linking case, do not enforce instantiating non-directly linked collections/objects.
      * This avoids cluttering the view-layers, user can instantiate themselves specific collections
@@ -699,20 +641,20 @@ static void loose_data_instantiate_collection_process(
       }
     }
     if (do_add_collection) {
-      collection->id.tag |= LIB_TAG_DOIT;
+      collection->id.tag |= ID_TAG_DOIT;
     }
   }
 
   /* Second loop to actually instantiate collections tagged as such in first loop, unless some of
    * their ancestor is also instantiated in case this is not an empty-instantiation. */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = loose_data_instantiate_process_check(instantiate_context, item);
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *id = loose_data_instantiate_process_check(instantiate_context, &item);
     if (id == nullptr || GS(id->name) != ID_GR) {
       continue;
     }
 
-    Collection *collection = (Collection *)id;
-    bool do_add_collection = (id->tag & LIB_TAG_DOIT) != 0;
+    Collection *collection = reinterpret_cast<Collection *>(id);
+    bool do_add_collection = (id->tag & ID_TAG_DOIT) != 0;
 
     if (!do_add_collection) {
       continue;
@@ -726,7 +668,7 @@ static void loose_data_instantiate_collection_process(
     }
     /* When instantiated as empty, do not add indirectly linked (i.e. non-user-selected)
      * collections. */
-    if (do_instantiate_as_empty && (item->tag & LINK_APPEND_TAG_INDIRECT) != 0) {
+    if (do_instantiate_as_empty && (item.tag & LINK_APPEND_TAG_INDIRECT) != 0) {
       continue;
     }
 
@@ -793,8 +735,8 @@ static void loose_data_instantiate_object_process(LooseDataInstantiateContext *i
 
   /* NOTE: For objects we only view_layer-instantiate duplicated objects that are not yet used
    * anywhere. */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = loose_data_instantiate_process_check(instantiate_context, item);
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *id = loose_data_instantiate_process_check(instantiate_context, &item);
     if (id == nullptr || GS(id->name) != ID_OB) {
       continue;
     }
@@ -806,7 +748,7 @@ static void loose_data_instantiate_object_process(LooseDataInstantiateContext *i
      * make them directly linked. Think for now keeping them indirectly linked is more important.
      * Ref. #93757.
      */
-    if (is_linking && (item->tag & LINK_APPEND_TAG_INDIRECT) != 0) {
+    if (is_linking && (item.tag & LINK_APPEND_TAG_INDIRECT) != 0) {
       continue;
     }
 
@@ -845,8 +787,8 @@ static void loose_data_instantiate_obdata_process(LooseDataInstantiateContext *i
    * if you want it do it at the editor level. */
   const bool object_set_active = false;
 
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = loose_data_instantiate_process_check(instantiate_context, item);
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *id = loose_data_instantiate_process_check(instantiate_context, &item);
     if (id == nullptr) {
       continue;
     }
@@ -854,7 +796,7 @@ static void loose_data_instantiate_obdata_process(LooseDataInstantiateContext *i
     if (!OB_DATA_SUPPORT_ID(idcode)) {
       continue;
     }
-    if ((id->tag & LIB_TAG_DOIT) == 0) {
+    if ((id->tag & ID_TAG_DOIT) == 0) {
       continue;
     }
 
@@ -866,7 +808,7 @@ static void loose_data_instantiate_obdata_process(LooseDataInstantiateContext *i
     Object *ob = BKE_object_add_only_object(bmain, type, id->name + 2);
     ob->data = id;
     id_us_plus(id);
-    BKE_object_materials_test(bmain, ob, static_cast<ID *>(ob->data));
+    BKE_object_materials_sync_length(bmain, ob, static_cast<ID *>(ob->data));
 
     loose_data_instantiate_object_base_instance_init(bmain,
                                                      active_collection,
@@ -879,7 +821,7 @@ static void loose_data_instantiate_obdata_process(LooseDataInstantiateContext *i
 
     copy_v3_v3(ob->loc, scene->cursor.location);
 
-    id->tag &= ~LIB_TAG_DOIT;
+    id->tag &= ~ID_TAG_DOIT;
   }
 }
 
@@ -890,12 +832,12 @@ static void loose_data_instantiate_object_rigidbody_postprocess(
   Main *bmain = lapp_context->params->bmain;
 
   /* Add rigid body objects and constraints to current RB world(s). */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = loose_data_instantiate_process_check(instantiate_context, item);
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *id = loose_data_instantiate_process_check(instantiate_context, &item);
     if (id == nullptr || GS(id->name) != ID_OB) {
       continue;
     }
-    BKE_rigidbody_ensure_local_object(bmain, (Object *)id);
+    BKE_rigidbody_ensure_local_object(bmain, reinterpret_cast<Object *>(id));
   }
 }
 
@@ -926,19 +868,19 @@ static void loose_data_instantiate(LooseDataInstantiateContext *instantiate_cont
   loose_data_instantiate_object_rigidbody_postprocess(instantiate_context);
 }
 
-static void new_id_to_item_mapping_add(BlendfileLinkAppendContext *lapp_context,
+static void new_id_to_item_mapping_add(BlendfileLinkAppendContext &lapp_context,
                                        ID *id,
-                                       BlendfileLinkAppendContextItem *item)
+                                       BlendfileLinkAppendContextItem &item)
 {
-  lapp_context->new_id_to_item.add(id, item);
+  lapp_context.new_id_to_item.add(id, &item);
 }
 
 /* Generate a mapping between newly linked IDs and their items, and tag linked IDs used as
  * liboverride references as already existing. */
-static void new_id_to_item_mapping_create(BlendfileLinkAppendContext *lapp_context)
+static void new_id_to_item_mapping_create(BlendfileLinkAppendContext &lapp_context)
 {
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = item->new_id;
+  for (BlendfileLinkAppendContextItem &item : lapp_context.items) {
+    ID *id = item.new_id;
     if (id == nullptr) {
       continue;
     }
@@ -962,6 +904,13 @@ static bool foreach_libblock_link_append_common_processing(
 
   ID *id = *cb_data->id_pointer;
   if (id == nullptr) {
+    return false;
+  }
+  if (!ID_IS_LINKED(id)) {
+    CLOG_ERROR(
+        &LOG,
+        "Local ID '%s' found as part of the linked data hierarchy, this should never happen",
+        id->name);
     return false;
   }
 
@@ -1009,7 +958,7 @@ static int foreach_libblock_append_add_dependencies_callback(LibraryIDLinkCallba
       id, nullptr);
   if (item == nullptr) {
     item = BKE_blendfile_link_append_context_item_add(
-        data->lapp_context, id->name, GS(id->name), nullptr);
+        data->lapp_context, BKE_id_name(*id), GS(id->name), nullptr);
     item->new_id = id;
     item->source_library = id->lib;
     /* Since we did not have an item for that ID yet, we know user did not select it explicitly,
@@ -1017,7 +966,7 @@ static int foreach_libblock_append_add_dependencies_callback(LibraryIDLinkCallba
      */
     item->tag |= LINK_APPEND_TAG_INDIRECT;
     item->action = LINK_APPEND_ACT_UNSET;
-    new_id_to_item_mapping_add(data->lapp_context, id, item);
+    new_id_to_item_mapping_add(*data->lapp_context, id, *item);
 
     if ((cb_data->cb_flag & IDWALK_CB_OVERRIDE_LIBRARY_REFERENCE) != 0 ||
         data->is_liboverride_dependency_only)
@@ -1111,21 +1060,21 @@ static int foreach_libblock_append_finalize_action_callback(LibraryIDLinkCallbac
   return IDWALK_RET_NOP;
 }
 
-static void blendfile_append_define_actions(BlendfileLinkAppendContext *lapp_context,
+static void blendfile_append_define_actions(BlendfileLinkAppendContext &lapp_context,
                                             ReportList *reports)
 {
-  Main *bmain = lapp_context->params->bmain;
+  Main *bmain = lapp_context.params->bmain;
 
-  const bool do_recursive = (lapp_context->params->flag & BLO_LIBLINK_APPEND_RECURSIVE) != 0;
-  const bool do_reuse_local_id = (lapp_context->params->flag &
-                                  BLO_LIBLINK_APPEND_LOCAL_ID_REUSE) != 0;
+  const bool do_recursive = (lapp_context.params->flag & BLO_LIBLINK_APPEND_RECURSIVE) != 0;
+  const bool do_reuse_local_id = (lapp_context.params->flag & BLO_LIBLINK_APPEND_LOCAL_ID_REUSE) !=
+                                 0;
 
   /* In case of non-recursive appending, gather a set of all 'original' libraries (i.e. libraries
    * containing data that was explicitly selected by the user). */
   blender::Set<Library *> direct_libraries;
   if (!do_recursive) {
-    for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-      ID *id = item->new_id;
+    for (BlendfileLinkAppendContextItem &item : lapp_context.items) {
+      ID *id = item.new_id;
       if (id == nullptr) {
         continue;
       }
@@ -1138,12 +1087,12 @@ static void blendfile_append_define_actions(BlendfileLinkAppendContext *lapp_con
    * NOTE: Since items are appended, this list will grow and these IDs will be processed later,
    * leading to a flatten recursive processing of all the linked dependencies.
    */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = item->new_id;
+  for (BlendfileLinkAppendContextItem &item : lapp_context.items) {
+    ID *id = item.new_id;
     if (id == nullptr) {
       continue;
     }
-    BLI_assert(item->reusable_local_id == nullptr);
+    BLI_assert(item.reusable_local_id == nullptr);
 
     /* NOTE: handling of reusable local ID info is needed, even if their usage is not requested
      * for that append operation:
@@ -1151,19 +1100,19 @@ static void blendfile_append_define_actions(BlendfileLinkAppendContext *lapp_con
      * if requested.
      *  - Existing appended data may need to get this 'reuse' weak reference cleared, e.g. if a
      * new version of it is made local. */
-    item->reusable_local_id = BKE_idtype_idcode_append_is_reusable(GS(id->name)) ?
-                                  BKE_main_library_weak_reference_search_item(
-                                      lapp_context->library_weak_reference_mapping,
-                                      id->lib->filepath,
-                                      id->name) :
-                                  nullptr;
+    item.reusable_local_id = BKE_idtype_idcode_append_is_reusable(GS(id->name)) ?
+                                 BKE_main_library_weak_reference_search_item(
+                                     lapp_context.library_weak_reference_mapping,
+                                     id->lib->filepath,
+                                     id->name) :
+                                 nullptr;
 
     BlendfileLinkAppendContextCallBack cb_data{};
-    cb_data.lapp_context = lapp_context;
-    cb_data.item = item;
+    cb_data.lapp_context = &lapp_context;
+    cb_data.item = &item;
     cb_data.reports = reports;
-    cb_data.is_liboverride_dependency = (item->tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) != 0;
-    cb_data.is_liboverride_dependency_only = (item->tag &
+    cb_data.is_liboverride_dependency = (item.tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) != 0;
+    cb_data.is_liboverride_dependency_only = (item.tag &
                                               LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY) != 0;
     BKE_library_foreach_ID_link(
         bmain, id, foreach_libblock_append_add_dependencies_callback, &cb_data, IDWALK_NOP);
@@ -1172,27 +1121,27 @@ static void blendfile_append_define_actions(BlendfileLinkAppendContext *lapp_con
   /* At this point, linked IDs that should remain linked can already be defined as such:
    *  - In case of non-recursive appending, IDs from other libraries.
    *  - IDs only used as liboverride references. */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
+  for (BlendfileLinkAppendContextItem &item : lapp_context.items) {
     /* These tags should have been set in above loop, here they can be check for validity (they
      * are mutually exclusive). */
     BLI_assert(
-        (item->tag &
+        (item.tag &
          (LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY | LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY)) !=
         (LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY | LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY));
 
-    ID *id = item->new_id;
+    ID *id = item.new_id;
     if (id == nullptr) {
       continue;
     }
     /* IDs exclusively used as liboverride reference should not be made local at all. */
-    if ((item->tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY) != 0) {
+    if ((item.tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY) != 0) {
       CLOG_INFO(
           &LOG,
           3,
           "Appended ID '%s' is only used as a liboverride linked dependency, keeping it linked.",
           id->name);
-      item->action = LINK_APPEND_ACT_KEEP_LINKED;
-      item->reusable_local_id = nullptr;
+      item.action = LINK_APPEND_ACT_KEEP_LINKED;
+      item.reusable_local_id = nullptr;
     }
     /* In non-recursive append case, only IDs from the same libraries as the directly appended
      * ones are made local. All dependencies from other libraries are kept linked. */
@@ -1202,8 +1151,8 @@ static void blendfile_append_define_actions(BlendfileLinkAppendContext *lapp_con
                 "Appended ID '%s' belongs to another library and recursive append is disabled, "
                 "keeping it linked.",
                 id->name);
-      item->action = LINK_APPEND_ACT_KEEP_LINKED;
-      item->reusable_local_id = nullptr;
+      item.action = LINK_APPEND_ACT_KEEP_LINKED;
+      item.reusable_local_id = nullptr;
     }
   }
 
@@ -1219,28 +1168,27 @@ static void blendfile_append_define_actions(BlendfileLinkAppendContext *lapp_con
    * before the user IDs) could avoid a lot of iterations. */
   for (bool keep_looping = do_reuse_local_id; keep_looping;) {
     keep_looping = false;
-    for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-      ID *id = item->new_id;
+    for (BlendfileLinkAppendContextItem &item : lapp_context.items) {
+      ID *id = item.new_id;
       if (id == nullptr) {
         continue;
       }
-      if (!item->reusable_local_id) {
+      if (!item.reusable_local_id) {
         continue;
       }
       BlendfileLinkAppendContextCallBack cb_data{};
-      cb_data.lapp_context = lapp_context;
-      cb_data.item = item;
+      cb_data.lapp_context = &lapp_context;
+      cb_data.item = &item;
       cb_data.reports = reports;
-      cb_data.is_liboverride_dependency = (item->tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) !=
-                                          0;
-      cb_data.is_liboverride_dependency_only = (item->tag &
+      cb_data.is_liboverride_dependency = (item.tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) != 0;
+      cb_data.is_liboverride_dependency_only = (item.tag &
                                                 LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY) != 0;
       BKE_library_foreach_ID_link(bmain,
                                   id,
                                   foreach_libblock_append_ensure_reusable_local_id_callback,
                                   &cb_data,
                                   IDWALK_NOP);
-      if (!item->reusable_local_id) {
+      if (!item.reusable_local_id) {
         /* If some reusable ID was cleared, another loop over all items is needed to potentially
          * propagate this change higher in the dependency hierarchy. */
         keep_looping = true;
@@ -1248,34 +1196,34 @@ static void blendfile_append_define_actions(BlendfileLinkAppendContext *lapp_con
     }
   }
 
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = item->new_id;
+  for (BlendfileLinkAppendContextItem &item : lapp_context.items) {
+    ID *id = item.new_id;
     if (id == nullptr) {
       continue;
     }
 
-    if (item->action != LINK_APPEND_ACT_UNSET) {
+    if (item.action != LINK_APPEND_ACT_UNSET) {
       /* Already set, pass. */
-      BLI_assert(item->action == LINK_APPEND_ACT_KEEP_LINKED);
+      BLI_assert(item.action == LINK_APPEND_ACT_KEEP_LINKED);
       continue;
     }
-    BLI_assert((item->tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY) == 0);
+    BLI_assert((item.tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY) == 0);
 
-    if (do_reuse_local_id && item->reusable_local_id != nullptr) {
+    if (do_reuse_local_id && item.reusable_local_id != nullptr) {
       CLOG_INFO(&LOG, 3, "Appended ID '%s' as a matching local one, re-using it.", id->name);
-      item->action = LINK_APPEND_ACT_REUSE_LOCAL;
+      item.action = LINK_APPEND_ACT_REUSE_LOCAL;
     }
-    else if (id->tag & LIB_TAG_PRE_EXISTING) {
+    else if (id->tag & ID_TAG_PRE_EXISTING) {
       CLOG_INFO(&LOG, 3, "Appended ID '%s' was already linked, duplicating it.", id->name);
-      item->action = LINK_APPEND_ACT_COPY_LOCAL;
+      item.action = LINK_APPEND_ACT_COPY_LOCAL;
     }
-    else if (item->tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) {
+    else if (item.tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) {
       CLOG_INFO(
           &LOG,
           3,
           "Appended ID '%s' is also used as a liboverride linked dependency, duplicating it.",
           id->name);
-      item->action = LINK_APPEND_ACT_COPY_LOCAL;
+      item.action = LINK_APPEND_ACT_COPY_LOCAL;
     }
     else {
       /* That last action, making linked data directly local, can still be changed to
@@ -1283,28 +1231,27 @@ static void blendfile_append_define_actions(BlendfileLinkAppendContext *lapp_con
        * complex relationships involving IDs that are kept linked and IDs that are made local,
        * both using some same dependencies. */
       CLOG_INFO(&LOG, 3, "Appended ID '%s' will be made local.", id->name);
-      item->action = LINK_APPEND_ACT_MAKE_LOCAL;
+      item.action = LINK_APPEND_ACT_MAKE_LOCAL;
     }
   }
 
   /* Some linked IDs marked to be made directly local may also be used by other items
    * marked to be kept linked. in such case, they need to be copied for the local data, such that
    * a linked version of these remains available as dependency for other linked data. */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = item->new_id;
+  for (BlendfileLinkAppendContextItem &item : lapp_context.items) {
+    ID *id = item.new_id;
     if (id == nullptr) {
       continue;
     }
 
     /* Only IDs kept as linked need to be checked here. */
-    if (item->action == LINK_APPEND_ACT_KEEP_LINKED) {
+    if (item.action == LINK_APPEND_ACT_KEEP_LINKED) {
       BlendfileLinkAppendContextCallBack cb_data{};
-      cb_data.lapp_context = lapp_context;
-      cb_data.item = item;
+      cb_data.lapp_context = &lapp_context;
+      cb_data.item = &item;
       cb_data.reports = reports;
-      cb_data.is_liboverride_dependency = (item->tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) !=
-                                          0;
-      cb_data.is_liboverride_dependency_only = (item->tag &
+      cb_data.is_liboverride_dependency = (item.tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) != 0;
+      cb_data.is_liboverride_dependency_only = (item.tag &
                                                 LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY) != 0;
       BKE_library_foreach_ID_link(
           bmain, id, foreach_libblock_append_finalize_action_callback, &cb_data, IDWALK_NOP);
@@ -1312,24 +1259,27 @@ static void blendfile_append_define_actions(BlendfileLinkAppendContext *lapp_con
 
     /* If we found a matching existing local id but are not re-using it, we need to properly
      * clear its weak reference to linked data. */
-    if (item->reusable_local_id != nullptr &&
-        !ELEM(item->action, LINK_APPEND_ACT_KEEP_LINKED, LINK_APPEND_ACT_REUSE_LOCAL))
+    if (item.reusable_local_id != nullptr &&
+        !ELEM(item.action, LINK_APPEND_ACT_KEEP_LINKED, LINK_APPEND_ACT_REUSE_LOCAL))
     {
       BLI_assert_msg(!do_reuse_local_id,
                      "This code should only be reached when the current append operation does not "
                      "try to reuse local data.");
-      BKE_main_library_weak_reference_remove_item(lapp_context->library_weak_reference_mapping,
+      BKE_main_library_weak_reference_remove_item(lapp_context.library_weak_reference_mapping,
                                                   id->lib->filepath,
                                                   id->name,
-                                                  item->reusable_local_id);
-      item->reusable_local_id = nullptr;
+                                                  item.reusable_local_id);
+      item.reusable_local_id = nullptr;
     }
   }
 }
 
 void BKE_blendfile_append(BlendfileLinkAppendContext *lapp_context, ReportList *reports)
 {
-  if (lapp_context->num_items == 0) {
+  BLI_assert(lapp_context->process_stage == BlendfileLinkAppendContext::ProcessStage::Linking);
+  lapp_context->process_stage = BlendfileLinkAppendContext::ProcessStage::Appending;
+
+  if (lapp_context->items.empty()) {
     /* Nothing to append. */
     return;
   }
@@ -1351,16 +1301,16 @@ void BKE_blendfile_append(BlendfileLinkAppendContext *lapp_context, ReportList *
            LIB_ID_MAKELOCAL_LIBOVERRIDE_CLEAR :
            0);
 
-  new_id_to_item_mapping_create(lapp_context);
+  new_id_to_item_mapping_create(*lapp_context);
   lapp_context->library_weak_reference_mapping = BKE_main_library_weak_reference_create(bmain);
 
   /* Add missing items (the indirectly linked ones), and carefully define which action should be
    * applied to each of them. */
-  blendfile_append_define_actions(lapp_context, reports);
+  blendfile_append_define_actions(*lapp_context, reports);
 
   /* Effectively perform required operation on every linked ID. */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = item->new_id;
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *id = item.new_id;
     if (id == nullptr) {
       continue;
     }
@@ -1371,7 +1321,7 @@ void BKE_blendfile_append(BlendfileLinkAppendContext *lapp_context, ReportList *
     char lib_id_name[MAX_ID_NAME];
     STRNCPY(lib_id_name, id->name);
 
-    switch (item->action) {
+    switch (item.action) {
       case LINK_APPEND_ACT_COPY_LOCAL:
         BKE_lib_id_make_local(bmain, id, make_local_common_flags | LIB_ID_MAKELOCAL_FORCE_COPY);
         local_appended_new_id = id->newid;
@@ -1385,9 +1335,9 @@ void BKE_blendfile_append(BlendfileLinkAppendContext *lapp_context, ReportList *
         /* Nothing to do here. */
         break;
       case LINK_APPEND_ACT_REUSE_LOCAL:
-        BLI_assert(item->reusable_local_id != nullptr);
+        BLI_assert(item.reusable_local_id != nullptr);
         /* We only need to set `newid` to ID found in previous loop, for proper remapping. */
-        ID_NEW_SET(id, item->reusable_local_id);
+        ID_NEW_SET(id, item.reusable_local_id);
         /* This is not a 'new' local appended id, do not set `local_appended_new_id` here. */
         break;
       case LINK_APPEND_ACT_UNSET:
@@ -1419,16 +1369,16 @@ void BKE_blendfile_append(BlendfileLinkAppendContext *lapp_context, ReportList *
   lapp_context->library_weak_reference_mapping = nullptr;
 
   /* Remap IDs as needed. */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    if (item->action == LINK_APPEND_ACT_KEEP_LINKED) {
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    if (item.action == LINK_APPEND_ACT_KEEP_LINKED) {
       continue;
     }
 
-    ID *id = item->new_id;
+    ID *id = item.new_id;
     if (id == nullptr) {
       continue;
     }
-    if (ELEM(item->action, LINK_APPEND_ACT_COPY_LOCAL, LINK_APPEND_ACT_REUSE_LOCAL)) {
+    if (ELEM(item.action, LINK_APPEND_ACT_COPY_LOCAL, LINK_APPEND_ACT_REUSE_LOCAL)) {
       BLI_assert(ID_IS_LINKED(id));
       id = id->newid;
       if (id == nullptr) {
@@ -1442,13 +1392,13 @@ void BKE_blendfile_append(BlendfileLinkAppendContext *lapp_context, ReportList *
   }
 
   /* Remove linked IDs when a local existing data has been reused instead. */
-  BKE_main_id_tag_all(bmain, LIB_TAG_DOIT, false);
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    if (!ELEM(item->action, LINK_APPEND_ACT_COPY_LOCAL, LINK_APPEND_ACT_REUSE_LOCAL)) {
+  BKE_main_id_tag_all(bmain, ID_TAG_DOIT, false);
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    if (!ELEM(item.action, LINK_APPEND_ACT_COPY_LOCAL, LINK_APPEND_ACT_REUSE_LOCAL)) {
       continue;
     }
 
-    ID *id = item->new_id;
+    ID *id = item.new_id;
     if (id == nullptr) {
       continue;
     }
@@ -1456,37 +1406,33 @@ void BKE_blendfile_append(BlendfileLinkAppendContext *lapp_context, ReportList *
     BLI_assert(id->newid != nullptr);
 
     /* Calling code may want to access newly appended IDs from the link/append context items. */
-    item->new_id = id->newid;
+    item.new_id = id->newid;
 
     /* Only the 'reuse local' action should leave unused newly linked data behind. */
-    if (item->action != LINK_APPEND_ACT_REUSE_LOCAL) {
+    if (item.action != LINK_APPEND_ACT_REUSE_LOCAL) {
       continue;
     }
     /* Do NOT delete a linked data that was already linked before this append. */
-    if (id->tag & LIB_TAG_PRE_EXISTING) {
+    if (id->tag & ID_TAG_PRE_EXISTING) {
       continue;
     }
     /* Do NOT delete a linked data that is (also) used a liboverride dependency. */
-    BLI_assert((item->tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY) == 0);
-    if (item->tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) {
+    BLI_assert((item.tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY_ONLY) == 0);
+    if (item.tag & LINK_APPEND_TAG_LIBOVERRIDE_DEPENDENCY) {
       continue;
     }
 
-    id->tag |= LIB_TAG_DOIT;
+    id->tag |= ID_TAG_DOIT;
   }
   BKE_id_multi_tagged_delete(bmain);
-
-  /* Instantiate newly created (duplicated) IDs as needed. */
-  LooseDataInstantiateContext instantiate_context{};
-  instantiate_context.lapp_context = lapp_context;
-  instantiate_context.active_collection = nullptr;
-  loose_data_instantiate(&instantiate_context);
 
   BKE_main_id_newptr_and_tag_clear(bmain);
 
   BlendFileReadReport bf_reports{};
   bf_reports.reports = reports;
-  BLO_read_do_version_after_setup(bmain, &bf_reports);
+  BLO_read_do_version_after_setup(bmain, lapp_context, &bf_reports);
+
+  BLO_readfile_id_runtime_data_free_all(*bmain);
 }
 
 /** \} */
@@ -1504,7 +1450,7 @@ static int foreach_libblock_link_finalize_cb(LibraryIDLinkCallbackData *cb_data)
   const BlendfileLinkAppendContextCallBack *data =
       static_cast<BlendfileLinkAppendContextCallBack *>(cb_data->user_data);
 
-  if ((id->tag & LIB_TAG_PRE_EXISTING) != 0) {
+  if ((id->tag & ID_TAG_PRE_EXISTING) != 0) {
     /* About to re-use a linked data that was already there, and that will stay linked. This case
      * does not need any further processing of the child hierarchy (existing linked data
      * instantiation status should not be modified here). */
@@ -1522,7 +1468,7 @@ static int foreach_libblock_link_finalize_cb(LibraryIDLinkCallbackData *cb_data)
    */
   if (item == nullptr) {
     item = BKE_blendfile_link_append_context_item_add(
-        data->lapp_context, id->name, GS(id->name), nullptr);
+        data->lapp_context, BKE_id_name(*id), GS(id->name), nullptr);
     item->new_id = id;
     item->source_library = id->lib;
     /* Since there is no item for that ID yet, the user did not select it explicitly, it was
@@ -1530,33 +1476,39 @@ static int foreach_libblock_link_finalize_cb(LibraryIDLinkCallbackData *cb_data)
     item->tag |= LINK_APPEND_TAG_INDIRECT;
     /* In linking case we already know what we want to do with these items. */
     item->action = LINK_APPEND_ACT_KEEP_LINKED;
-    new_id_to_item_mapping_add(data->lapp_context, id, item);
+    new_id_to_item_mapping_add(*data->lapp_context, id, *item);
   }
   return IDWALK_RET_NOP;
 }
 
-static void blendfile_link_finalize(BlendfileLinkAppendContext *lapp_context, ReportList *reports)
+void BKE_blendfile_link_append_instantiate_loose(BlendfileLinkAppendContext *lapp_context,
+                                                 ReportList *reports)
 {
-  BLI_assert((lapp_context->params->flag & FILE_LINK) != 0);
+  BLI_assert(ELEM(lapp_context->process_stage,
+                  BlendfileLinkAppendContext::ProcessStage::Linking,
+                  BlendfileLinkAppendContext::ProcessStage::Appending));
+  lapp_context->process_stage = BlendfileLinkAppendContext::ProcessStage::Instantiating;
 
-  /* Instantiate newly linked IDs as needed. */
-  if (lapp_context->params->context.scene != nullptr) {
-    new_id_to_item_mapping_create(lapp_context);
+  if (!lapp_context->params->context.scene) {
+    return;
+  }
+  if (lapp_context->params->flag & FILE_LINK) {
+    new_id_to_item_mapping_create(*lapp_context);
     /* Add items for all not yet known IDs (i.e. implicitly linked indirect dependencies) to the
      * list.
      * NOTE: Since items are appended to the list, this list will grow and these IDs will be
      * processed later, leading to a flatten recursive processing of all the linked dependencies.
      */
-    for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-      ID *id = item->new_id;
+    for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+      ID *id = item.new_id;
       if (id == nullptr) {
         continue;
       }
-      BLI_assert(item->userdata == nullptr);
+      BLI_assert(item.userdata == nullptr);
 
       BlendfileLinkAppendContextCallBack cb_data{};
       cb_data.lapp_context = lapp_context;
-      cb_data.item = item;
+      cb_data.item = &item;
       cb_data.reports = reports;
       BKE_library_foreach_ID_link(lapp_context->params->bmain,
                                   id,
@@ -1564,35 +1516,34 @@ static void blendfile_link_finalize(BlendfileLinkAppendContext *lapp_context, Re
                                   &cb_data,
                                   IDWALK_NOP);
     }
-
-    LooseDataInstantiateContext instantiate_context{};
-    instantiate_context.lapp_context = lapp_context;
-    instantiate_context.active_collection = nullptr;
-    loose_data_instantiate(&instantiate_context);
   }
 
-  BlendFileReadReport bf_reports{};
-  bf_reports.reports = reports;
-  BLO_read_do_version_after_setup(lapp_context->params->bmain, &bf_reports);
+  LooseDataInstantiateContext instantiate_context{};
+  instantiate_context.lapp_context = lapp_context;
+  instantiate_context.active_collection = nullptr;
+  loose_data_instantiate(&instantiate_context);
 }
 
 void BKE_blendfile_link(BlendfileLinkAppendContext *lapp_context, ReportList *reports)
 {
-  if (lapp_context->num_items == 0) {
+  BLI_assert(lapp_context->process_stage == BlendfileLinkAppendContext::ProcessStage::Init);
+  lapp_context->process_stage = BlendfileLinkAppendContext::ProcessStage::Linking;
+
+  if (lapp_context->items.empty()) {
     /* Nothing to be linked. */
     return;
   }
 
-  BLI_assert(lapp_context->num_libraries != 0);
+  BLI_assert(!lapp_context->libraries.is_empty());
 
   Main *mainl;
   Library *lib;
 
   for (const int lib_idx : lapp_context->libraries.index_range()) {
-    BlendfileLinkAppendContextLibrary *lib_context = lapp_context->libraries[lib_idx];
-    const char *libname = lib_context->path;
+    BlendfileLinkAppendContextLibrary &lib_context = lapp_context->libraries[lib_idx];
+    const char *libname = lib_context.path.c_str();
 
-    if (!link_append_context_library_blohandle_ensure(lapp_context, lib_context, reports)) {
+    if (!link_append_context_library_blohandle_ensure(*lapp_context, lib_context, reports)) {
       /* Unlikely since we just browsed it, but possible
        * Error reports will have been made by BLO_blendhandle_from_file() */
       continue;
@@ -1600,11 +1551,11 @@ void BKE_blendfile_link(BlendfileLinkAppendContext *lapp_context, ReportList *re
 
     /* here appending/linking starts */
 
-    mainl = BLO_library_link_begin(&lib_context->blo_handle, libname, lapp_context->params);
+    mainl = BLO_library_link_begin(&lib_context.blo_handle, libname, lapp_context->params);
     lib = mainl->curlib;
     BLI_assert(lib != nullptr);
     /* In case lib was already existing but not found originally, see #99820. */
-    lib->id.tag &= ~LIB_TAG_MISSING;
+    lib->id.tag &= ~ID_TAG_MISSING;
 
     if (mainl->versionfile < 250) {
       BKE_reportf(reports,
@@ -1618,27 +1569,27 @@ void BKE_blendfile_link(BlendfileLinkAppendContext *lapp_context, ReportList *re
 
     /* For each lib file, we try to link all items belonging to that lib,
      * and tag those successful to not try to load them again with the other libraries. */
-    for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
+    for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
       ID *new_id;
 
-      if (!BLI_BITMAP_TEST(item->libraries, lib_idx)) {
+      if (!item.libraries[lib_idx]) {
         continue;
       }
 
       new_id = BLO_library_link_named_part(
-          mainl, &lib_context->blo_handle, item->idcode, item->name, lapp_context->params);
+          mainl, &lib_context.blo_handle, item.idcode, item.name.c_str(), lapp_context->params);
 
       if (new_id) {
         /* If the link is successful, clear item's libraries 'todo' flags.
          * This avoids trying to link same item with other libraries to come. */
-        BLI_bitmap_set_all(item->libraries, false, lapp_context->num_libraries);
-        item->new_id = new_id;
-        item->source_library = new_id->lib;
+        item.libraries.fill(false);
+        item.new_id = new_id;
+        item.source_library = new_id->lib;
       }
     }
 
-    BLO_library_link_end(mainl, &lib_context->blo_handle, lapp_context->params);
-    link_append_context_library_blohandle_release(lapp_context, lib_context);
+    BLO_library_link_end(mainl, &lib_context.blo_handle, lapp_context->params);
+    link_append_context_library_blohandle_release(*lapp_context, lib_context);
   }
 
   /* In linking case finalizing process (ensuring all data is valid, instantiating loose
@@ -1646,8 +1597,12 @@ void BKE_blendfile_link(BlendfileLinkAppendContext *lapp_context, ReportList *re
    *
    * In append case, the finalizing process is much more complex and requires and additional call
    * to #BKE_blendfile_append for caller code. */
-  if ((lapp_context->params->flag & FILE_LINK) != 0) {
-    blendfile_link_finalize(lapp_context, reports);
+  if (lapp_context->params->flag & FILE_LINK) {
+    BlendFileReadReport bf_reports{};
+    bf_reports.reports = reports;
+    BLO_read_do_version_after_setup(lapp_context->params->bmain, lapp_context, &bf_reports);
+
+    BLO_readfile_id_runtime_data_free_all(*lapp_context->params->bmain);
   }
 }
 
@@ -1655,7 +1610,7 @@ void BKE_blendfile_override(BlendfileLinkAppendContext *lapp_context,
                             const eBKELibLinkOverride flags,
                             ReportList * /*reports*/)
 {
-  if (lapp_context->num_items == 0) {
+  if (lapp_context->items.empty()) {
     /* Nothing to override. */
     return;
   }
@@ -1680,8 +1635,8 @@ void BKE_blendfile_override(BlendfileLinkAppendContext *lapp_context,
         continue;
       }
       /* Do not consider regular liboverrides if runtime ones are requested, and vice-versa. */
-      if ((set_runtime && (id_iter->tag & LIB_TAG_RUNTIME) == 0) ||
-          (!set_runtime && (id_iter->tag & LIB_TAG_RUNTIME) != 0))
+      if ((set_runtime && (id_iter->tag & ID_TAG_RUNTIME) == 0) ||
+          (!set_runtime && (id_iter->tag & ID_TAG_RUNTIME) != 0))
       {
         continue;
       }
@@ -1693,29 +1648,29 @@ void BKE_blendfile_override(BlendfileLinkAppendContext *lapp_context,
     FOREACH_MAIN_ID_END;
   }
 
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *id = item->new_id;
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *id = item.new_id;
     if (id == nullptr) {
       continue;
     }
-    BLI_assert(item->userdata == nullptr);
+    BLI_assert(item.userdata == nullptr);
 
     if (do_use_exisiting_liboverrides) {
-      item->liboverride_id = linked_ids_to_local_liboverrides.lookup_default(id, nullptr);
+      item.liboverride_id = linked_ids_to_local_liboverrides.lookup_default(id, nullptr);
     }
-    if (item->liboverride_id == nullptr) {
-      item->liboverride_id = BKE_lib_override_library_create_from_id(bmain, id, false);
+    if (item.liboverride_id == nullptr) {
+      item.liboverride_id = BKE_lib_override_library_create_from_id(bmain, id, false);
       if (set_runtime) {
-        item->liboverride_id->tag |= LIB_TAG_RUNTIME;
-        if ((id->tag & LIB_TAG_PRE_EXISTING) == 0) {
+        item.liboverride_id->tag |= ID_TAG_RUNTIME;
+        if ((id->tag & ID_TAG_PRE_EXISTING) == 0) {
           /* If the linked ID is newly linked, in case its override is runtime-only, assume its
            * reference to be indirectly linked.
            *
            * This is more of an heuristic for 'as best as possible' user feedback in the UI
            * (Outliner), which is expected to be valid in almost all practical use-cases. Direct or
            * indirect linked status is properly checked before saving .blend file. */
-          id->tag &= ~LIB_TAG_EXTERN;
-          id->tag |= LIB_TAG_INDIRECT;
+          id->tag &= ~ID_TAG_EXTERN;
+          id->tag |= ID_TAG_INDIRECT;
         }
       }
     }
@@ -1751,7 +1706,7 @@ static void blendfile_library_relocate_remap(Main *bmain,
               new_id->us);
     BKE_libblock_remap_locked(bmain, old_id, new_id, remap_flags);
 
-    if (old_id->flag & LIB_FAKEUSER) {
+    if (old_id->flag & ID_FLAG_FAKEUSER) {
       id_fake_user_clear(old_id);
       id_fake_user_set(new_id);
     }
@@ -1764,7 +1719,7 @@ static void blendfile_library_relocate_remap(Main *bmain,
               new_id->us);
 
     /* In some cases, new_id might become direct link, remove parent of library in this case. */
-    if (new_id->lib->runtime.parent && (new_id->tag & LIB_TAG_INDIRECT) == 0) {
+    if (new_id->lib->runtime.parent && (new_id->tag & ID_TAG_INDIRECT) == 0) {
       if (do_reload) {
         BLI_assert_unreachable(); /* Should not happen in 'pure' reload case... */
       }
@@ -1855,20 +1810,23 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
           BLI_remlink(which_libbase(bmain, GS(old_key->id.name)), &old_key->id);
         }
 
-        item = BKE_blendfile_link_append_context_item_add(lapp_context, id->name + 2, idcode, id);
-        BLI_bitmap_set_all(item->libraries, true, size_t(lapp_context->num_libraries));
+        item = BKE_blendfile_link_append_context_item_add(
+            lapp_context, BKE_id_name(*id), idcode, id);
+        item->libraries.fill(true);
 
         CLOG_INFO(&LOG, 4, "Datablock to seek for: %s", id->name);
       }
     }
   }
 
-  if (lapp_context->num_items == 0) {
+  if (lapp_context->items.empty()) {
     /* Early out in case there is nothing to do. */
     return;
   }
 
-  BKE_main_id_tag_all(bmain, LIB_TAG_PRE_EXISTING, true);
+  BKE_main_id_tag_all(bmain, ID_TAG_PRE_EXISTING, true);
+
+  BKE_blendfile_link_append_context_init_done(lapp_context);
 
   /* We do not want any instantiation here! */
   BKE_blendfile_link(lapp_context, reports);
@@ -1878,8 +1836,8 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
   /* We add back old id to bmain.
    * We need to do this in a first, separated loop, otherwise some of those may not be handled by
    * ID remapping, which means they would still reference old data to be deleted... */
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *old_id = static_cast<ID *>(item->userdata);
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *old_id = static_cast<ID *>(item.userdata);
 
     BLI_assert(old_id);
     BLI_addtail(which_libbase(bmain, GS(old_id->name)), old_id);
@@ -1899,9 +1857,9 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
   /* Note that in reload case, we also want to replace indirect usages. */
   const int remap_flags = ID_REMAP_SKIP_NEVER_NULL_USAGE |
                           (do_reload ? 0 : ID_REMAP_SKIP_INDIRECT_USAGE);
-  for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-    ID *old_id = static_cast<ID *>(item->userdata);
-    ID *new_id = item->new_id;
+  for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+    ID *old_id = static_cast<ID *>(item.userdata);
+    ID *new_id = item.new_id;
 
     blendfile_library_relocate_remap(bmain, old_id, new_id, reports, do_reload, remap_flags);
     if (new_id == nullptr) {
@@ -1940,9 +1898,9 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
   while (keep_looping) {
     keep_looping = false;
 
-    BKE_main_id_tag_all(bmain, LIB_TAG_DOIT, false);
-    for (BlendfileLinkAppendContextItem *item : lapp_context->items) {
-      ID *old_id = static_cast<ID *>(item->userdata);
+    BKE_main_id_tag_all(bmain, ID_TAG_DOIT, false);
+    for (BlendfileLinkAppendContextItem &item : lapp_context->items) {
+      ID *old_id = static_cast<ID *>(item.userdata);
 
       if (old_id == nullptr) {
         continue;
@@ -1952,7 +1910,7 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
         /* Shape Keys are handled as part of their owning obdata (see below). This implies that
          * there is no way to know when the old pointer gets invalid, so just clear it immediately.
          */
-        item->userdata = nullptr;
+        item.userdata = nullptr;
         continue;
       }
 
@@ -1960,7 +1918,7 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
        * `lapp_context->params->context` need to be updated before the old Scene ID is freed. */
       if (old_id == &lapp_context->params->context.scene->id) {
         BLI_assert(GS(old_id->name) == ID_SCE);
-        Scene *new_scene = (Scene *)item->new_id;
+        Scene *new_scene = reinterpret_cast<Scene *>(item.new_id);
         BLI_assert(new_scene != nullptr);
         lapp_context->params->context.scene = new_scene;
         if (lapp_context->params->context.view_layer != nullptr) {
@@ -1974,18 +1932,18 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
       }
 
       if (old_id->us == 0) {
-        old_id->tag |= LIB_TAG_DOIT;
-        item->userdata = nullptr;
+        old_id->tag |= ID_TAG_DOIT;
+        item.userdata = nullptr;
         keep_looping = true;
         Key *old_key = BKE_key_from_id(old_id);
         if (old_key != nullptr) {
-          old_key->id.tag |= LIB_TAG_DOIT;
+          old_key->id.tag |= ID_TAG_DOIT;
         }
       }
     }
     BKE_id_multi_tagged_delete(bmain);
     /* Should not be needed, all tagged IDs should have been deleted above, just 'in case'. */
-    BKE_main_id_tag_all(bmain, LIB_TAG_DOIT, false);
+    BKE_main_id_tag_all(bmain, ID_TAG_DOIT, false);
   }
 
   /* Some datablocks can get reloaded/replaced 'silently' because they are not linkable
@@ -1996,27 +1954,27 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
     for (id = static_cast<ID *>(lbarray[lba_idx]->first); id; id = id_next) {
       id_next = static_cast<ID *>(id->next);
       /* XXX That check may be a bit to generic/permissive? */
-      if (id->lib && (id->flag & LIB_TAG_PRE_EXISTING) && id->us == 0) {
+      if (id->lib && (id->flag & ID_TAG_PRE_EXISTING) && id->us == 0) {
         BKE_id_free(bmain, id);
       }
     }
   }
 
   /* Get rid of no more used libraries... */
-  BKE_main_id_tag_idcode(bmain, ID_LI, LIB_TAG_DOIT, true);
+  BKE_main_id_tag_idcode(bmain, ID_LI, ID_TAG_DOIT, true);
   lba_idx = set_listbasepointers(bmain, lbarray);
   while (lba_idx--) {
     ID *id;
     for (id = static_cast<ID *>(lbarray[lba_idx]->first); id; id = static_cast<ID *>(id->next)) {
       if (id->lib) {
-        id->lib->id.tag &= ~LIB_TAG_DOIT;
+        id->lib->id.tag &= ~ID_TAG_DOIT;
       }
     }
   }
   Library *lib, *lib_next;
   for (lib = static_cast<Library *>(which_libbase(bmain, ID_LI)->first); lib; lib = lib_next) {
     lib_next = static_cast<Library *>(lib->id.next);
-    if (lib->id.tag & LIB_TAG_DOIT) {
+    if (lib->id.tag & ID_TAG_DOIT) {
       id_us_clear_real(&lib->id);
       if (lib->id.us == 0) {
         BKE_id_delete(bmain, lib);
@@ -2028,14 +1986,14 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
   ID *id;
   FOREACH_MAIN_ID_BEGIN (bmain, id) {
     if (ID_IS_LINKED(id) || !ID_IS_OVERRIDE_LIBRARY_REAL(id) ||
-        (id->tag & LIB_TAG_PRE_EXISTING) == 0)
+        (id->tag & ID_TAG_PRE_EXISTING) == 0)
     {
       continue;
     }
-    if ((id->override_library->reference->tag & LIB_TAG_MISSING) == 0) {
-      id->tag &= ~LIB_TAG_MISSING;
+    if ((id->override_library->reference->tag & ID_TAG_MISSING) == 0) {
+      id->tag &= ~ID_TAG_MISSING;
     }
-    if ((id->override_library->reference->tag & LIB_TAG_PRE_EXISTING) == 0) {
+    if ((id->override_library->reference->tag & ID_TAG_PRE_EXISTING) == 0) {
       BKE_lib_override_library_update(bmain, id);
     }
   }
@@ -2044,9 +2002,7 @@ void BKE_blendfile_library_relocate(BlendfileLinkAppendContext *lapp_context,
   BKE_library_main_rebuild_hierarchy(bmain);
 
   /* Resync overrides if needed. */
-  if (!USER_EXPERIMENTAL_TEST(&U, no_override_auto_resync) &&
-      lapp_context->params->context.scene != nullptr)
-  {
+  if (liboverride::is_auto_resync_enabled() && lapp_context->params->context.scene != nullptr) {
     BlendFileReadReport report{};
     report.reports = reports;
     BKE_lib_override_library_main_resync(bmain,

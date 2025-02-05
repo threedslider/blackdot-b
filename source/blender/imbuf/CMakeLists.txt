@@ -2,13 +2,12 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+add_subdirectory(movie)
+
 set(INC
-  .
-  ../blenkernel
-  ../blenloader
-  ../gpu
+  PUBLIC .
+  ./movie
   ../makesrna
-  ../sequencer
   ../../../intern/memutil
 )
 
@@ -20,7 +19,6 @@ set(INC_SYS
 
 set(SRC
   intern/allocimbuf.cc
-  intern/anim_movie.cc
   intern/colormanagement.cc
   intern/colormanagement_inline.h
   intern/divers.cc
@@ -35,7 +33,6 @@ set(SRC
   intern/format_targa.cc
   intern/format_tiff.cc
   intern/imageprocess.cc
-  intern/indexer.cc
   intern/interp.cc
   intern/iris.cc
   intern/jpeg.cc
@@ -65,22 +62,18 @@ set(SRC
   IMB_openexr.hh
   IMB_thumbs.hh
   intern/IMB_allocimbuf.hh
-  intern/IMB_anim.hh
   intern/IMB_colormanagement_intern.hh
   intern/IMB_filetype.hh
   intern/IMB_filter.hh
-  intern/IMB_indexer.hh
   intern/imbuf.hh
-
-  # orphan include
-  ../../../intern/ffmpeg/ffmpeg_compat.h
 )
 
 set(LIB
-  bf_blenkernel
+  PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
-  bf_blenloader
+  PRIVATE bf::blenloader
   PRIVATE bf::dna
+  PRIVATE bf::gpu
   bf_imbuf_openimageio
   PRIVATE bf::intern::guardedalloc
   bf_intern_memutil
@@ -88,6 +81,7 @@ set(LIB
   PRIVATE bf::extern::nanosvg
 
   ${JPEG_LIBRARIES}
+  PRIVATE bf::sequencer
 )
 
 if(WITH_IMAGE_OPENEXR)
@@ -101,13 +95,13 @@ else()
   )
 endif()
 
-# Keep until APPLE/ARM libraries are updated.
-if(APPLE OR WIN32)
-  if(CMAKE_OSX_ARCHITECTURES MATCHES arm64 OR CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64")
-    list(APPEND INC_SYS
-      ${IMATH_INCLUDE_DIRS}
-    )
-  endif()
+# OpenImageIO headers include `Imath` headers when there is no SSE support for
+# matrix operations. This depends on the specific architecture and compiler
+# flags, most reliable is to always include the `Imath` headers if we have them.
+if(DEFINED IMATH_INCLUDE_DIRS)
+  list(APPEND INC_SYS
+    ${IMATH_INCLUDE_DIRS}
+  )
 endif()
 
 if(WITH_IMAGE_OPENJPEG)
@@ -122,20 +116,6 @@ if(WITH_IMAGE_OPENJPEG)
   )
 
   add_definitions(-DWITH_OPENJPEG ${OPENJPEG_DEFINES})
-endif()
-
-if(WITH_CODEC_FFMPEG)
-  list(APPEND INC
-    ../../../intern/ffmpeg
-  )
-  list(APPEND INC_SYS
-    ${FFMPEG_INCLUDE_DIRS}
-  )
-  list(APPEND LIB
-    ${FFMPEG_LIBRARIES}
-    ${OPENJPEG_LIBRARIES}
-  )
-  add_definitions(-DWITH_FFMPEG)
 endif()
 
 if(WITH_IMAGE_CINEON)
@@ -161,18 +141,6 @@ if(WITH_IMAGE_WEBP)
   add_definitions(-DWITH_WEBP)
 endif()
 
-if(WITH_TBB)
-  add_definitions(-DWITH_TBB)
-
-  list(APPEND INC_SYS
-    ${TBB_INCLUDE_DIRS}
-  )
-
-  list(APPEND LIB
-    ${TBB_LIBRARIES}
-  )
-endif()
-
 list(APPEND INC
   ../../../intern/opencolorio
 )
@@ -194,10 +162,13 @@ set_source_files_properties(
 )
 
 blender_add_lib(bf_imbuf "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")
+add_library(bf::imbuf ALIAS bf_imbuf)
 
 if(WITH_GTESTS)
   set(TEST_SRC
-    intern/transform_test.cc
+    tests/IMB_scaling_test.cc
+    tests/IMB_transform_test.cc
   )
   blender_add_test_suite_lib(imbuf "${TEST_SRC}" "${INC}" "${INC_SYS}" "${LIB}")
+  add_subdirectory(tests/performance)
 endif()

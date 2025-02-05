@@ -31,40 +31,54 @@ static void node_declare(NodeDeclarationBuilder &b)
       .min(3)
       .max(512)
       .description("Number of points on the circle");
-  b.add_input<decl::Vector>("Point 1")
-      .default_value({-1.0f, 0.0f, 0.0f})
-      .subtype(PROP_TRANSLATION)
-      .description(
-          "One of the three points on the circle. The point order determines the circle's "
-          "direction")
-      .make_available(endable_points);
-  b.add_input<decl::Vector>("Point 2")
-      .default_value({0.0f, 1.0f, 0.0f})
-      .subtype(PROP_TRANSLATION)
-      .description(
-          "One of the three points on the circle. The point order determines the circle's "
-          "direction")
-      .make_available(endable_points);
-  b.add_input<decl::Vector>("Point 3")
-      .default_value({1.0f, 0.0f, 0.0f})
-      .subtype(PROP_TRANSLATION)
-      .description(
-          "One of the three points on the circle. The point order determines the circle's "
-          "direction")
-      .make_available(endable_points);
-  b.add_input<decl::Float>("Radius")
-      .default_value(1.0f)
-      .min(0.0f)
-      .subtype(PROP_DISTANCE)
-      .description("Distance of the points from the origin")
-      .make_available(enable_radius);
+  auto &start = b.add_input<decl::Vector>("Point 1")
+                    .default_value({-1.0f, 0.0f, 0.0f})
+                    .subtype(PROP_TRANSLATION)
+                    .description(
+                        "One of the three points on the circle. The point order determines the "
+                        "circle's direction")
+                    .make_available(endable_points);
+  auto &middle = b.add_input<decl::Vector>("Point 2")
+                     .default_value({0.0f, 1.0f, 0.0f})
+                     .subtype(PROP_TRANSLATION)
+                     .description(
+                         "One of the three points on the circle. The point order determines the "
+                         "circle's direction")
+                     .make_available(endable_points);
+  auto &end = b.add_input<decl::Vector>("Point 3")
+                  .default_value({1.0f, 0.0f, 0.0f})
+                  .subtype(PROP_TRANSLATION)
+                  .description(
+                      "One of the three points on the circle. The point order determines the "
+                      "circle's direction")
+                  .make_available(endable_points);
+  auto &radius = b.add_input<decl::Float>("Radius")
+                     .default_value(1.0f)
+                     .min(0.0f)
+                     .subtype(PROP_DISTANCE)
+                     .description("Distance of the points from the origin")
+                     .make_available(enable_radius);
   b.add_output<decl::Geometry>("Curve");
-  b.add_output<decl::Vector>("Center").make_available(endable_points);
+  auto &center = b.add_output<decl::Vector>("Center").make_available(endable_points);
+
+  const bNode *node = b.node_or_null();
+  if (node != nullptr) {
+    const NodeGeometryCurvePrimitiveCircle &storage = node_storage(*node);
+    const GeometryNodeCurvePrimitiveCircleMode mode = GeometryNodeCurvePrimitiveCircleMode(
+        storage.mode);
+
+    start.available(mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_POINTS);
+    middle.available(mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_POINTS);
+    end.available(mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_POINTS);
+    center.available(mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_POINTS);
+
+    radius.available(mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_RADIUS);
+  }
 }
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
@@ -73,31 +87,6 @@ static void node_init(bNodeTree * /*tree*/, bNode *node)
 
   data->mode = GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_RADIUS;
   node->storage = data;
-}
-
-static void node_update(bNodeTree *ntree, bNode *node)
-{
-  const NodeGeometryCurvePrimitiveCircle &storage = node_storage(*node);
-  const GeometryNodeCurvePrimitiveCircleMode mode = (GeometryNodeCurvePrimitiveCircleMode)
-                                                        storage.mode;
-
-  bNodeSocket *start_socket = static_cast<bNodeSocket *>(node->inputs.first)->next;
-  bNodeSocket *middle_socket = start_socket->next;
-  bNodeSocket *end_socket = middle_socket->next;
-  bNodeSocket *radius_socket = end_socket->next;
-
-  bNodeSocket *center_socket = static_cast<bNodeSocket *>(node->outputs.first)->next;
-
-  bke::nodeSetSocketAvailability(
-      ntree, start_socket, mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_POINTS);
-  bke::nodeSetSocketAvailability(
-      ntree, middle_socket, mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_POINTS);
-  bke::nodeSetSocketAvailability(
-      ntree, end_socket, mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_POINTS);
-  bke::nodeSetSocketAvailability(
-      ntree, center_socket, mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_POINTS);
-  bke::nodeSetSocketAvailability(
-      ntree, radius_socket, mode == GEO_NODE_CURVE_PRIMITIVE_CIRCLE_TYPE_RADIUS);
 }
 
 static bool colinear_f3_f3_f3(const float3 p1, const float3 p2, const float3 p3)
@@ -242,10 +231,12 @@ static void node_rna(StructRNA *srna)
 static void node_register()
 {
   static blender::bke::bNodeType ntype;
-  geo_node_type_base(&ntype, GEO_NODE_CURVE_PRIMITIVE_CIRCLE, "Curve Circle", NODE_CLASS_GEOMETRY);
-
+  geo_node_type_base(&ntype, "GeometryNodeCurvePrimitiveCircle", GEO_NODE_CURVE_PRIMITIVE_CIRCLE);
+  ntype.ui_name = "Curve Circle";
+  ntype.ui_description = "Generate a poly spline circle";
+  ntype.enum_name_legacy = "CURVE_PRIMITIVE_CIRCLE";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.initfunc = node_init;
-  ntype.updatefunc = node_update;
   blender::bke::node_type_storage(&ntype,
                                   "NodeGeometryCurvePrimitiveCircle",
                                   node_free_standard_storage,
@@ -253,7 +244,7 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

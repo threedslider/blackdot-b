@@ -85,9 +85,7 @@ static int geometry_extract_apply(bContext *C,
   Scene *scene = CTX_data_scene(C);
   Depsgraph &depsgraph = *CTX_data_depsgraph_on_load(C);
 
-  ED_object_sculptmode_exit(C, depsgraph);
-
-  BKE_sculpt_mask_layers_ensure(&depsgraph, bmain, ob, nullptr);
+  blender::ed::sculpt_paint::object_sculpt_mode_exit(C, depsgraph);
 
   /* Ensures that deformation from sculpt mode is taken into account before duplicating the mesh to
    * extract the geometry. */
@@ -194,7 +192,7 @@ static int geometry_extract_apply(bContext *C,
   new_mesh->attributes_for_write().remove(".sculpt_mask");
 
   BKE_editmesh_free_data(em);
-  MEM_freeN(em);
+  MEM_delete(em);
 
   if (new_mesh->verts_num == 0) {
     BKE_id_free(bmain, new_mesh);
@@ -279,6 +277,12 @@ static void geometry_extract_tag_face_set(BMesh *bm, GeometryExtractParams *para
 
 static int paint_mask_extract_exec(bContext *C, wmOperator *op)
 {
+  Object *ob = CTX_data_active_object(C);
+  Mesh *mesh = static_cast<Mesh *>(ob->data);
+  if (!mesh->attributes().contains(".sculpt_mask")) {
+    return OPERATOR_CANCELLED;
+  }
+
   GeometryExtractParams params;
   params.mask_threshold = RNA_float_get(op->ptr, "mask_threshold");
   params.num_smooth_iterations = RNA_int_get(op->ptr, "smooth_iterations");
@@ -458,22 +462,25 @@ static int paint_mask_slice_exec(bContext *C, wmOperator *op)
 {
   using namespace blender;
   using namespace blender::ed;
+  const Scene &scene = *CTX_data_scene(C);
   Main &bmain = *CTX_data_main(C);
   Object &ob = *CTX_data_active_object(C);
   View3D *v3d = CTX_wm_view3d(C);
+  Mesh *mesh = static_cast<Mesh *>(ob.data);
 
-  BKE_sculpt_mask_layers_ensure(nullptr, nullptr, &ob, nullptr);
+  if (!mesh->attributes().contains(".sculpt_mask")) {
+    return OPERATOR_CANCELLED;
+  }
 
   bool create_new_object = RNA_boolean_get(op->ptr, "new_object");
   bool fill_holes = RNA_boolean_get(op->ptr, "fill_holes");
   float mask_threshold = RNA_float_get(op->ptr, "mask_threshold");
 
-  Mesh *mesh = static_cast<Mesh *>(ob.data);
   Mesh *new_mesh = (Mesh *)BKE_id_copy(&bmain, &mesh->id);
 
   /* Undo crashes when new object is created in the middle of a sculpt, see #87243. */
   if (ob.mode == OB_MODE_SCULPT && !create_new_object) {
-    sculpt_paint::undo::geometry_begin(ob, op);
+    sculpt_paint::undo::geometry_begin(scene, ob, op);
   }
 
   const BMAllocTemplate allocsize = BMALLOC_TEMPLATE_FROM_ME(new_mesh);
@@ -534,6 +541,7 @@ static int paint_mask_slice_exec(bContext *C, wmOperator *op)
     }
     if (!create_new_object) {
       sculpt_paint::undo::geometry_end(ob);
+      BKE_sculptsession_free_pbvh(ob);
     }
   }
 

@@ -3,11 +3,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 set(INC
-  .
-  ../blenkernel
-  ../imbuf
+  PUBLIC .
   ../makesrna
-  ../../../intern/locale
 )
 
 set(INC_SYS
@@ -21,18 +18,30 @@ set(SRC
   BLT_translation.hh
 )
 
+if(WITH_INTERNATIONAL)
+  list(APPEND SRC
+    intern/messages.cc
+    intern/messages.hh
+  )
+
+  if(APPLE)
+    list(APPEND SRC
+      intern/messages_apple.mm
+    )
+  endif()
+endif()
+
 set(LIB
-  bf_blenkernel
+  PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
   PRIVATE bf::dna
+  PRIVATE bf::imbuf
+  PRIVATE bf::intern::clog
   PRIVATE bf::intern::guardedalloc
 )
 
 if(WITH_INTERNATIONAL)
   add_definitions(-DWITH_INTERNATIONAL)
-  list(APPEND LIB
-    bf_intern_locale
-  )
 endif()
 
 if(WITH_PYTHON)
@@ -47,6 +56,7 @@ if(WITH_INPUT_IME)
 endif()
 
 blender_add_lib(bf_blentranslation "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")
+add_library(bf::blentranslation ALIAS bf_blentranslation)
 
 if(WITH_INTERNATIONAL)
   add_subdirectory(msgfmt)

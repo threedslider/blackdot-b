@@ -2,9 +2,9 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#ifndef GPU_SHADER
-#  pragma once
+#pragma once
 
+#if !defined(GPU_SHADER) && !defined(GLSL_CPP_STUBS)
 #  include "GPU_shader.hh"
 #  include "GPU_shader_shared_utils.hh"
 #  include "draw_defines.hh"
@@ -59,7 +59,7 @@ struct ObjectRef;
 /** \name Views
  * \{ */
 
-#ifndef DRW_VIEW_LEN
+#if !defined(DRW_VIEW_LEN) && !defined(GLSL_CPP_STUBS)
 /* Single-view case (default). */
 #  define drw_view_id 0
 #  define DRW_VIEW_LEN 1
@@ -173,7 +173,8 @@ struct ObjectInfos {
 
   float4 ob_color;
   uint index;
-  uint _pad2;
+  /** Used for Light Linking in EEVEE */
+  uint light_and_shadow_set_membership;
   float random;
   eObjectInfoFlag flag;
 #endif
@@ -184,6 +185,24 @@ struct ObjectInfos {
 #endif
 };
 BLI_STATIC_ASSERT_ALIGN(ObjectInfos, 16)
+
+inline uint receiver_light_set_get(ObjectInfos object_infos)
+{
+#if defined(GPU_SHADER) && !defined(DRAW_FINALIZE_SHADER)
+  return floatBitsToUint(object_infos.infos.y) & 0xFFu;
+#else
+  return object_infos.light_and_shadow_set_membership & 0xFFu;
+#endif
+}
+
+inline uint blocker_shadow_set_get(ObjectInfos object_infos)
+{
+#if defined(GPU_SHADER) && !defined(DRAW_FINALIZE_SHADER)
+  return (floatBitsToUint(object_infos.infos.y) >> 8u) & 0xFFu;
+#else
+  return (object_infos.light_and_shadow_set_membership >> 8u) & 0xFFu;
+#endif
+}
 
 struct ObjectBounds {
   /**
@@ -204,6 +223,18 @@ struct ObjectBounds {
 };
 BLI_STATIC_ASSERT_ALIGN(ObjectBounds, 16)
 
+/* Return true if `bounding_corners` are valid. Should be checked before accessing them.
+ * Does not guarantee that `bounding_sphere` is valid.
+ * Converting these bounds to an `IsectBox` may generate invalid clip planes.
+ * For safe `IsectBox` generation check `drw_bounds_are_valid`. */
+inline bool drw_bounds_corners_are_valid(ObjectBounds bounds)
+{
+  return bounds.bounding_sphere.w != -1.0f;
+}
+
+/* Return true if bounds are ready for culling.
+ * In this case, both `bounding_corners` and `bounding_sphere` are valid.
+ * These bounds can be safely converted to an `IsectBox` with valid clip planes. */
 inline bool drw_bounds_are_valid(ObjectBounds bounds)
 {
   return bounds.bounding_sphere.w >= 0.0f;
@@ -243,6 +274,10 @@ struct ObjectAttribute {
   uint hash_code;
 
 #if !defined(GPU_SHADER) && defined(__cplusplus)
+  /**
+   * Go through all possible source of the given object uniform attribute.
+   * Returns true if the attribute was correctly filled.
+   */
   bool sync(const blender::draw::ObjectRef &ref, const GPUUniformAttr &attr);
 #endif
 };
@@ -305,37 +340,6 @@ BLI_STATIC_ASSERT_ALIGN(DispatchCommand, 16)
 /** \} */
 
 /* -------------------------------------------------------------------- */
-/** \name Debug print
- * \{ */
-
-/* Take the header (DrawCommand) into account. */
-#define DRW_DEBUG_PRINT_MAX (8 * 1024) - 4
-/** \note Cannot be more than 255 (because of column encoding). */
-#define DRW_DEBUG_PRINT_WORD_WRAP_COLUMN 120u
-
-/* The debug print buffer is laid-out as the following struct.
- * But we use plain array in shader code instead because of driver issues. */
-struct DRWDebugPrintBuffer {
-  DrawCommand command;
-  /** Each character is encoded as 3 `uchar` with char_index, row and column position. */
-  uint char_array[DRW_DEBUG_PRINT_MAX];
-};
-BLI_STATIC_ASSERT_ALIGN(DRWDebugPrintBuffer, 16)
-
-/* Use number of char as vertex count. Equivalent to `DRWDebugPrintBuffer.command.v_count`. */
-#define drw_debug_print_cursor drw_debug_print_buf[0]
-/* Reuse first instance as row index as we don't use instancing. Equivalent to
- * `DRWDebugPrintBuffer.command.i_first`. */
-#define drw_debug_print_row_shared drw_debug_print_buf[3]
-/**
- * Offset to the first data. Equal to: `sizeof(DrawCommand) / sizeof(uint)`.
- * This is needed because we bind the whole buffer as a `uint` array.
- */
-#define drw_debug_print_offset 8
-
-/** \} */
-
-/* -------------------------------------------------------------------- */
 /** \name Debug draw shapes
  * \{ */
 
@@ -369,7 +373,7 @@ struct DRWDebugDrawBuffer {
   DrawCommand command;
   DRWDebugVert verts[DRW_DEBUG_DRAW_VERT_MAX];
 };
-BLI_STATIC_ASSERT_ALIGN(DRWDebugPrintBuffer, 16)
+BLI_STATIC_ASSERT_ALIGN(DRWDebugDrawBuffer, 16)
 
 /* Equivalent to `DRWDebugDrawBuffer.command.v_count`. */
 #define drw_debug_draw_v_count drw_debug_verts_buf[0].pos0

@@ -4,13 +4,15 @@
 
 #include "device/cpu/device_impl.h"
 
-#include <stdlib.h>
-#include <string.h>
+#include <cstdlib>
+#include <cstring>
 
 /* So ImathMath is included before our kernel_cpu_compat. */
 #ifdef WITH_OSL
 /* So no context pollution happens from indirectly included windows.h */
-#  include "util/windows.h"
+#  ifdef _WIN32
+#    include "util/windows.h"
+#  endif
 #  include <OSL/oslexec.h>
 #endif
 
@@ -23,35 +25,21 @@
 #endif
 
 #include "device/cpu/kernel.h"
-#include "device/cpu/kernel_thread_globals.h"
 
 #include "device/device.h"
 
-// clang-format off
-#include "kernel/device/cpu/compat.h"
-#include "kernel/device/cpu/globals.h"
 #include "kernel/device/cpu/kernel.h"
+#include "kernel/globals.h"
 #include "kernel/types.h"
-
-#include "kernel/osl/globals.h"
-// clang-format on
 
 #include "bvh/embree.h"
 
 #include "session/buffers.h"
 
-#include "util/debug.h"
-#include "util/foreach.h"
-#include "util/function.h"
 #include "util/guiding.h"
 #include "util/log.h"
-#include "util/map.h"
-#include "util/openimagedenoise.h"
-#include "util/optimization.h"
 #include "util/progress.h"
-#include "util/system.h"
 #include "util/task.h"
-#include "util/thread.h"
 
 CCL_NAMESPACE_BEGIN
 
@@ -67,9 +55,6 @@ CPUDevice::CPUDevice(const DeviceInfo &info_, Stats &stats_, Profiler &profiler_
     info.cpu_threads = TaskScheduler::max_concurrency();
   }
 
-#ifdef WITH_OSL
-  kernel_globals.osl = &osl_globals;
-#endif
 #ifdef WITH_EMBREE
   embree_device = rtcNewDevice("verbose=0");
 #endif
@@ -121,12 +106,13 @@ void CPUDevice::mem_alloc(device_memory &mem)
                 << string_human_readable_size(mem.memory_size()) << ")";
     }
 
-    if (mem.type == MEM_DEVICE_ONLY || !mem.host_pointer) {
+    if (mem.type == MEM_DEVICE_ONLY) {
       size_t alignment = MIN_ALIGNMENT_CPU_DATA_TYPES;
       void *data = util_aligned_malloc(mem.memory_size(), alignment);
       mem.device_pointer = (device_ptr)data;
     }
     else {
+      assert(!(mem.host_pointer == nullptr && mem.memory_size() > 0));
       mem.device_pointer = (device_ptr)mem.host_pointer;
     }
 
@@ -152,6 +138,11 @@ void CPUDevice::mem_copy_to(device_memory &mem)
 
     /* copy is no-op */
   }
+}
+
+void CPUDevice::mem_move_to_host(device_memory & /*mem*/)
+{
+  /* no-op */
 }
 
 void CPUDevice::mem_copy_from(
@@ -180,8 +171,8 @@ void CPUDevice::mem_free(device_memory &mem)
     tex_free((device_texture &)mem);
   }
   else if (mem.device_pointer) {
-    if (mem.type == MEM_DEVICE_ONLY || !mem.host_pointer) {
-      util_aligned_free((void *)mem.device_pointer);
+    if (mem.type == MEM_DEVICE_ONLY) {
+      util_aligned_free((void *)mem.device_pointer, mem.memory_size());
     }
     mem.device_pointer = 0;
     stats.mem_free(mem.device_size);
@@ -189,12 +180,12 @@ void CPUDevice::mem_free(device_memory &mem)
   }
 }
 
-device_ptr CPUDevice::mem_alloc_sub_ptr(device_memory &mem, size_t offset, size_t /*size*/)
+device_ptr CPUDevice::mem_alloc_sub_ptr(device_memory &mem, const size_t offset, size_t /*size*/)
 {
   return (device_ptr)(((char *)mem.device_pointer) + mem.memory_elements_size(offset));
 }
 
-void CPUDevice::const_copy_to(const char *name, void *host, size_t size)
+void CPUDevice::const_copy_to(const char *name, void *host, const size_t size)
 {
 #ifdef WITH_EMBREE
   if (strcmp(name, "data") == 0) {
@@ -284,7 +275,9 @@ void CPUDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
   }
   else
 #endif
+  {
     Device::build_bvh(bvh, progress, refit);
+  }
 }
 
 void *CPUDevice::get_guiding_device() const
@@ -305,24 +298,24 @@ void *CPUDevice::get_guiding_device() const
 }
 
 void CPUDevice::get_cpu_kernel_thread_globals(
-    vector<CPUKernelThreadGlobals> &kernel_thread_globals)
+    vector<ThreadKernelGlobalsCPU> &kernel_thread_globals)
 {
   /* Ensure latest texture info is loaded into kernel globals before returning. */
   load_texture_info();
 
   kernel_thread_globals.clear();
-  void *osl_memory = get_cpu_osl_memory();
+  OSLGlobals *osl_globals = get_cpu_osl_memory();
   for (int i = 0; i < info.cpu_threads; i++) {
-    kernel_thread_globals.emplace_back(kernel_globals, osl_memory, profiler, i);
+    kernel_thread_globals.emplace_back(kernel_globals, osl_globals, profiler, i);
   }
 }
 
-void *CPUDevice::get_cpu_osl_memory()
+OSLGlobals *CPUDevice::get_cpu_osl_memory()
 {
 #ifdef WITH_OSL
   return &osl_globals;
 #else
-  return NULL;
+  return nullptr;
 #endif
 }
 

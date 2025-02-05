@@ -10,6 +10,7 @@
 #include "BKE_lib_query.hh"
 #include "BKE_main.hh"
 #include "BKE_main_idmap.hh"
+#include "BKE_main_invariants.hh"
 #include "BKE_node.hh"
 #include "BKE_node_runtime.hh"
 #include "BKE_report.hh"
@@ -29,7 +30,7 @@ namespace blender::ed::space_node {
 
 struct NodeClipboardItemIDInfo {
   /** Name of the referenced ID. */
-  std::string id_name = "";
+  std::string id_name;
   /**
    * Library filepath of the referenced ID, together with its name it forms a unique identifier.
    *
@@ -37,7 +38,7 @@ struct NodeClipboardItemIDInfo {
    * data, persistent over new blend-files opening, this should guarantee that identical IDs from
    * identical libraries can be matched accordingly, even across several blend-files.
    */
-  std::string library_path = "";
+  std::string library_path;
 
   /** The validated ID pointer (may be the same as the original one, or a new one). */
   std::optional<ID *> new_id = {};
@@ -86,7 +87,7 @@ struct NodeClipboard {
     }
     this->nodes.clear_and_shrink();
     this->links.clear_and_shrink();
-    this->old_ids_to_idinfo.clear_and_shrink();
+    this->old_ids_to_idinfo.clear();
   }
 
   /**
@@ -260,7 +261,7 @@ struct NodeClipboard {
         IDWALK_READONLY);
 
     NodeClipboardItem item;
-    item.draw_rect = node.runtime->totr;
+    item.draw_rect = node.runtime->draw_bounds;
     item.node = new_node;
     this->nodes.append(std::move(item));
   }
@@ -287,6 +288,8 @@ static int node_clipboard_copy_exec(bContext *C, wmOperator * /*op*/)
   Map<const bNode *, bNode *> node_map;
   Map<const bNodeSocket *, bNodeSocket *> socket_map;
 
+  node_select_paired(tree);
+
   for (const bNode *node : tree.all_nodes()) {
     if (node->flag & SELECT) {
       clipboard.copy_add_node(*node, node_map, socket_map);
@@ -300,7 +303,7 @@ static int node_clipboard_copy_exec(bContext *C, wmOperator * /*op*/)
         new_node->parent = node_map.lookup(new_node->parent);
       }
       else {
-        bke::nodeDetachNode(&tree, new_node);
+        bke::node_detach_node(&tree, new_node);
       }
     }
   }
@@ -408,7 +411,7 @@ static int node_clipboard_paste_exec(bContext *C, wmOperator *op)
   }
 
   for (bNode *new_node : node_map.values()) {
-    bke::nodeSetSelected(new_node, true);
+    bke::node_set_selected(new_node, true);
 
     new_node->flag &= ~NODE_ACTIVE;
 
@@ -437,8 +440,8 @@ static int node_clipboard_paste_exec(bContext *C, wmOperator *op)
     for (bNode *new_node : node_map.values()) {
       /* Skip the offset for parented nodes since the location is in parent space. */
       if (new_node->parent == nullptr) {
-        new_node->locx += offset.x;
-        new_node->locy += offset.y;
+        new_node->location[0] += offset.x;
+        new_node->location[1] += offset.y;
       }
     }
   }
@@ -446,7 +449,7 @@ static int node_clipboard_paste_exec(bContext *C, wmOperator *op)
   remap_node_pairing(tree, node_map);
 
   for (bNode *new_node : node_map.values()) {
-    bke::nodeDeclarationEnsure(&tree, new_node);
+    bke::node_declaration_ensure(&tree, new_node);
   }
 
   /* Add links between existing nodes. */
@@ -456,12 +459,12 @@ static int node_clipboard_paste_exec(bContext *C, wmOperator *op)
     if (!from_node || !to_node) {
       continue;
     }
-    bNodeSocket *from = bke::nodeFindSocket(from_node, SOCK_OUT, link.from_socket.c_str());
-    bNodeSocket *to = bke::nodeFindSocket(to_node, SOCK_IN, link.to_socket.c_str());
+    bNodeSocket *from = bke::node_find_socket(from_node, SOCK_OUT, link.from_socket.c_str());
+    bNodeSocket *to = bke::node_find_socket(to_node, SOCK_IN, link.to_socket.c_str());
     if (!from || !to) {
       continue;
     }
-    bNodeLink *new_link = bke::nodeAddLink(&tree, from_node, from, to_node, to);
+    bNodeLink *new_link = bke::node_add_link(&tree, from_node, from, to_node, to);
     new_link->multi_input_sort_id = link.multi_input_sort_id;
   }
 
@@ -471,7 +474,7 @@ static int node_clipboard_paste_exec(bContext *C, wmOperator *op)
     update_multi_input_indices_for_removed_links(*new_node);
   }
 
-  ED_node_tree_propagate_change(C, bmain, &tree);
+  BKE_main_ensure_invariants(*bmain);
   /* Pasting nodes can create arbitrary new relations because nodes can reference IDs. */
   DEG_relations_tag_update(bmain);
 

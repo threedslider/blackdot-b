@@ -10,27 +10,25 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_array.hh"
 #include "BLI_color.hh"
 #include "BLI_listbase.h"
 #include "BLI_math_rotation.h"
-#include "BLI_math_vector.h"
 #include "BLI_math_vector_types.hh"
 #include "BLI_span.hh"
 #include "BLI_utildefines.h"
 
 #include "DNA_curve_types.h"
+#include "DNA_object_types.h"
+#include "DNA_scene_types.h"
 
 #include "BKE_curve.hh"
 #include "BKE_curves.hh"
-#include "BKE_displist.h"
 #include "BKE_geometry_set.hh"
 #include "BKE_object_types.hh"
 #include "BKE_vfont.hh"
 
 #include "GPU_batch.hh"
 #include "GPU_capabilities.hh"
-#include "GPU_material.hh"
 #include "GPU_texture.hh"
 
 #include "UI_resources.hh"
@@ -549,16 +547,16 @@ static void curve_create_edit_curves_nor(CurveRenderData *rdata,
     attr_id.pos = GPU_vertformat_attr_add(&format, "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
     attr_id.rad = GPU_vertformat_attr_add(&format, "rad", GPU_COMP_F32, 1, GPU_FETCH_FLOAT);
     attr_id.nor = GPU_vertformat_attr_add(
-        &format, "nor", GPU_COMP_I10, 3, GPU_FETCH_INT_TO_FLOAT_UNIT);
+        &format, "nor", GPU_COMP_I10, 4, GPU_FETCH_INT_TO_FLOAT_UNIT);
     attr_id.tan = GPU_vertformat_attr_add(
-        &format, "tan", GPU_COMP_I10, 3, GPU_FETCH_INT_TO_FLOAT_UNIT);
+        &format, "tan", GPU_COMP_I10, 4, GPU_FETCH_INT_TO_FLOAT_UNIT);
 
     attr_id.pos_hq = GPU_vertformat_attr_add(&format_hq, "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
     attr_id.rad_hq = GPU_vertformat_attr_add(&format_hq, "rad", GPU_COMP_F32, 1, GPU_FETCH_FLOAT);
     attr_id.nor_hq = GPU_vertformat_attr_add(
-        &format_hq, "nor", GPU_COMP_I16, 3, GPU_FETCH_INT_TO_FLOAT_UNIT);
+        &format_hq, "nor", GPU_COMP_I16, 4, GPU_FETCH_INT_TO_FLOAT_UNIT);
     attr_id.tan_hq = GPU_vertformat_attr_add(
-        &format_hq, "tan", GPU_COMP_I16, 3, GPU_FETCH_INT_TO_FLOAT_UNIT);
+        &format_hq, "tan", GPU_COMP_I16, 4, GPU_FETCH_INT_TO_FLOAT_UNIT);
   }
 
   const GPUVertFormat &format_ptr = do_hq_normals ? format_hq : format;
@@ -660,7 +658,7 @@ static void curve_create_edit_data_and_handles(CurveRenderData *rdata,
   if (format_pos.attr_len == 0) {
     /* initialize vertex formats */
     attr_id.pos = GPU_vertformat_attr_add(&format_pos, "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
-    attr_id.data = GPU_vertformat_attr_add(&format_data, "data", GPU_COMP_U8, 1, GPU_FETCH_INT);
+    attr_id.data = GPU_vertformat_attr_add(&format_data, "data", GPU_COMP_U32, 1, GPU_FETCH_INT);
   }
 
   int verts_len_capacity = curve_render_data_overlay_verts_len_get(rdata);
@@ -715,7 +713,7 @@ static void curve_create_edit_data_and_handles(CurveRenderData *rdata,
           GPU_indexbuf_add_line_verts(elbp_lines, vbo_len_used + 1, vbo_len_used + 2);
         }
         if (vbo_data) {
-          const uint8_t vflag[3] = {
+          const uint32_t vflag[3] = {
               beztriple_vflag_get(rdata, bezt->f1, bezt->h1, a, nu_id, true, handle_selected),
               beztriple_vflag_get(rdata, bezt->f2, bezt->h1, a, nu_id, false, handle_selected),
               beztriple_vflag_get(rdata, bezt->f3, bezt->h2, a, nu_id, true, handle_selected),
@@ -756,7 +754,7 @@ static void curve_create_edit_data_and_handles(CurveRenderData *rdata,
           }
         }
         if (vbo_data) {
-          uint8_t vflag = bpoint_vflag_get(rdata, bp->f1, a, nu_id, u);
+          uint32_t vflag = bpoint_vflag_get(rdata, bp->f1, a, nu_id, u);
           GPU_vertbuf_attr_set(vbo_data, attr_id.data, vbo_len_used, &vflag);
         }
         if (vbo_pos) {
@@ -817,11 +815,6 @@ gpu::Batch *DRW_curve_batch_cache_get_edit_verts(Curve *cu)
 {
   CurveBatchCache *cache = curve_batch_cache_get(cu);
   return DRW_batch_request(&cache->batch.edit_verts);
-}
-
-int DRW_curve_material_count_get(const Curve *cu)
-{
-  return max_ii(1, cu->totcol);
 }
 
 /** \} */

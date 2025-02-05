@@ -14,13 +14,12 @@
 #  include <functional>
 #  include <iostream>
 #  include <memory>
+#  include <numeric>
 
-#  include "BLI_allocator.hh"
 #  include "BLI_array.hh"
 #  include "BLI_assert.h"
 #  include "BLI_delaunay_2d.hh"
-#  include "BLI_hash.hh"
-#  include "BLI_kdopbvh.h"
+#  include "BLI_kdopbvh.hh"
 #  include "BLI_map.hh"
 #  include "BLI_math_geom.h"
 #  include "BLI_math_matrix.h"
@@ -41,6 +40,10 @@
 #  include "BLI_mesh_intersect.hh"
 
 // #  define PERFDEBUG
+
+#  ifdef _WIN_32
+#    include "BLI_fileops.h"
+#  endif
 
 namespace blender::meshintersect {
 
@@ -3105,10 +3108,15 @@ void write_obj_mesh(IMesh &m, const std::string &objname)
    * This is just for developer debugging anyway,
    * and should never be called in production Blender. */
 #  ifdef _WIN_32
-  const char *objdir = BLI_getenv("HOME");
+  const char *objdir = BLI_dir_home();
+  if (objdir == nullptr) {
+    std::cout << "Could not access home directory\n";
+    return;
+  }
 #  else
   const char *objdir = "/tmp/";
 #  endif
+
   if (m.face_size() == 0) {
     return;
   }

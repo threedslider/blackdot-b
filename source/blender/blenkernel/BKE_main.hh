@@ -25,6 +25,8 @@
 #include "BLI_compiler_attrs.h"
 #include "BLI_sys_types.h"
 
+#include "BKE_lib_query.hh" /* For LibraryForeachIDCallbackFlag. */
+
 struct BLI_mempool;
 struct BlendThumbnail;
 struct GHash;
@@ -59,7 +61,7 @@ struct MainIDRelationsEntryItem {
   /* Session uid of the `id_pointer`. */
   uint session_uid;
 
-  int usage_flag; /* Using IDWALK_ enums, defined in BKE_lib_query.hh */
+  LibraryForeachIDCallbackFlag usage_flag; /* Using IDWALK_ enums, defined in BKE_lib_query.hh */
 };
 
 struct MainIDRelationsEntry {
@@ -204,9 +206,23 @@ struct Main {
    */
   bool is_action_slot_to_id_map_dirty;
 
+  /**
+   * The blend-file thumbnail. If set, it will show as image preview of the blend-file in the
+   * system's file-browser.
+   */
   BlendThumbnail *blen_thumb;
 
+  /**
+   * The library matching the current Main.
+   *
+   * Typically `nullptr` (for the `G_MAIN` representing the currently opened blend-file).
+   *
+   * Mainly set and used during the blend-file read/write process when 'split' Mains are used to
+   * isolate and process all linked IDs from a single library.
+   */
   Library *curlib;
+
+  /** Listbase for all ID types, containing all IDs for the current Main. */
   ListBase scenes;
   ListBase libraries;
   ListBase objects;
@@ -265,8 +281,10 @@ struct Main {
   /** Used for efficient calculations of unique names. */
   UniqueName_Map *name_map;
 
-  /* Used for efficient calculations of unique names. Covers all names in current Main, including
-   * linked data ones. */
+  /**
+   * Used for efficient calculations of unique names. Covers all names in current Main, including
+   * linked data ones.
+   */
   UniqueName_Map *name_map_global;
 
   MainLock *lock;
@@ -278,7 +296,7 @@ struct Main {
  * \note Always generate a non-global Main, use #BKE_blender_globals_main_replace to put a newly
  * created one in `G_MAIN`.
  */
-Main *BKE_main_new(void);
+Main *BKE_main_new();
 /**
  * Initialize a Main data-base.
  *
@@ -292,16 +310,16 @@ void BKE_main_init(Main &bmain);
  * This is similar to a call to #BKE_main_destroy followed by #BKE_main_init, however the internal
  * #Main::lock is kept unchanged, and the #Main::is_global_main flag is not reset to `true` either.
  *
- * \note: Unlike #BKE_main_free, only process the given \a bmain, without handling any potential
+ * \note Unlike #BKE_main_free, only process the given \a bmain, without handling any potential
  * other linked Main.
  */
 void BKE_main_clear(Main &bmain);
 /**
  * Clear and free all data in given \a bmain, but does not free \a bmain itself.
  *
- * \note: In most cases, #BKE_main_free should be used instead of this function.
+ * \note In most cases, #BKE_main_free should be used instead of this function.
  *
- * \note: Unlike #BKE_main_free, only process the given \a bmain, without handling any potential
+ * \note Unlike #BKE_main_free, only process the given \a bmain, without handling any potential
  * other linked Main.
  */
 void BKE_main_destroy(Main &bmain);
@@ -505,6 +523,18 @@ void BKE_main_library_weak_reference_remove_item(
   ((void)0)
 
 /**
+ * Generates a raw .blend file thumbnail data from a raw image buffer.
+ *
+ * \param bmain: If not NULL, also store generated data in this Main.
+ * \param rect: RGBA image buffer.
+ * \param size: The size of `rect`.
+ * \return The generated .blend file raw thumbnail data.
+ */
+BlendThumbnail *BKE_main_thumbnail_from_buffer(Main *bmain,
+                                               const uint8_t *rect,
+                                               const int size[2]);
+
+/**
  * Generates a raw .blend file thumbnail data from given image.
  *
  * \param bmain: If not NULL, also store generated data in this Main.
@@ -555,7 +585,7 @@ ListBase *which_libbase(Main *bmain, short type);
  * \note The order of each ID type #ListBase in the array is determined by the `INDEX_ID_<IDTYPE>`
  * enum definitions in `DNA_ID.h`. See also the #FOREACH_MAIN_ID_BEGIN macro in `BKE_main.hh`
  */
-int set_listbasepointers(Main *main, ListBase *lb[]);
+int set_listbasepointers(Main *bmain, ListBase *lb[]);
 
 #define MAIN_VERSION_FILE_ATLEAST(main, ver, subver) \
   ((main)->versionfile > (ver) || \

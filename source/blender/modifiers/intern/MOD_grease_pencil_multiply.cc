@@ -6,12 +6,9 @@
  * \ingroup modifiers
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_math_matrix.hh"
 
 #include "DNA_defaults.h"
-#include "DNA_material_types.h"
 #include "DNA_modifier_types.h"
 #include "DNA_scene_types.h"
 
@@ -20,8 +17,6 @@
 #include "BKE_geometry_set.hh"
 #include "BKE_grease_pencil.hh"
 #include "BKE_instances.hh"
-#include "BKE_lib_query.hh"
-#include "BKE_material.h"
 #include "BKE_modifier.hh"
 #include "BKE_screen.hh"
 
@@ -120,7 +115,6 @@ static bke::CurvesGeometry duplicate_strokes(const bke::CurvesGeometry &curves,
   geometry::RealizeInstancesOptions options;
   options.keep_original_ids = true;
   options.realize_instance_attributes = true;
-  options.propagation_info = {};
   bke::GeometrySet result_geo = geometry::realize_instances(
       bke::GeometrySet::from_instances(instances.release()), options);
   return std::move(result_geo.get_curves_for_write()->geometry.wrap());
@@ -242,27 +236,26 @@ static void panel_draw(const bContext *C, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "duplicates", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "duplicates", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   uiLayout *col = uiLayoutColumn(layout, false);
   uiLayoutSetActive(col, RNA_int_get(ptr, "duplicates") > 0);
-  uiItemR(col, ptr, "distance", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "offset", UI_ITEM_R_SLIDER, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "distance", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "offset", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
 
-  if (uiLayout *fade_panel = uiLayoutPanelProp(C, layout, ptr, "open_fading_panel", "Fade")) {
-    uiLayoutSetPropSep(fade_panel, true);
-    uiItemR(fade_panel, ptr, "use_fade", UI_ITEM_NONE, nullptr, ICON_NONE);
-
+  if (uiLayout *fade_panel = uiLayoutPanelPropWithBoolHeader(
+          C, layout, ptr, "open_fading_panel", "use_fade", IFACE_("Fade")))
+  {
     uiLayout *sub = uiLayoutColumn(fade_panel, false);
     uiLayoutSetActive(sub, RNA_boolean_get(ptr, "use_fade"));
 
-    uiItemR(sub, ptr, "fading_center", UI_ITEM_NONE, nullptr, ICON_NONE);
-    uiItemR(sub, ptr, "fading_thickness", UI_ITEM_R_SLIDER, nullptr, ICON_NONE);
-    uiItemR(sub, ptr, "fading_opacity", UI_ITEM_R_SLIDER, nullptr, ICON_NONE);
+    uiItemR(sub, ptr, "fading_center", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiItemR(sub, ptr, "fading_thickness", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+    uiItemR(sub, ptr, "fading_opacity", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
   }
 
   if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", "Influence"))
+          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);

@@ -10,6 +10,8 @@
 
 #include <mutex>
 
+#include "xxhash.h"
+
 #include "BLI_map.hh"
 #include "BLI_utility_mixins.hh"
 
@@ -51,29 +53,22 @@ struct VKGraphicsInfo {
 
     bool operator==(const VertexIn &other) const
     {
-      // TODO: use an exact implementation and remove the hash compare.
-      /*
+      /* TODO: use an exact implementation and remove the hash compare. */
+#if 0
       return vk_topology == other.vk_topology && attributes.hash() == other.attributes.hash() &&
              bindings.hash() == other.bindings.hash();
-      */
+#endif
       return hash() == other.hash();
     }
 
     uint64_t hash() const
     {
-      uint64_t hash = 0;
-      hash = hash * 33 ^ uint64_t(vk_topology);
-      for (const VkVertexInputAttributeDescription &attribute : attributes) {
-        hash = hash * 33 ^ uint64_t(attribute.location);
-        hash = hash * 33 ^ uint64_t(attribute.binding);
-        hash = hash * 33 ^ uint64_t(attribute.format);
-        hash = hash * 33 ^ uint64_t(attribute.offset);
-      }
-      for (const VkVertexInputBindingDescription &binding : bindings) {
-        hash = hash * 33 ^ uint64_t(binding.binding);
-        hash = hash * 33 ^ uint64_t(binding.inputRate);
-        hash = hash * 33 ^ uint64_t(binding.stride);
-      }
+      uint64_t hash = uint64_t(vk_topology);
+      hash = hash * 33 ^
+             XXH3_64bits(attributes.data(),
+                         attributes.size() * sizeof(VkVertexInputAttributeDescription));
+      hash = hash * 33 ^ XXH3_64bits(bindings.data(),
+                                     bindings.size() * sizeof(VkVertexInputBindingDescription));
       return hash;
     }
   };
@@ -101,8 +96,26 @@ struct VKGraphicsInfo {
 
     bool operator==(const FragmentShader &other) const
     {
-      // TODO: Do not use hash.
-      return vk_fragment_module == other.vk_fragment_module && hash() == other.hash();
+      if (vk_fragment_module != other.vk_fragment_module ||
+          viewports.size() != other.viewports.size() || scissors.size() != other.scissors.size() ||
+          hash() != other.hash())
+      {
+        return false;
+      }
+
+      if (memcmp(viewports.data(),
+                 other.viewports.data(),
+                 viewports.size() * sizeof(VkViewport)) != 0)
+      {
+        return false;
+      }
+
+      if (memcmp(scissors.data(), other.scissors.data(), scissors.size() * sizeof(VkRect2D)) != 0)
+      {
+        return false;
+      }
+
+      return true;
     }
 
     uint64_t hash() const
@@ -121,44 +134,53 @@ struct VKGraphicsInfo {
    private:
     uint64_t calc_hash() const
     {
-      uint64_t hash = 0;
-      hash = hash * 33 ^ uint64_t(vk_fragment_module);
-      for (const VkViewport &vk_viewport : viewports) {
-        hash = hash * 33 ^ uint64_t(vk_viewport.x);
-        hash = hash * 33 ^ uint64_t(vk_viewport.y);
-        hash = hash * 33 ^ uint64_t(vk_viewport.width);
-        hash = hash * 33 ^ uint64_t(vk_viewport.height);
-        hash = hash * 33 ^ uint64_t(vk_viewport.minDepth);
-        hash = hash * 33 ^ uint64_t(vk_viewport.maxDepth);
-      }
-      for (const VkRect2D &scissor : scissors) {
-        hash = hash * 33 ^ uint64_t(scissor.offset.x);
-        hash = hash * 33 ^ uint64_t(scissor.offset.y);
-        hash = hash * 33 ^ uint64_t(scissor.extent.width);
-        hash = hash * 33 ^ uint64_t(scissor.extent.height);
-      }
+      uint64_t hash = uint64_t(vk_fragment_module);
+      hash = hash * 33 ^ XXH3_64bits(viewports.data(), viewports.size() * sizeof(VkViewport));
+      hash = hash * 33 ^ XXH3_64bits(scissors.data(), scissors.size() * sizeof(VkRect2D));
+
       return hash;
     }
   };
   struct FragmentOut {
+    uint32_t color_attachment_size;
+
+    /* Dynamic rendering */
     VkFormat depth_attachment_format;
     VkFormat stencil_attachment_format;
     Vector<VkFormat> color_attachment_formats;
+    /* Render pass rendering */
+    VkRenderPass vk_render_pass;
 
     bool operator==(const FragmentOut &other) const
     {
+#if 1
       return hash() == other.hash();
+#else
+      if (depth_attachment_format != other.depth_attachment_format ||
+          stencil_attachment_format != other.stencil_attachment_format ||
+          vk_render_pass != other.vk_render_pass ||
+          color_attachment_formats.size() != other.color_attachment_formats.size())
+      {
+        return false;
+      }
+
+      if (memcmp(color_attachment_formats.data(),
+                 other.color_attachment_formats.data(),
+                 color_attachment_formats.size() * sizeof(VkFormat)) == 0)
+      {
+        return false;
+      }
+      return true;
+#endif
     }
 
     uint64_t hash() const
     {
-      uint64_t hash = 0;
+      uint64_t hash = uint64_t(vk_render_pass);
       hash = hash * 33 ^ uint64_t(depth_attachment_format);
       hash = hash * 33 ^ uint64_t(stencil_attachment_format);
-      for (VkFormat color_attachment_format : color_attachment_formats) {
-        hash = hash * 33 ^ uint64_t(color_attachment_format);
-      }
-
+      hash = hash * 33 ^ XXH3_64bits(color_attachment_formats.data(),
+                                     color_attachment_formats.size() * sizeof(VkFormat));
       return hash;
     }
   };
@@ -262,6 +284,8 @@ class VKPipelinePool : public NonCopyable {
   VkPipelineVertexInputStateCreateInfo vk_pipeline_vertex_input_state_create_info_;
 
   VkPipelineRasterizationStateCreateInfo vk_pipeline_rasterization_state_create_info_;
+  VkPipelineRasterizationProvokingVertexStateCreateInfoEXT
+      vk_pipeline_rasterization_provoking_vertex_state_info_;
   VkPipelineViewportStateCreateInfo vk_pipeline_viewport_state_create_info_;
   VkPipelineDepthStencilStateCreateInfo vk_pipeline_depth_stencil_state_create_info_;
 
@@ -275,10 +299,16 @@ class VKPipelinePool : public NonCopyable {
   Vector<VkSpecializationMapEntry> vk_specialization_map_entries_;
   VkPushConstantRange vk_push_constant_range_;
 
+  VkPipelineCache vk_pipeline_cache_static_;
+  VkPipelineCache vk_pipeline_cache_non_static_;
+
   std::mutex mutex_;
 
  public:
   VKPipelinePool();
+
+  void init();
+
   /**
    * Get an existing or create a new compute pipeline based on the provided ComputeInfo.
    *
@@ -286,7 +316,8 @@ class VKPipelinePool : public NonCopyable {
    * pipeline creation process.
    */
   VkPipeline get_or_create_compute_pipeline(VKComputeInfo &compute_info,
-                                            VkPipeline vk_pipeline_base = VK_NULL_HANDLE);
+                                            bool is_static_shader,
+                                            VkPipeline vk_pipeline_base);
 
   /**
    * Get an existing or create a new compute pipeline based on the provided ComputeInfo.
@@ -295,7 +326,8 @@ class VKPipelinePool : public NonCopyable {
    * pipeline creation process.
    */
   VkPipeline get_or_create_graphics_pipeline(VKGraphicsInfo &graphics_info,
-                                             VkPipeline vk_pipeline_base = VK_NULL_HANDLE);
+                                             bool is_static_shader,
+                                             VkPipeline vk_pipeline_base);
 
   /**
    * Remove all shader pipelines that uses the given shader_module.
@@ -309,6 +341,38 @@ class VKPipelinePool : public NonCopyable {
    * that would be called after the device is removed.
    */
   void free_data();
+
+  /**
+   * Read the static pipeline cache from cache file.
+   *
+   * Pipeline caches requires blender to be build with `WITH_BUILDINFO` enabled . Between commits
+   * shader modules can change and shader module identifiers cannot be used. We use the build info
+   * to check if the identifiers can be reused.
+   *
+   * Previous stored pipeline cache will not be read when G_DEBUG_GPU is enabled. In this case the
+   * shader modules will be compiled with other settings and any cached pipeline will not be used
+   * during this session.
+   *
+   * NOTE: When developing shaders we assume that `WITH_BUILDINFO` is turned off or `G_DEBUG_GPU`
+   * flag is set.
+   */
+  void read_from_disk();
+
+  /**
+   * Store the static pipeline cache to disk.
+   *
+   * Pipeline caches requires blender to be build with `WITH_BUILDINFO` enabled . Between commits
+   * shader modules can change and shader module identifiers cannot be used. We use the build info
+   * to check if the identifiers can be reused.
+   *
+   * The cache will not be written when G_DEBUG_GPU is active. In this case the shader modules have
+   * been generated with debug information and other compiler settings are used. This will clutter
+   * the pipeline cache.
+   *
+   * NOTE: When developing shaders we assume that `WITH_BUILDINFO` is turned off or `G_DEBUG_GPU`
+   * flag is set.
+   */
+  void write_to_disk();
 
  private:
   VkSpecializationInfo *specialization_info_update(

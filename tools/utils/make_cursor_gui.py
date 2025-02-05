@@ -6,6 +6,11 @@
 # Created by Robert Wenzlaff (Det. Thorn).
 # Oct. 30, 2003
 
+__all__ = (
+    "main",
+)
+
+import sys
 from tkinter import (
     Button,
     Canvas,
@@ -288,9 +293,15 @@ class App:
 
 
 ################## Main App #######################
-root = Tk()
+def main() -> int:
+    root = Tk()
 
-app = App(root)
-root.title("Cursor Maker")
+    _app = App(root)
+    root.title("Cursor Maker")
 
-root.mainloop()
+    root.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

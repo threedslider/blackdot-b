@@ -39,7 +39,8 @@ class VKSynchronizationNode : public VKNodeInfo<VKNodeType::SYNCHRONIZATION,
    * (`VK*Data`/`VK*CreateInfo`) types can be included in the same header file as the logic. The
    * actual node data (`VKRenderGraphNode` includes all header files.)
    */
-  template<typename Node> static void set_node_data(Node &node, const CreateInfo &create_info)
+  template<typename Node, typename Storage>
+  static void set_node_data(Node &node, Storage & /* storage */, const CreateInfo &create_info)
   {
     UNUSED_VARS(create_info);
     node.synchronization = {};
@@ -53,10 +54,8 @@ class VKSynchronizationNode : public VKNodeInfo<VKNodeType::SYNCHRONIZATION,
                    const CreateInfo &create_info) override
   {
     ResourceWithStamp resource = resources.get_image_and_increase_stamp(create_info.vk_image);
-    node_links.outputs.append({resource,
-                               VK_ACCESS_MEMORY_WRITE_BIT,
-                               create_info.vk_image_layout,
-                               create_info.vk_image_aspect});
+    node_links.outputs.append(
+        {resource, VK_ACCESS_NONE, create_info.vk_image_layout, create_info.vk_image_aspect});
   }
 
   /**

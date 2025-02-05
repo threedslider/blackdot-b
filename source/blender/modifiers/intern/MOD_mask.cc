@@ -6,8 +6,6 @@
  * \ingroup modifiers
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_utildefines.h"
 
 #include "BLI_array_utils.hh"
@@ -23,7 +21,7 @@
 #include "DNA_object_types.h"
 #include "DNA_screen_types.h"
 
-#include "BKE_action.h" /* BKE_pose_channel_find_name */
+#include "BKE_action.hh" /* BKE_pose_channel_find_name */
 #include "BKE_customdata.hh"
 #include "BKE_deform.hh"
 #include "BKE_lib_query.hh"
@@ -767,23 +765,23 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   int mode = RNA_enum_get(ptr, "mode");
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
   uiLayoutSetPropSep(layout, true);
 
   if (mode == MOD_MASK_MODE_ARM) {
     row = uiLayoutRow(layout, true);
-    uiItemR(row, ptr, "armature", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(row, ptr, "armature", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     sub = uiLayoutRow(row, true);
     uiLayoutSetPropDecorate(sub, false);
     uiItemR(sub, ptr, "invert_vertex_group", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
   }
   else if (mode == MOD_MASK_MODE_VGROUP) {
-    modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", nullptr);
-    uiItemR(layout, ptr, "use_smooth", UI_ITEM_NONE, nullptr, ICON_NONE);
+    modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
+    uiItemR(layout, ptr, "use_smooth", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
-  uiItemR(layout, ptr, "threshold", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_panel_end(layout, ptr);
 }
@@ -801,8 +799,8 @@ ModifierTypeInfo modifierType_Mask = {
     /*srna*/ &RNA_MaskModifier,
     /*type*/ ModifierTypeType::Nonconstructive,
     /*flags*/
-    (ModifierTypeFlag)(eModifierTypeFlag_AcceptsMesh | eModifierTypeFlag_SupportsMapping |
-                       eModifierTypeFlag_SupportsEditmode),
+    (eModifierTypeFlag_AcceptsMesh | eModifierTypeFlag_SupportsMapping |
+     eModifierTypeFlag_SupportsEditmode),
     /*icon*/ ICON_MOD_MASK,
 
     /*copy_data*/ BKE_modifier_copydata_generic,

@@ -26,7 +26,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "axis", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "axis", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
   uiItemR(layout, ptr, "pivot_axis", UI_ITEM_NONE, IFACE_("Pivot"), ICON_NONE);
@@ -259,13 +259,15 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  fn_node_type_base(
-      &ntype, FN_NODE_ALIGN_EULER_TO_VECTOR, "Align Euler to Vector", NODE_CLASS_CONVERTER);
+  fn_node_type_base(&ntype, "FunctionNodeAlignEulerToVector", FN_NODE_ALIGN_EULER_TO_VECTOR);
+  ntype.ui_name = "Align Euler to Vector";
+  ntype.enum_name_legacy = "ALIGN_EULER_TO_VECTOR";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
   ntype.draw_buttons = node_layout;
   ntype.build_multi_function = node_build_multi_function;
   ntype.deprecation_notice = N_("Use the \"Align Rotation to Vector\" node instead");
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

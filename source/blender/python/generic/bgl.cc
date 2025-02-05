@@ -14,23 +14,24 @@
 
 #include <Python.h>
 
-#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "MEM_guardedalloc.h"
 
 #include "GPU_context.hh"
-#include "GPU_state.hh"
 
-#include "py_capi_utils.h"
-
-#include "BKE_global.hh"
+#include "py_capi_utils.hh"
 
 #include <epoxy/gl.h>
 
-#include "bgl.h"
+#include <algorithm>
 
 #include "CLG_log.h"
+
+/* Forward declare API's defines here. */
+#define USE_BGL_DEPRECATED_API
+#include "bgl.hh" /* Own include. */
+#undef USE_BGL_DEPRECATED_API
 
 static CLG_LogRef LOG = {"bgl"};
 
@@ -206,19 +207,19 @@ struct BufferOrOffset {
 #define GLenum_str "i"
 #define GLenum_var(num) bgl_var##num
 #define GLenum_ref(num) &bgl_var##num
-#define GLenum_def(num) /* unsigned */ int GLenum_var(num)
+#define GLenum_def(num) /*unsigned*/ int GLenum_var(num)
 
 /* Type: `typedef uint GLboolean`. */
 #define GLboolean_str "b"
 #define GLboolean_var(num) bgl_var##num
 #define GLboolean_ref(num) &bgl_var##num
-#define GLboolean_def(num) /* unsigned */ char GLboolean_var(num)
+#define GLboolean_def(num) /*unsigned*/ char GLboolean_var(num)
 
 /* Type: `typedef uint GLbitfield`. */
 #define GLbitfield_str "i"
 #define GLbitfield_var(num) bgl_var##num
 #define GLbitfield_ref(num) &bgl_var##num
-#define GLbitfield_def(num) /* unsigned */ int GLbitfield_var(num)
+#define GLbitfield_def(num) /*unsigned*/ int GLbitfield_var(num)
 
 #if 0
 /* Type: `typedef signed char GLbyte`. */
@@ -262,28 +263,28 @@ struct BufferOrOffset {
 #define GLubyte_str "B"
 #define GLubyte_var(num) bgl_var##num
 #define GLubyte_ref(num) &bgl_var##num
-#define GLubyte_def(num) /* unsigned */ char GLubyte_var(num)
+#define GLubyte_def(num) /*unsigned*/ char GLubyte_var(num)
 
 #if 0
 /* Type: `typedef ushort GLushort`. */
 #  define GLushort_str "H"
 #  define GLushort_var(num) bgl_var##num
 #  define GLushort_ref(num) &bgl_var##num
-#  define GLushort_def(num) /* unsigned */ short GLushort_var(num)
+#  define GLushort_def(num) /*unsigned*/ short GLushort_var(num)
 #endif
 
 /* Type: `typedef uint GLuint`. */
 #define GLuint_str "I"
 #define GLuint_var(num) bgl_var##num
 #define GLuint_ref(num) &bgl_var##num
-#define GLuint_def(num) /* unsigned */ int GLuint_var(num)
+#define GLuint_def(num) /*unsigned*/ int GLuint_var(num)
 
 /* Type: `typedef uint GLuint64`. */
 #if 0
 #  define GLuint64_str "Q"
 #  define GLuint64_var(num) bgl_var##num
 #  define GLuint64_ref(num) &bgl_var##num
-#  define GLuint64_def(num) /* unsigned */ int GLuint64_var(num)
+#  define GLuint64_def(num) /*unsigned*/ int GLuint64_var(num)
 #endif
 
 /* Type: `typedef uint GLsync`. */
@@ -291,7 +292,7 @@ struct BufferOrOffset {
 #  define GLsync_str "I"
 #  define GLsync_var(num) bgl_var##num
 #  define GLsync_ref(num) &bgl_var##num
-#  define GLsync_def(num) /* unsigned */ int GLsync_var(num)
+#  define GLsync_def(num) /*unsigned*/ int GLsync_var(num)
 #endif
 
 /* Type: `typedef float GLfloat`. */
@@ -909,15 +910,9 @@ static PyObject *Buffer_slice(Buffer *self, Py_ssize_t begin, Py_ssize_t end)
 {
   PyObject *list;
 
-  if (begin < 0) {
-    begin = 0;
-  }
-  if (end > self->dimensions[0]) {
-    end = self->dimensions[0];
-  }
-  if (begin > end) {
-    begin = end;
-  }
+  begin = std::max<Py_ssize_t>(begin, 0);
+  end = std::min<Py_ssize_t>(end, self->dimensions[0]);
+  begin = std::min(begin, end);
 
   list = PyList_New(end - begin);
 
@@ -968,15 +963,9 @@ static int Buffer_ass_slice(Buffer *self, Py_ssize_t begin, Py_ssize_t end, PyOb
   int err = 0;
   Py_ssize_t count;
 
-  if (begin < 0) {
-    begin = 0;
-  }
-  if (end > self->dimensions[0]) {
-    end = self->dimensions[0];
-  }
-  if (begin > end) {
-    begin = end;
-  }
+  begin = std::max<Py_ssize_t>(begin, 0);
+  end = std::min<Py_ssize_t>(end, self->dimensions[0]);
+  begin = std::min(begin, end);
 
   if (!PySequence_Check(seq)) {
     PyErr_Format(PyExc_TypeError,
@@ -2675,10 +2664,11 @@ PyObject *BPyInit_bgl()
               "'bgl' imported without an OpenGL backend. Please update your add-ons to use the "
               "'gpu' module.");
   }
+#else
+  UNUSED_VARS(LOG);
 #endif
 
-  PyModule_AddObject(submodule, "Buffer", (PyObject *)&BGL_bufferType);
-  Py_INCREF((PyObject *)&BGL_bufferType);
+  PyModule_AddObjectRef(submodule, "Buffer", (PyObject *)&BGL_bufferType);
 
   init_bgl_version_1_0_methods(submodule, dict);
   init_bgl_version_1_1_methods(submodule, dict);

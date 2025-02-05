@@ -9,7 +9,6 @@
 #include "BLT_translation.hh"
 
 #include "DNA_ID.h"
-#include "DNA_listBase.h"
 
 #include "../outliner_intern.hh"
 
@@ -33,7 +32,7 @@ StringRefNull TreeElementIDLibrary::get_warning() const
         "recommended");
   }
 
-  if (library.id.tag & LIB_TAG_MISSING) {
+  if (library.id.tag & ID_TAG_MISSING) {
     return RPT_("Missing library");
   }
 

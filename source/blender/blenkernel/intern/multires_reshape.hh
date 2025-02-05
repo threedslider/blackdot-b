@@ -11,7 +11,6 @@
 #include "BLI_math_vector_types.hh"
 #include "BLI_offset_indices.hh"
 #include "BLI_span.hh"
-#include "BLI_sys_types.h"
 #include "BLI_virtual_array.hh"
 
 #include "BKE_multires.hh"
@@ -339,7 +338,7 @@ void multires_reshape_smooth_object_grids_with_details(
  * Makes it so surface on top level looks smooth. Details are not preserved
  */
 void multires_reshape_smooth_object_grids(const MultiresReshapeContext *reshape_context,
-                                          enum eMultiresSubdivideModeType mode);
+                                          enum MultiresSubdivideModeType mode);
 
 /* --------------------------------------------------------------------
  * Displacement, space conversion.

@@ -101,7 +101,6 @@ class PHYSICS_PT_fluid(PhysicButtonsPanel, Panel):
     bl_label = "Fluid"
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -130,7 +129,6 @@ class PHYSICS_PT_settings(PhysicButtonsPanel, Panel):
     bl_parent_id = "PHYSICS_PT_fluid"
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -298,7 +296,6 @@ class PHYSICS_PT_borders(PhysicButtonsPanel, Panel):
     bl_parent_id = "PHYSICS_PT_settings"
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -336,7 +333,6 @@ class PHYSICS_PT_smoke(PhysicButtonsPanel, Panel):
     bl_parent_id = "PHYSICS_PT_fluid"
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -375,7 +371,6 @@ class PHYSICS_PT_smoke_dissolve(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -424,7 +419,6 @@ class PHYSICS_PT_fire(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -468,7 +462,6 @@ class PHYSICS_PT_liquid(PhysicButtonsPanel, Panel):
     bl_parent_id = "PHYSICS_PT_fluid"
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -536,7 +529,6 @@ class PHYSICS_PT_flow_source(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -582,7 +574,6 @@ class PHYSICS_PT_flow_initial_velocity(PhysicButtonsPanel, Panel):
     bl_parent_id = "PHYSICS_PT_settings"
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -629,7 +620,6 @@ class PHYSICS_PT_flow_texture(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -685,7 +675,6 @@ class PHYSICS_PT_adaptive_domain(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -742,7 +731,6 @@ class PHYSICS_PT_noise(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -777,7 +765,7 @@ class PHYSICS_PT_noise(PhysicButtonsPanel, Panel):
 
         col = flow.column()
         col.prop(domain, "noise_scale", text="Upres Factor")
-        col.prop(domain, "noise_strength", text="Strength")
+        col.prop(domain, "noise_strength", text="Strength", text_ctxt=i18n_contexts.amount)
 
         col = flow.column()
         col.prop(domain, "noise_pos_scale", text="Scale")
@@ -827,7 +815,6 @@ class PHYSICS_PT_mesh(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -927,7 +914,6 @@ class PHYSICS_PT_particles(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -1035,11 +1021,12 @@ class PHYSICS_PT_particles(PhysicButtonsPanel, Panel):
             split.enabled = (
                 note_flag and
                 ob.mode == 'OBJECT' and
-                domain.has_cache_baked_data and
-                (domain.use_spray_particles or
-                 domain.use_bubble_particles or
-                 domain.use_foam_particles or
-                 domain.use_tracer_particles)
+                domain.has_cache_baked_data and (
+                    domain.use_spray_particles or
+                    domain.use_bubble_particles or
+                    domain.use_foam_particles or
+                    domain.use_tracer_particles
+                )
             )
 
             bake_incomplete = (domain.cache_frame_pause_particles < domain.cache_frame_end)
@@ -1063,7 +1050,6 @@ class PHYSICS_PT_diffusion(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -1115,7 +1101,6 @@ class PHYSICS_PT_viscosity(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -1151,7 +1136,7 @@ class PHYSICS_PT_viscosity(PhysicButtonsPanel, Panel):
         flow.enabled = not is_baking_any and not has_baked_any and not has_baked_data
 
         col = flow.column(align=True)
-        col.prop(domain, "viscosity_value", text="Strength")
+        col.prop(domain, "viscosity_value", text="Strength", text_ctxt=i18n_contexts.amount)
 
 
 class PHYSICS_PT_guide(PhysicButtonsPanel, Panel):
@@ -1160,7 +1145,6 @@ class PHYSICS_PT_guide(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -1231,7 +1215,6 @@ class PHYSICS_PT_collections(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -1263,7 +1246,6 @@ class PHYSICS_PT_cache(PhysicButtonsPanel, Panel):
     bl_parent_id = "PHYSICS_PT_fluid"
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -1352,7 +1334,6 @@ class PHYSICS_PT_export(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -1402,7 +1383,6 @@ class PHYSICS_PT_field_weights(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }
@@ -1596,7 +1576,6 @@ class PHYSICS_PT_fluid_domain_render(PhysicButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE',
         'BLENDER_EEVEE_NEXT',
         'BLENDER_WORKBENCH',
     }

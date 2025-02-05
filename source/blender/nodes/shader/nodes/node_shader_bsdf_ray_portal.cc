@@ -13,7 +13,7 @@ static void node_declare(NodeDeclarationBuilder &b)
   b.add_input<decl::Color>("Color").default_value({1.0f, 1.0f, 1.0f, 1.0f});
   b.add_input<decl::Vector>("Position").hide_value();
   b.add_input<decl::Vector>("Direction").hide_value();
-  b.add_input<decl::Float>("Weight").unavailable();
+  b.add_input<decl::Float>("Weight").available(false);
   b.add_output<decl::Shader>("BSDF");
 }
 
@@ -60,11 +60,15 @@ void register_node_type_sh_bsdf_ray_portal()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(&ntype, SH_NODE_BSDF_RAY_PORTAL, "Ray Portal BSDF", NODE_CLASS_SHADER);
+  sh_node_type_base(&ntype, "ShaderNodeBsdfRayPortal", SH_NODE_BSDF_RAY_PORTAL);
+  ntype.ui_name = "Ray Portal BSDF";
+  ntype.ui_description = "Continue tracing from an arbitrary new position and in a new direction";
+  ntype.enum_name_legacy = "BSDF_RAY_PORTAL";
+  ntype.nclass = NODE_CLASS_SHADER;
   ntype.add_ui_poll = object_shader_nodes_poll;
   ntype.declare = file_ns::node_declare;
   ntype.gpu_fn = file_ns::node_shader_gpu_bsdf_ray_portal;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

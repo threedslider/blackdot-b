@@ -87,7 +87,6 @@
 #include "BLI_span.hh"
 #include "BLI_string_ref.hh"
 #include "BLI_task.hh"
-#include "BLI_timeit.hh"
 #include "BLI_vector.hh"
 
 #include "BKE_attribute.hh"
@@ -102,7 +101,6 @@
 #include "DEG_depsgraph_query.hh"
 
 #include "bmesh.hh"
-#include "intern/bmesh_private.hh" /* For element checking. */
 
 #include "CLG_log.h"
 
@@ -127,7 +125,7 @@ bool BM_attribute_stored_in_bmesh_builtin(const StringRef name)
               ".hide_vert",
               ".hide_edge",
               ".hide_poly",
-              ".uv_seam",
+              "uv_seam",
               ".select_vert",
               ".select_edge",
               ".select_poly",
@@ -277,10 +275,10 @@ void BM_mesh_bm_from_me(BMesh *bm, const Mesh *mesh, const BMeshFromMeshParams *
   if (mesh->verts_num == 0) {
     if (is_new) {
       /* No verts? still copy custom-data layout. */
-      CustomData_copy_layout(&mesh_vdata, &bm->vdata, mask.vmask, CD_CONSTRUCT, 0);
-      CustomData_copy_layout(&mesh_edata, &bm->edata, mask.emask, CD_CONSTRUCT, 0);
-      CustomData_copy_layout(&mesh_pdata, &bm->pdata, mask.pmask, CD_CONSTRUCT, 0);
-      CustomData_copy_layout(&mesh_ldata, &bm->ldata, mask.lmask, CD_CONSTRUCT, 0);
+      CustomData_init_layout_from(&mesh_vdata, &bm->vdata, mask.vmask, CD_CONSTRUCT, 0);
+      CustomData_init_layout_from(&mesh_edata, &bm->edata, mask.emask, CD_CONSTRUCT, 0);
+      CustomData_init_layout_from(&mesh_pdata, &bm->pdata, mask.pmask, CD_CONSTRUCT, 0);
+      CustomData_init_layout_from(&mesh_ldata, &bm->ldata, mask.lmask, CD_CONSTRUCT, 0);
 
       CustomData_bmesh_init_pool(&bm->vdata, mesh->verts_num, BM_VERT);
       CustomData_bmesh_init_pool(&bm->edata, mesh->edges_num, BM_EDGE);
@@ -296,10 +294,10 @@ void BM_mesh_bm_from_me(BMesh *bm, const Mesh *mesh, const BMeshFromMeshParams *
   }
 
   if (is_new) {
-    CustomData_copy_layout(&mesh_vdata, &bm->vdata, mask.vmask, CD_SET_DEFAULT, 0);
-    CustomData_copy_layout(&mesh_edata, &bm->edata, mask.emask, CD_SET_DEFAULT, 0);
-    CustomData_copy_layout(&mesh_pdata, &bm->pdata, mask.pmask, CD_SET_DEFAULT, 0);
-    CustomData_copy_layout(&mesh_ldata, &bm->ldata, mask.lmask, CD_SET_DEFAULT, 0);
+    CustomData_init_layout_from(&mesh_vdata, &bm->vdata, mask.vmask, CD_SET_DEFAULT, 0);
+    CustomData_init_layout_from(&mesh_edata, &bm->edata, mask.emask, CD_SET_DEFAULT, 0);
+    CustomData_init_layout_from(&mesh_pdata, &bm->pdata, mask.pmask, CD_SET_DEFAULT, 0);
+    CustomData_init_layout_from(&mesh_ldata, &bm->ldata, mask.lmask, CD_SET_DEFAULT, 0);
   }
   else {
     CustomData_bmesh_merge_layout(
@@ -426,7 +424,7 @@ void BM_mesh_bm_from_me(BMesh *bm, const Mesh *mesh, const BMeshFromMeshParams *
   const VArraySpan material_indices = *attributes.lookup<int>("material_index", AttrDomain::Face);
   const VArraySpan sharp_faces = *attributes.lookup<bool>("sharp_face", AttrDomain::Face);
   const VArraySpan sharp_edges = *attributes.lookup<bool>("sharp_edge", AttrDomain::Edge);
-  const VArraySpan uv_seams = *attributes.lookup<bool>(".uv_seam", AttrDomain::Edge);
+  const VArraySpan uv_seams = *attributes.lookup<bool>("uv_seam", AttrDomain::Edge);
 
   const Span<float3> positions = mesh->vert_positions();
   Array<BMVert *> vtable(mesh->verts_num);
@@ -792,7 +790,7 @@ static void bm_to_mesh_shape(BMesh *bm,
   BMIter iter;
   BMVert *eve;
   float(*ofs)[3] = nullptr;
-  bool *dependent = nullptr;
+  std::optional<Array<bool>> dependent;
 
   /* Editing the basis key updates others. */
   if ((key->type == KEY_RELATIVE) &&
@@ -801,7 +799,7 @@ static void bm_to_mesh_shape(BMesh *bm,
       /* Original key-indices are only used to check the vertex existed when entering edit-mode. */
       (cd_shape_keyindex_offset != -1) &&
       /* Offsets are only needed if the current shape is a basis for others. */
-      (dependent = BKE_keyblock_get_dependent_keys(key, bm->shapenr - 1)) != nullptr)
+      (dependent = BKE_keyblock_get_dependent_keys(key, bm->shapenr - 1)).has_value())
   {
 
     BLI_assert(actkey != nullptr); /* Assured by `actkey_has_layer` check. */
@@ -828,8 +826,7 @@ static void bm_to_mesh_shape(BMesh *bm,
          * ones, creating a mess when doing e.g. subdivide + translate. */
         MEM_freeN(ofs);
         ofs = nullptr;
-        MEM_freeN(dependent);
-        dependent = nullptr;
+        dependent.reset();
         break;
       }
     }
@@ -868,7 +865,7 @@ static void bm_to_mesh_shape(BMesh *bm,
 
     /* Common case, the layer data is available, use it where possible. */
     if (cd_shape_offset != -1) {
-      const bool apply_offset = (ofs != nullptr) && (currkey != actkey) && dependent[currkey_i];
+      const bool apply_offset = (ofs != nullptr) && (currkey != actkey) && (*dependent)[currkey_i];
 
       if (currkey->data && (currkey->totelem == bm->totvert)) {
         /* Use memory in-place. */
@@ -957,7 +954,6 @@ static void bm_to_mesh_shape(BMesh *bm,
   }
 
   MEM_SAFE_FREE(ofs);
-  MEM_SAFE_FREE(dependent);
 }
 
 /** \} */
@@ -1468,13 +1464,13 @@ void BM_mesh_bm_to_me(Main *bmain, BMesh *bm, Mesh *mesh, const BMeshToMeshParam
   {
     CustomData_MeshMasks mask = CD_MASK_MESH;
     CustomData_MeshMasks_update(&mask, &params->cd_mask_extra);
-    CustomData_copy_layout(
+    CustomData_init_layout_from(
         &bm->vdata, &mesh->vert_data, mask.vmask, CD_CONSTRUCT, mesh->verts_num);
-    CustomData_copy_layout(
+    CustomData_init_layout_from(
         &bm->edata, &mesh->edge_data, mask.emask, CD_CONSTRUCT, mesh->edges_num);
-    CustomData_copy_layout(
+    CustomData_init_layout_from(
         &bm->ldata, &mesh->corner_data, mask.lmask, CD_CONSTRUCT, mesh->corners_num);
-    CustomData_copy_layout(
+    CustomData_init_layout_from(
         &bm->pdata, &mesh->face_data, mask.pmask, CD_CONSTRUCT, mesh->faces_num);
   }
 
@@ -1504,7 +1500,7 @@ void BM_mesh_bm_to_me(Main *bmain, BMesh *bm, Mesh *mesh, const BMeshToMeshParam
     sharp_edge = attrs.lookup_or_add_for_write_only_span<bool>("sharp_edge", AttrDomain::Edge);
   }
   if (need_uv_seams) {
-    uv_seams = attrs.lookup_or_add_for_write_only_span<bool>(".uv_seam", AttrDomain::Edge);
+    uv_seams = attrs.lookup_or_add_for_write_only_span<bool>("uv_seam", AttrDomain::Edge);
   }
   if (need_hide_edge) {
     hide_edge = attrs.lookup_or_add_for_write_only_span<bool>(".hide_edge", AttrDomain::Edge);
@@ -1731,7 +1727,7 @@ void BM_mesh_bm_to_me_compact(BMesh &bm,
       sharp_edge = attrs.lookup_or_add_for_write_only_span<bool>("sharp_edge", AttrDomain::Edge);
     }
     if (need_uv_seams) {
-      uv_seams = attrs.lookup_or_add_for_write_only_span<bool>(".uv_seam", AttrDomain::Edge);
+      uv_seams = attrs.lookup_or_add_for_write_only_span<bool>("uv_seam", AttrDomain::Edge);
     }
     if (need_hide_edge) {
       hide_edge = attrs.lookup_or_add_for_write_only_span<bool>(".hide_edge", AttrDomain::Edge);

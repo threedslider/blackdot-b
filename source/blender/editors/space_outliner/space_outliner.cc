@@ -9,13 +9,12 @@
 /* Allow using deprecated functionality for .blend file I/O. */
 #define DNA_DEPRECATED_ALLOW
 
-#include <cstdio>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_mempool.h"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
@@ -31,7 +30,6 @@
 #include "WM_message.hh"
 #include "WM_types.hh"
 
-#include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
 #include "UI_resources.hh"
@@ -41,6 +39,14 @@
 
 #include "outliner_intern.hh"
 #include "tree/tree_display.hh"
+
+/**
+ * Since 2.8x outliner drawing itself can change the scroll position of the outliner
+ * after drawing has completed. Failing to draw a second time can cause nothing to display.
+ * Making search seem to fail & deleting objects fail to scroll up to show remaining objects.
+ * See #128346 for details.
+ */
+#define USE_OUTLINER_DRAW_CLAMPS_SCROLL_HACK
 
 namespace blender::ed::outliner {
 
@@ -69,21 +75,32 @@ static void outliner_main_region_init(wmWindowManager *wm, ARegion *region)
 
   /* own keymap */
   keymap = WM_keymap_ensure(wm->defaultconf, "Outliner", SPACE_OUTLINER, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler_v2d_mask(&region->handlers, keymap);
+  WM_event_add_keymap_handler_v2d_mask(&region->runtime->handlers, keymap);
 
   /* Add dropboxes */
   lb = WM_dropboxmap_find("Outliner", SPACE_OUTLINER, RGN_TYPE_WINDOW);
-  WM_event_add_dropbox_handler(&region->handlers, lb);
+  WM_event_add_dropbox_handler(&region->runtime->handlers, lb);
 }
 
 static void outliner_main_region_draw(const bContext *C, ARegion *region)
 {
   View2D *v2d = &region->v2d;
 
-  /* clear */
-  UI_ThemeClearColor(TH_BACK);
+#ifdef USE_OUTLINER_DRAW_CLAMPS_SCROLL_HACK
+  const rctf v2d_cur_prev = v2d->cur;
+#endif
 
-  draw_outliner(C);
+  UI_ThemeClearColor(TH_BACK);
+  draw_outliner(C, true);
+
+#ifdef USE_OUTLINER_DRAW_CLAMPS_SCROLL_HACK
+  /* This happens when scrolling is clamped & occasionally when resizing the area.
+   * In practice this isn't often which is important as that would hurt performance. */
+  if (!BLI_rctf_compare(&v2d->cur, &v2d_cur_prev, FLT_EPSILON)) {
+    UI_ThemeClearColor(TH_BACK);
+    draw_outliner(C, false);
+  }
+#endif
 
   /* reset view matrix */
   UI_view2d_view_restore(C);
@@ -334,8 +351,16 @@ static void outliner_header_region_listener(const wmRegionListenerParams *params
   /* context changes */
   switch (wmn->category) {
     case NC_SCENE:
-      if (wmn->data == ND_KEYINGSET) {
-        ED_region_tag_redraw(region);
+      switch (wmn->data) {
+        case ND_KEYINGSET:
+          ED_region_tag_redraw(region);
+          break;
+        case ND_LAYER:
+          /* Not needed by blender itself, but requested by add-on developers. #109995 */
+          if ((wmn->subtype == NS_LAYER_COLLECTION) && (wmn->action == NA_ACTIVATED)) {
+            ED_region_tag_redraw(region);
+          }
+          break;
       }
       break;
     case NC_SPACE:
@@ -363,14 +388,14 @@ static SpaceLink *outliner_create(const ScrArea * /*area*/, const Scene * /*scen
   space_outliner->filter = SO_FILTER_NO_VIEW_LAYERS;
 
   /* header */
-  region = MEM_cnew<ARegion>("header for outliner");
+  region = BKE_area_region_new();
 
   BLI_addtail(&space_outliner->regionbase, region);
   region->regiontype = RGN_TYPE_HEADER;
   region->alignment = (U.uiflag & USER_HEADER_BOTTOM) ? RGN_ALIGN_BOTTOM : RGN_ALIGN_TOP;
 
   /* main region */
-  region = MEM_cnew<ARegion>("main region for outliner");
+  region = BKE_area_region_new();
 
   BLI_addtail(&space_outliner->regionbase, region);
   region->regiontype = RGN_TYPE_WINDOW;
@@ -484,10 +509,12 @@ static void outliner_foreach_id(SpaceLink *space_link, LibraryForeachIDData *dat
     if (TSE_IS_REAL_ID(tselem)) {
       /* NOTE: Outliner ID pointers are never `IDWALK_CB_DIRECT_WEAK_LINK`, they should never
        * enforce keeping a reference to some linked data. */
-      const int cb_flag = (tselem->id != nullptr && allow_pointer_access &&
-                           (tselem->id->flag & LIB_EMBEDDED_DATA) != 0) ?
-                              IDWALK_CB_EMBEDDED_NOT_OWNING :
-                              IDWALK_CB_NOP;
+      const LibraryForeachIDCallbackFlag cb_flag = (tselem->id != nullptr &&
+                                                    allow_pointer_access &&
+                                                    (tselem->id->flag & ID_FLAG_EMBEDDED_DATA) !=
+                                                        0) ?
+                                                       IDWALK_CB_EMBEDDED_NOT_OWNING :
+                                                       IDWALK_CB_NOP;
       BKE_LIB_FOREACHID_PROCESS_ID(data, tselem->id, cb_flag);
     }
     else if (!is_readonly) {

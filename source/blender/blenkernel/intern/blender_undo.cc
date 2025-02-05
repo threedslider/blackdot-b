@@ -16,19 +16,15 @@
 #endif
 
 #include <cerrno>
-#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h> /* for open */
 
-#include "MEM_guardedalloc.h"
+#include "DNA_userdef_types.h"
 
-#include "DNA_scene_types.h"
-
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_appdir.hh"
 #include "BKE_blender_undo.hh" /* own include */
@@ -104,7 +100,9 @@ MemFileUndoData *BKE_memfile_undo_encode(Main *bmain, MemFileUndoData *mfu_prev)
 {
   MemFileUndoData *mfu = MEM_cnew<MemFileUndoData>(__func__);
 
-  /* Include recovery information since undo-data is written out as #BLENDER_QUIT_FILE. */
+  /* This flag used to be set because the undo step was written as #BLENDER_QUIT_FILE. It's not
+   * clear whether there are still good reasons to keep it. Undo can also be thought of as a kind
+   * of recovery, so better keep it for now. */
   const int fileflags = G.fileflags | G_FILE_RECOVER_WRITE;
 
   /* disk save version */

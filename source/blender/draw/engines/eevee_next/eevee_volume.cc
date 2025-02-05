@@ -10,10 +10,9 @@
  * https://www.ea.com/frostbite/news/physically-based-unified-volumetric-rendering-in-frostbite
  */
 
-#include "DNA_volume_types.h"
 #include "GPU_capabilities.hh"
 
-#include "draw_common.hh"
+#include "draw_manager_profiling.hh"
 
 #include "eevee_instance.hh"
 #include "eevee_pipeline.hh"
@@ -29,20 +28,32 @@ void VolumeModule::init()
   const Scene *scene_eval = inst_.scene;
 
   const int2 extent = inst_.film.render_extent_get();
-  const int tile_size = scene_eval->eevee.volumetric_tile_size;
+  int tile_size = clamp_i(scene_eval->eevee.volumetric_tile_size, 1, 16);
+
+  int3 tex_size;
+  /* Try to match resolution setting but fallback to lower resolution
+   * if it doesn't fit the hardware limits. */
+  for (; tile_size <= 16; tile_size *= 2) {
+    /* Find Froxel Texture resolution. */
+    tex_size = int3(math::divide_ceil(extent, int2(tile_size)), 0);
+    tex_size.z = std::max(1, scene_eval->eevee.volumetric_samples);
+
+    if (math::reduce_max(tex_size) < GPU_max_texture_3d_size()) {
+      /* Fits hardware limits. */
+      break;
+    }
+  }
+
+  if (tile_size != scene_eval->eevee.volumetric_tile_size) {
+    inst_.info_append_i18n(
+        "Warning: Volume rendering data could not be allocated. Now using a resolution of 1:{} "
+        "instead of 1:{}.",
+        tile_size,
+        scene_eval->eevee.volumetric_tile_size);
+  }
 
   data_.tile_size = tile_size;
   data_.tile_size_lod = int(log2(tile_size));
-
-  /* Find Froxel Texture resolution. */
-  int3 tex_size = int3(math::divide_ceil(extent, int2(tile_size)), 0);
-  tex_size.z = std::max(1, scene_eval->eevee.volumetric_samples);
-
-  /* Clamp 3D texture size based on device maximum. */
-  int3 max_size = int3(GPU_max_texture_3d_size());
-  BLI_assert(tex_size == math::min(tex_size, max_size));
-  tex_size = math::min(tex_size, max_size);
-
   data_.coord_scale = float2(extent) / float2(tile_size * tex_size);
   data_.main_view_extent = float2(extent);
   data_.main_view_extent_inv = 1.0f / float2(extent);
@@ -149,6 +160,7 @@ void VolumeModule::end_sync()
     prop_extinction_tx_.free();
     prop_emission_tx_.free();
     prop_phase_tx_.free();
+    prop_phase_weight_tx_.free();
     scatter_tx_.current().free();
     scatter_tx_.previous().free();
     extinction_tx_.current().free();
@@ -164,6 +176,7 @@ void VolumeModule::end_sync()
     properties.extinction_tx_ = nullptr;
     properties.emission_tx_ = nullptr;
     properties.phase_tx_ = nullptr;
+    properties.phase_weight_tx_ = nullptr;
     properties.occupancy_tx_ = nullptr;
     occupancy.occupancy_tx_ = nullptr;
     occupancy.hit_depth_tx_ = nullptr;
@@ -187,7 +200,9 @@ void VolumeModule::end_sync()
   prop_scattering_tx_.ensure_3d(GPU_R11F_G11F_B10F, data_.tex_size, usage);
   prop_extinction_tx_.ensure_3d(GPU_R11F_G11F_B10F, data_.tex_size, usage);
   prop_emission_tx_.ensure_3d(GPU_R11F_G11F_B10F, data_.tex_size, usage);
-  prop_phase_tx_.ensure_3d(GPU_RG16F, data_.tex_size, usage);
+  /* We need 2 separate images to prevent bugs in Nvidia drivers (See #122454). */
+  prop_phase_tx_.ensure_3d(GPU_R16F, data_.tex_size, usage);
+  prop_phase_weight_tx_.ensure_3d(GPU_R16F, data_.tex_size, usage);
 
   int occupancy_layers = divide_ceil_u(data_.tex_size.z, 32u);
   eGPUTextureUsage occupancy_usage = GPU_TEXTURE_USAGE_SHADER_READ |
@@ -236,6 +251,7 @@ void VolumeModule::end_sync()
   properties.extinction_tx_ = prop_extinction_tx_;
   properties.emission_tx_ = prop_emission_tx_;
   properties.phase_tx_ = prop_phase_tx_;
+  properties.phase_weight_tx_ = prop_phase_weight_tx_;
   properties.occupancy_tx_ = occupancy_tx_;
   occupancy.occupancy_tx_ = occupancy_tx_;
   occupancy.hit_depth_tx_ = hit_depth_tx_;
@@ -261,6 +277,7 @@ void VolumeModule::end_sync()
   scatter_ps_.bind_texture("extinction_tx", &prop_extinction_tx_);
   scatter_ps_.bind_image("in_emission_img", &prop_emission_tx_);
   scatter_ps_.bind_image("in_phase_img", &prop_phase_tx_);
+  scatter_ps_.bind_image("in_phase_weight_img", &prop_phase_weight_tx_);
   scatter_ps_.bind_texture("scattering_history_tx", &scatter_tx_.previous(), history_sampler);
   scatter_ps_.bind_texture("extinction_history_tx", &extinction_tx_.previous(), history_sampler);
   scatter_ps_.bind_image("out_scattering_img", &scatter_tx_.current());
@@ -330,7 +347,7 @@ void VolumeModule::draw_prepass(View &main_view)
      * artifacts on lights because of voxels stretched in Z or anisotropy. */
     exponential_frame_count = 8;
   }
-  else if (inst_.sampling.is_reset()) {
+  else if (inst_.is_viewport() && inst_.sampling.is_reset()) {
     /* If we are not falling in any cases above, this usually means there is a scene or object
      * parameter update. Reset accumulation completely. */
     exponential_frame_count = 0;
@@ -367,7 +384,7 @@ void VolumeModule::draw_prepass(View &main_view)
 
   float4x4 winmat_infinite, winmat_finite;
   /* Create an infinite projection matrix to avoid far clipping plane clipping the object. This
-   * way, surfaces that are further away than the far clip plane will still be voxelized.*/
+   * way, surfaces that are further away than the far clip plane will still be voxelized. */
   winmat_infinite = main_view.is_persp() ?
                         math::projection::perspective_infinite(left, right, bottom, top, near) :
                         math::projection::orthographic_infinite(left, right, bottom, top, near);

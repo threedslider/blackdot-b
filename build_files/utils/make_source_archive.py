@@ -3,13 +3,24 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+__all__ = (
+    "main",
+)
+
 import argparse
 import make_utils
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, TextIO, Optional, Any, Union
+
+from typing import (
+    TextIO,
+    Any,
+    Union,
+    # Proxies for `collections.abc`
+    Iterable,
+)
 
 # This script can run from any location,
 # output is created in the $CWD
@@ -78,24 +89,24 @@ def manifest_path(tarball: Path) -> Path:
     """Return the manifest path for the given tarball path.
 
     >>> from pathlib import Path
-    >>> tarball = Path("/home/sybren/workspace/blender-git/blender-test.tar.gz")
+    >>> tarball = Path("/home/user/workspace/blender-git/blender-test.tar.gz")
     >>> manifest_path(tarball).as_posix()
-    '/home/sybren/workspace/blender-git/blender-test-manifest.txt'
+    '/home/user/workspace/blender-git/blender-test-manifest.txt'
     """
-    # ".tar.gz" is seen as two suffixes.
+    # Note that `.tar.gz` is seen as two suffixes.
     without_suffix = tarball.with_suffix("").with_suffix("")
     name = without_suffix.name
     return without_suffix.with_name(f"{name}-manifest.txt")
 
 
-def packages_path(current_directory: Path, cli_args: Any) -> Optional[Path]:
+def packages_path(current_directory: Path, cli_args: Any) -> Union[Path, None]:
     if not cli_args.include_packages:
         return None
 
     abspath = cli_args.include_packages.absolute()
 
-    # os.path.relpath() can return paths like "../../packages", where
-    # Path.relative_to() will not go up directories (so its return value never
+    # `os.path.relpath()` can return paths like "../../packages", where
+    # `Path.relative_to()` will not go up directories (so its return value never
     # has "../" in there).
     relpath = os.path.relpath(abspath, current_directory)
 
@@ -109,7 +120,7 @@ def create_manifest(
     version: make_utils.BlenderVersion,
     outpath: Path,
     blender_srcdir: Path,
-    packages_dir: Optional[Path],
+    packages_dir: Union[Path, None],
 ) -> None:
     print(f'Building manifest of files:  "{outpath}"...', end="", flush=True)
     with outpath.open("w", encoding="utf-8") as outfile:
@@ -130,7 +141,7 @@ def main_files_to_manifest(blender_srcdir: Path, outfile: TextIO) -> None:
 def assets_to_manifest(blender_srcdir: Path, outfile: TextIO) -> None:
     assert not blender_srcdir.is_absolute()
 
-    assets_dir = blender_srcdir.parent / "lib" / "assets"
+    assets_dir = blender_srcdir / "release" / "datafiles" / "assets"
     for path in assets_dir.glob("*"):
         if path.name == "working":
             continue
@@ -157,7 +168,7 @@ def create_tarball(
     tarball: Path,
     manifest: Path,
     blender_srcdir: Path,
-    packages_dir: Optional[Path],
+    packages_dir: Union[Path, None],
 ) -> None:
     print(f'Creating archive:            "{tarball}" ...', end="", flush=True)
 
@@ -174,8 +185,6 @@ def create_tarball(
     command += [
         "--transform",
         f"s,^{blender_srcdir.name}/,blender-{version}/,g",
-        "--transform",
-        f"s,^lib/assets/,blender-{version}/release/datafiles/assets/,g",
         "--use-compress-program=xz -1",
         "--create",
         f"--file={tarball}",

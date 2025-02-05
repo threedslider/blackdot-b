@@ -23,7 +23,7 @@
 
 #include "BLT_translation.hh"
 
-#include "BLI_blenlib.h"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
@@ -267,7 +267,7 @@ static void fmodifier_frame_range_header_draw(const bContext *C, Panel *panel)
 
   PointerRNA *ptr = fmodifier_get_pointers(C, panel, nullptr);
 
-  uiItemR(layout, ptr, "use_restricted_range", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "use_restricted_range", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void fmodifier_frame_range_draw(const bContext *C, Panel *panel)
@@ -367,7 +367,7 @@ static void generator_panel_draw(const bContext *C, Panel *panel)
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
 
-  uiItemR(layout, ptr, "use_additive", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "use_additive", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   uiItemR(layout, ptr, "poly_order", UI_ITEM_NONE, IFACE_("Order"), ICON_NONE);
 
@@ -451,13 +451,13 @@ static void fn_generator_panel_draw(const bContext *C, Panel *panel)
   uiLayoutSetPropDecorate(layout, false);
 
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "use_additive", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "use_additive", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "amplitude", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "phase_multiplier", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "phase_offset", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "value_offset", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "amplitude", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "phase_multiplier", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "phase_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "value_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   fmodifier_influence_draw(layout, ptr);
 }
@@ -495,12 +495,12 @@ static void cycles_panel_draw(const bContext *C, Panel *panel)
 
   /* Before. */
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "mode_before", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "mode_before", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   uiItemR(col, ptr, "cycles_before", UI_ITEM_NONE, IFACE_("Count"), ICON_NONE);
 
   /* After. */
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "mode_after", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "mode_after", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   uiItemR(col, ptr, "cycles_after", UI_ITEM_NONE, IFACE_("Count"), ICON_NONE);
 
   fmodifier_influence_draw(layout, ptr);
@@ -537,14 +537,21 @@ static void noise_panel_draw(const bContext *C, Panel *panel)
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
 
-  uiItemR(layout, ptr, "blend_type", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "blend_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "scale", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "strength", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "offset", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "phase", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "depth", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "strength", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "phase", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "depth", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "use_legacy_noise", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  PropertyRNA *prop = RNA_struct_find_property(ptr, "use_legacy_noise");
+  const bool use_legacy_noise = RNA_property_boolean_get(ptr, prop);
+  if (!use_legacy_noise) {
+    uiItemR(col, ptr, "lacunarity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiItemR(col, ptr, "roughness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  }
 
   fmodifier_influence_draw(layout, ptr);
 }
@@ -701,13 +708,14 @@ static void envelope_panel_draw(const bContext *C, Panel *panel)
 
   FCM_EnvelopeData *fed = env->data;
   for (int i = 0; i < env->totvert; i++, fed++) {
-    PointerRNA ctrl_ptr = RNA_pointer_create(owner_id, &RNA_FModifierEnvelopeControlPoint, fed);
+    PointerRNA ctrl_ptr = RNA_pointer_create_discrete(
+        owner_id, &RNA_FModifierEnvelopeControlPoint, fed);
 
     /* get a new row to operate on */
     row = uiLayoutRow(col, true);
     block = uiLayoutGetBlock(row);
 
-    uiItemR(row, &ctrl_ptr, "frame", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(row, &ctrl_ptr, "frame", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     uiItemR(row, &ctrl_ptr, "min", UI_ITEM_NONE, IFACE_("Min"), ICON_NONE);
     uiItemR(row, &ctrl_ptr, "max", UI_ITEM_NONE, IFACE_("Max"), ICON_NONE);
 
@@ -825,8 +833,8 @@ static void stepped_panel_draw(const bContext *C, Panel *panel)
 
   /* Stepping Settings. */
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "frame_step", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "frame_offset", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "frame_step", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "frame_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   /* Start range settings. */
   row = uiLayoutRowWithHeading(layout, true, IFACE_("Start Frame"));
@@ -883,7 +891,7 @@ void ANIM_fmodifier_panels(const bContext *C,
 
       PointerRNA *fcm_ptr = static_cast<PointerRNA *>(
           MEM_mallocN(sizeof(PointerRNA), "panel customdata"));
-      *fcm_ptr = RNA_pointer_create(owner_id, &RNA_FModifier, fcm);
+      *fcm_ptr = RNA_pointer_create_discrete(owner_id, &RNA_FModifier, fcm);
 
       UI_panel_add_instanced(C, region, &region->panels, panel_idname, fcm_ptr);
     }
@@ -900,9 +908,8 @@ void ANIM_fmodifier_panels(const bContext *C,
                    nullptr); /* There shouldn't be fewer panels than modifiers with UIs. */
       }
 
-      PointerRNA *fcm_ptr = static_cast<PointerRNA *>(
-          MEM_mallocN(sizeof(PointerRNA), "panel customdata"));
-      *fcm_ptr = RNA_pointer_create(owner_id, &RNA_FModifier, fcm);
+      PointerRNA *fcm_ptr = MEM_new<PointerRNA>("panel customdata");
+      *fcm_ptr = RNA_pointer_create_discrete(owner_id, &RNA_FModifier, fcm);
       UI_panel_custom_data_set(panel, fcm_ptr);
 
       panel = panel->next;

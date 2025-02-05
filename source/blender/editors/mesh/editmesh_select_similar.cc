@@ -14,6 +14,7 @@
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
+#include "BLI_set.hh"
 
 #include "BLT_translation.hh"
 
@@ -22,7 +23,7 @@
 #include "BKE_deform.hh"
 #include "BKE_editmesh.hh"
 #include "BKE_layer.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_object_types.hh"
 #include "BKE_report.hh"
 
@@ -969,7 +970,8 @@ static int similar_vert_select_exec(bContext *C, wmOperator *op)
 
   KDTree_3d *tree_3d = nullptr;
   KDTree_1d *tree_1d = nullptr;
-  GSet *gset = nullptr;
+  blender::Set<blender::StringRef> selected_vertex_groups;
+  blender::Set<int> connected_elems_num_set;
 
   switch (type) {
     case SIMVERT_NORMAL:
@@ -980,10 +982,7 @@ static int similar_vert_select_exec(bContext *C, wmOperator *op)
       break;
     case SIMVERT_EDGE:
     case SIMVERT_FACE:
-      gset = BLI_gset_ptr_new("Select similar vertex: edge/face");
-      break;
     case SIMVERT_VGROUP:
-      gset = BLI_gset_str_new("Select similar vertex: vertex groups");
       break;
   }
 
@@ -1030,10 +1029,10 @@ static int similar_vert_select_exec(bContext *C, wmOperator *op)
       if (BM_elem_flag_test(vert, BM_ELEM_SELECT)) {
         switch (type) {
           case SIMVERT_FACE:
-            BLI_gset_add(gset, POINTER_FROM_INT(BM_vert_face_count(vert)));
+            connected_elems_num_set.add(BM_vert_face_count(vert));
             break;
           case SIMVERT_EDGE:
-            BLI_gset_add(gset, POINTER_FROM_INT(BM_vert_edge_count(vert)));
+            connected_elems_num_set.add(BM_vert_edge_count(vert));
             break;
           case SIMVERT_NORMAL: {
             float normal[3];
@@ -1076,7 +1075,7 @@ static int similar_vert_select_exec(bContext *C, wmOperator *op)
       int i = 0;
       LISTBASE_FOREACH (bDeformGroup *, dg, defbase) {
         if (BLI_BITMAP_TEST(defbase_selected, i)) {
-          BLI_gset_add(gset, dg->name);
+          selected_vertex_groups.add_as(dg->name);
         }
         i += 1;
       }
@@ -1085,7 +1084,7 @@ static int similar_vert_select_exec(bContext *C, wmOperator *op)
   }
 
   if (type == SIMVERT_VGROUP) {
-    if (BLI_gset_len(gset) == 0) {
+    if (selected_vertex_groups.is_empty()) {
       BKE_report(op->reports, RPT_INFO, "No vertex group among the selected vertices");
     }
   }
@@ -1127,10 +1126,8 @@ static int similar_vert_select_exec(bContext *C, wmOperator *op)
 
       defbase_selected = BLI_BITMAP_NEW(defbase_len, __func__);
       bool found_any = false;
-      GSetIterator gs_iter;
-      GSET_ITER (gs_iter, gset) {
-        const char *name = static_cast<const char *>(BLI_gsetIterator_getKey(&gs_iter));
-        int vgroup_id = BLI_findstringindex(defbase, name, offsetof(bDeformGroup, name));
+      for (const blender::StringRef name : selected_vertex_groups) {
+        int vgroup_id = BKE_defgroup_name_index(defbase, name);
         if (vgroup_id != -1) {
           BLI_BITMAP_ENABLE(defbase_selected, vgroup_id);
           found_any = true;
@@ -1163,9 +1160,7 @@ static int similar_vert_select_exec(bContext *C, wmOperator *op)
         switch (type) {
           case SIMVERT_EDGE: {
             const int num_edges = BM_vert_edge_count(vert);
-            GSetIterator gs_iter;
-            GSET_ITER (gs_iter, gset) {
-              const int num_edges_iter = POINTER_AS_INT(BLI_gsetIterator_getKey(&gs_iter));
+            for (const int num_edges_iter : connected_elems_num_set) {
               const int delta_i = num_edges - num_edges_iter;
               if (mesh_select_similar_compare_int(delta_i, compare)) {
                 select = true;
@@ -1176,9 +1171,7 @@ static int similar_vert_select_exec(bContext *C, wmOperator *op)
           }
           case SIMVERT_FACE: {
             const int num_faces = BM_vert_face_count(vert);
-            GSetIterator gs_iter;
-            GSET_ITER (gs_iter, gset) {
-              const int num_faces_iter = POINTER_AS_INT(BLI_gsetIterator_getKey(&gs_iter));
+            for (const int num_faces_iter : connected_elems_num_set) {
               const int delta_i = num_faces - num_faces_iter;
               if (mesh_select_similar_compare_int(delta_i, compare)) {
                 select = true;
@@ -1258,9 +1251,6 @@ static int similar_vert_select_exec(bContext *C, wmOperator *op)
 
   BLI_kdtree_1d_free(tree_1d);
   BLI_kdtree_3d_free(tree_3d);
-  if (gset != nullptr) {
-    BLI_gset_free(gset, nullptr);
-  }
 
   return OPERATOR_FINISHED;
 }
@@ -1326,7 +1316,7 @@ static const EnumPropertyItem *select_similar_type_itemf(bContext *C,
 #ifdef WITH_FREESTYLE
       const int a_end = SIMFACE_FREESTYLE;
 #else
-      const int a_end = SIMFACE_MATERIAL;
+      const int a_end = SIMFACE_SMOOTH;
 #endif
       for (a = SIMFACE_MATERIAL; a <= a_end; a++) {
         RNA_enum_items_add_value(&item, &totitem, prop_similar_types, a);
@@ -1401,7 +1391,7 @@ void MESH_OT_select_similar(wmOperatorType *ot)
 
   RNA_def_enum(ot->srna, "compare", prop_similar_compare_types, SIM_CMP_EQ, "Compare", "");
 
-  prop = RNA_def_float(ot->srna, "threshold", 0.0f, 0.0f, 1.0f, "Threshold", "", 0.0f, 1.0f);
+  prop = RNA_def_float(ot->srna, "threshold", 0.0f, 0.0f, 100000.0f, "Threshold", "", 0.0f, 1.0f);
   /* Very small values are needed sometimes, similar area of small faces for e.g: see #87823 */
   RNA_def_property_ui_range(prop, 0.0, 1.0, 0.01, 5);
 }

@@ -9,12 +9,12 @@
 #include "DNA_node_types.h"
 
 #include "BLI_rect.h"
-#include "BLI_string_ref.hh"
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_node_runtime.hh"
+#include "BKE_screen.hh"
 
 #include "ED_image.hh"
 #include "ED_node.hh" /* own include */
@@ -89,10 +89,10 @@ bool space_node_view_flag(
   if (snode.edittree) {
     for (const bNode *node : snode.edittree->all_nodes()) {
       if ((node->flag & node_flag) == node_flag) {
-        BLI_rctf_union(&cur_new, &node->runtime->totr);
+        BLI_rctf_union(&cur_new, &node->runtime->draw_bounds);
         tot++;
 
-        if (node->type == NODE_FRAME) {
+        if (node->is_frame()) {
           has_frame = true;
         }
       }
@@ -662,9 +662,9 @@ static int sample_invoke(bContext *C, wmOperator *op, const wmEvent *event)
   }
 
   info = MEM_cnew<ImageSampleInfo>("ImageSampleInfo");
-  info->art = region->type;
+  info->art = region->runtime->type;
   info->draw_handle = ED_region_draw_cb_activate(
-      region->type, sample_draw, info, REGION_DRAW_POST_PIXEL);
+      region->runtime->type, sample_draw, info, REGION_DRAW_POST_PIXEL);
   op->customdata = info;
 
   sample_apply(C, op, event);

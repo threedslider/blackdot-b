@@ -9,7 +9,6 @@
 #include <algorithm> /* For `min/max`. */
 #include <cfloat>
 #include <cmath>
-#include <cstddef>
 #include <cstdio>
 #include <cstring>
 
@@ -22,14 +21,13 @@
 
 #include "BLT_translation.hh"
 
-#include "BLI_blenlib.h"
-#include "BLI_ghash.h"
+#include "BLI_listbase.h"
 #include "BLI_math_base.h"
 #include "BLI_noise.h"
+#include "BLI_noise.hh"
 #include "BLI_utildefines.h"
 
 #include "BKE_fcurve.hh"
-#include "BKE_idprop.hh"
 
 static CLG_LogRef LOG = {"bke.fmodifier"};
 
@@ -355,7 +353,7 @@ static void fcm_fn_generator_evaluate(const FCurve * /*fcu*/,
 
   /* execute function callback to set value if appropriate */
   if (fn) {
-    float value = float(data->amplitude * float(fn(arg)) + data->value_offset);
+    float value = (data->amplitude * float(fn(arg)) + data->value_offset);
 
     if (data->flag & FCM_GENERATOR_ADDITIVE) {
       *cvalue += value;
@@ -721,10 +719,10 @@ static float fcm_cycles_time(
     /* check if 'cyclic extrapolation', and thus calculate y-offset for this cycle */
     if (mode == FCM_EXTRAPOLATE_CYCLIC_OFFSET) {
       if (side < 0) {
-        cycyofs = float(floor((evaltime - ofs) / cycdx));
+        cycyofs = floor((evaltime - ofs) / cycdx);
       }
       else {
-        cycyofs = float(ceil((evaltime - ofs) / cycdx));
+        cycyofs = ceil((evaltime - ofs) / cycdx);
       }
       cycyofs *= cycdy;
     }
@@ -808,6 +806,9 @@ static void fcm_noise_new_data(void *mdata)
   data->offset = 0.0f;
   data->depth = 0;
   data->modification = FCM_NOISE_MODIF_REPLACE;
+  data->lacunarity = 2.0f;
+  data->roughness = 0.5f;
+  data->legacy_noise = 0;
 }
 
 static void fcm_noise_evaluate(const FCurve * /*fcu*/,
@@ -818,13 +819,34 @@ static void fcm_noise_evaluate(const FCurve * /*fcu*/,
 {
   FMod_Noise *data = (FMod_Noise *)fcm->data;
   float noise;
-
-  /* generate noise using good old Blender Noise
-   * - 0.1 is passed as the 'z' value, otherwise evaluation fails for size = phase = 1
-   *   with evaltime being an integer (which happens when evaluating on frame by frame basis)
-   */
-  noise = BLI_noise_turbulence(
-      data->size, evaltime - data->offset, data->phase, 0.1f, data->depth);
+  if (data->legacy_noise) {
+    /* Generate legacy noise. This is deprecated, see #123875.
+     * - 0.1 is passed as the 'z' value, otherwise evaluation fails for size = phase = 1
+     *   with evaltime being an integer (which happens when evaluating on frame by frame basis)
+     */
+    noise = BLI_noise_turbulence(
+        data->size, evaltime - data->offset, data->phase, 0.1f, data->depth);
+  }
+  else {
+    float scale;
+    if (data->size == 0.0f) {
+      scale = 0.0;
+    }
+    else {
+      scale = 1.0 / data->size;
+    }
+    /* Adding an offset so the 0 positions are unlikely to be on full frames. The user can counter
+     * that, which is why the value is chosen to be quite obscure. */
+    const float offset = 0.61803398874;
+    /* Using float2 to generate a phase offset. Offsetting the evaltime by `offset` to ensure that
+     * the noise at full frames isn't always at 0. */
+    noise = blender::noise::perlin_fbm<blender::float2>(
+        blender::float2(evaltime * scale - data->offset + offset, data->phase),
+        data->depth,
+        data->roughness,
+        data->lacunarity,
+        true);
+  }
 
   /* combine the noise with existing motion data */
   switch (data->modification) {

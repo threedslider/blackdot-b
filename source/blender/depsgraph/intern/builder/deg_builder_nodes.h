@@ -8,8 +8,9 @@
 
 #pragma once
 
-#include "BLI_span.hh"
+#include "BKE_lib_query.hh" /* For LibraryForeachIDCallbackFlag enum. */
 
+#include "DNA_armature_types.h"
 #include "intern/builder/deg_builder.h"
 #include "intern/builder/deg_builder_key.h"
 #include "intern/builder/deg_builder_map.h"
@@ -19,6 +20,7 @@
 
 #include "DEG_depsgraph.hh"
 
+struct BoneCollection;
 struct CacheFile;
 struct Camera;
 struct Collection;
@@ -66,7 +68,7 @@ struct TimeSourceNode;
 class DepsgraphNodeBuilder : public DepsgraphBuilder {
  public:
   DepsgraphNodeBuilder(Main *bmain, Depsgraph *graph, DepsgraphBuilderCache *cache);
-  ~DepsgraphNodeBuilder();
+  ~DepsgraphNodeBuilder() override;
 
   /* For given original ID get ID which is created by copy-on-evaluation system. */
   ID *get_cow_id(const ID *id_orig) const;
@@ -245,23 +247,30 @@ class DepsgraphNodeBuilder : public DepsgraphBuilder {
 
   virtual void build_parameters(ID *id);
   virtual void build_dimensions(Object *object);
+  /** IK Solver Eval Steps. */
   virtual void build_ik_pose(Object *object, bPoseChannel *pchan, bConstraint *con);
+  /** Spline IK Eval Steps. */
   virtual void build_splineik_pose(Object *object, bPoseChannel *pchan, bConstraint *con);
+  /** Pose/Armature Bones Graph. */
   virtual void build_rig(Object *object);
   virtual void build_armature(bArmature *armature);
   virtual void build_armature_bones(ListBase *bones);
   virtual void build_armature_bone_collections(blender::Span<BoneCollection *> collections);
+  /** Shape-keys. */
   virtual void build_shapekeys(Key *key);
   virtual void build_camera(Camera *camera);
   virtual void build_light(Light *lamp);
   virtual void build_nodetree(bNodeTree *ntree);
   virtual void build_nodetree_socket(bNodeSocket *socket);
+  /** Recursively build graph for material. */
   virtual void build_material(Material *ma);
   virtual void build_materials(Material **materials, int num_materials);
   virtual void build_freestyle_lineset(FreestyleLineSet *fls);
   virtual void build_freestyle_linestyle(FreestyleLineStyle *linestyle);
+  /** Recursively build graph for texture. */
   virtual void build_texture(Tex *tex);
   virtual void build_image(Image *image);
+  /** Recursively build graph for world. */
   virtual void build_world(World *world);
   virtual void build_cachefile(CacheFile *cache_file);
   virtual void build_mask(Mask *mask);
@@ -304,7 +313,7 @@ class DepsgraphNodeBuilder : public DepsgraphBuilder {
   static void modifier_walk(void *user_data,
                             struct Object *object,
                             struct ID **idpoin,
-                            int cb_flag);
+                            LibraryForeachIDCallbackFlag cb_flag);
   static void constraint_walk(bConstraint *constraint,
                               ID **idpoin,
                               bool is_reference,

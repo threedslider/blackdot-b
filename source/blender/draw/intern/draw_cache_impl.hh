@@ -8,6 +8,10 @@
 
 #pragma once
 
+#include <cstdint>
+
+#include "BLI_span.hh"
+
 struct GPUMaterial;
 namespace blender::gpu {
 class Batch;
@@ -23,12 +27,13 @@ struct Curve;
 struct Curves;
 struct Lattice;
 struct Mesh;
+struct Object;
+struct Scene;
 struct PointCloud;
 struct Volume;
-struct bGPdata;
 struct GreasePencil;
 
-#include "BKE_mesh.h"
+enum eMeshBatchDirtyMode : int8_t;
 
 namespace blender::draw {
 
@@ -41,7 +46,7 @@ void DRW_curve_batch_cache_validate(Curve *cu);
 void DRW_curve_batch_cache_free(Curve *cu);
 
 void DRW_mesh_batch_cache_dirty_tag(Mesh *mesh, eMeshBatchDirtyMode mode);
-void DRW_mesh_batch_cache_validate(Object &object, Mesh &mesh);
+void DRW_mesh_batch_cache_validate(Mesh &mesh);
 void DRW_mesh_batch_cache_free(void *batch_cache);
 
 void DRW_lattice_batch_cache_dirty_tag(Lattice *lt, int mode);
@@ -50,9 +55,6 @@ void DRW_lattice_batch_cache_free(Lattice *lt);
 
 void DRW_particle_batch_cache_dirty_tag(ParticleSystem *psys, int mode);
 void DRW_particle_batch_cache_free(ParticleSystem *psys);
-
-void DRW_gpencil_batch_cache_dirty_tag(bGPdata *gpd);
-void DRW_gpencil_batch_cache_free(bGPdata *gpd);
 
 void DRW_curves_batch_cache_dirty_tag(Curves *curves, int mode);
 void DRW_curves_batch_cache_validate(Curves *curves);
@@ -66,9 +68,9 @@ void DRW_volume_batch_cache_dirty_tag(Volume *volume, int mode);
 void DRW_volume_batch_cache_validate(Volume *volume);
 void DRW_volume_batch_cache_free(Volume *volume);
 
-void DRW_grease_pencil_batch_cache_dirty_tag(GreasePencil *grase_pencil, int mode);
-void DRW_grease_pencil_batch_cache_validate(GreasePencil *grase_pencil);
-void DRW_grease_pencil_batch_cache_free(GreasePencil *grase_pencil);
+void DRW_grease_pencil_batch_cache_dirty_tag(GreasePencil *grease_pencil, int mode);
+void DRW_grease_pencil_batch_cache_validate(GreasePencil *grease_pencil);
+void DRW_grease_pencil_batch_cache_free(GreasePencil *grease_pencil);
 
 /** \} */
 
@@ -102,8 +104,6 @@ void DRW_vertbuf_create_wiredata(gpu::VertBuf *vbo, int vert_len);
 
 void DRW_curve_batch_cache_create_requested(Object *ob, const Scene *scene);
 
-int DRW_curve_material_count_get(const Curve *cu);
-
 blender::gpu::Batch *DRW_curve_batch_cache_get_wire_edge(Curve *cu);
 blender::gpu::Batch *DRW_curve_batch_cache_get_wire_edge_viewer_attribute(Curve *cu);
 blender::gpu::Batch *DRW_curve_batch_cache_get_normal_edge(Curve *cu);
@@ -128,8 +128,6 @@ blender::gpu::Batch *DRW_lattice_batch_cache_get_edit_verts(Lattice *lt);
 /** \name Curves
  * \{ */
 
-int DRW_curves_material_count_get(const Curves *curves);
-
 /**
  * Provide GPU access to a specific evaluated attribute on curves.
  *
@@ -140,7 +138,6 @@ gpu::VertBuf **DRW_curves_texture_for_evaluated_attribute(Curves *curves,
                                                           const char *name,
                                                           bool *r_is_point_domain);
 
-GPUUniformBuf *DRW_curves_batch_cache_ubo_storage(Curves *curves);
 blender::gpu::Batch *DRW_curves_batch_cache_get_edit_points(Curves *curves);
 blender::gpu::Batch *DRW_curves_batch_cache_get_sculpt_curves_cage(Curves *curves);
 blender::gpu::Batch *DRW_curves_batch_cache_get_edit_curves_handles(Curves *curves);
@@ -154,8 +151,6 @@ void DRW_curves_batch_cache_create_requested(Object *ob);
 /** \name PointCloud
  * \{ */
 
-int DRW_pointcloud_material_count_get(const PointCloud *pointcloud);
-
 gpu::VertBuf *DRW_pointcloud_position_and_radius_buffer_get(Object *ob);
 
 gpu::VertBuf **DRW_pointcloud_evaluated_attribute(PointCloud *pointcloud, const char *name);
@@ -168,8 +163,6 @@ void DRW_pointcloud_batch_cache_create_requested(Object *ob);
 /* -------------------------------------------------------------------- */
 /** \name Volume
  * \{ */
-
-int DRW_volume_material_count_get(const Volume *volume);
 
 blender::gpu::Batch *DRW_volume_batch_cache_get_wireframes_face(Volume *volume);
 blender::gpu::Batch *DRW_volume_batch_cache_get_selection_surface(Volume *volume);
@@ -196,12 +189,11 @@ blender::gpu::Batch *DRW_mesh_batch_cache_get_loose_edges(Mesh &mesh);
 blender::gpu::Batch *DRW_mesh_batch_cache_get_edge_detection(Mesh &mesh, bool *r_is_manifold);
 blender::gpu::Batch *DRW_mesh_batch_cache_get_surface(Mesh &mesh);
 blender::gpu::Batch *DRW_mesh_batch_cache_get_surface_edges(Object &object, Mesh &mesh);
-blender::gpu::Batch **DRW_mesh_batch_cache_get_surface_shaded(Object &object,
-                                                              Mesh &mesh,
-                                                              GPUMaterial **gpumat_array,
-                                                              uint gpumat_array_len);
+Span<gpu::Batch *> DRW_mesh_batch_cache_get_surface_shaded(Object &object,
+                                                           Mesh &mesh,
+                                                           Span<const GPUMaterial *> materials);
 
-blender::gpu::Batch **DRW_mesh_batch_cache_get_surface_texpaint(Object &object, Mesh &mesh);
+Span<gpu::Batch *> DRW_mesh_batch_cache_get_surface_texpaint(Object &object, Mesh &mesh);
 blender::gpu::Batch *DRW_mesh_batch_cache_get_surface_texpaint_single(Object &object, Mesh &mesh);
 blender::gpu::Batch *DRW_mesh_batch_cache_get_surface_vertpaint(Object &object, Mesh &mesh);
 blender::gpu::Batch *DRW_mesh_batch_cache_get_surface_sculpt(Object &object, Mesh &mesh);
@@ -283,9 +275,7 @@ blender::gpu::Batch *DRW_mesh_batch_cache_get_edit_mesh_analysis(Mesh &mesh);
 
 gpu::VertBuf *DRW_mesh_batch_cache_pos_vertbuf_get(Mesh &mesh);
 
-int DRW_mesh_material_count_get(const Object &object, const Mesh &mesh);
-
-/* Edit mesh bitflags (is this the right place?) */
+/* Edit mesh bit-flags (is this the right place?). */
 enum {
   VFLAG_VERT_ACTIVE = 1 << 0,
   VFLAG_VERT_SELECTED = 1 << 1,

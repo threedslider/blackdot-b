@@ -16,11 +16,10 @@
 #include <Python.h>
 #include <cstddef>
 
-#include "../generic/py_capi_utils.h"
-#include "../generic/python_compat.h"
+#include "../generic/py_capi_utils.hh"
+#include "../generic/python_compat.hh"
 
 #include "BLI_string.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_global.hh"
 #include "BKE_main.hh"
@@ -28,8 +27,8 @@
 #include "RNA_access.hh"
 #include "RNA_prototypes.hh"
 
-#include "bpy_rna.h"
-#include "bpy_rna_data.h"
+#include "bpy_rna.hh"
+#include "bpy_rna_data.hh"
 
 struct BPy_DataContext {
   PyObject_HEAD /* Required Python macro. */
@@ -37,7 +36,7 @@ struct BPy_DataContext {
   char filepath[1024];
 };
 
-static PyObject *bpy_rna_data_temp_data(PyObject *self, PyObject *args, PyObject *kwds);
+static PyObject *bpy_rna_data_temp_data(PyObject *self, PyObject *args, PyObject *kw);
 static PyObject *bpy_rna_data_context_enter(BPy_DataContext *self);
 static PyObject *bpy_rna_data_context_exit(BPy_DataContext *self, PyObject *args);
 
@@ -135,7 +134,7 @@ PyDoc_STRVAR(
     "\n"
     "   :arg filepath: The file path for the newly temporary data. "
     "When None, the path of the currently open file is used.\n"
-    "   :type filepath: str, bytes or NoneType\n"
+    "   :type filepath: str | bytes | None\n"
     "\n"
     "   :return: Blend file data which is freed once the context exists.\n"
     "   :rtype: :class:`bpy.types.BlendData`\n");
@@ -170,7 +169,7 @@ static PyObject *bpy_rna_data_temp_data(PyObject * /*self*/, PyObject *args, PyO
 static PyObject *bpy_rna_data_context_enter(BPy_DataContext *self)
 {
   Main *bmain_temp = BKE_main_new();
-  PointerRNA ptr = RNA_pointer_create(nullptr, &RNA_BlendData, bmain_temp);
+  PointerRNA ptr = RNA_pointer_create_discrete(nullptr, &RNA_BlendData, bmain_temp);
 
   self->data_rna = (BPy_StructRNA *)pyrna_struct_CreatePyObject(&ptr);
 
@@ -182,8 +181,8 @@ static PyObject *bpy_rna_data_context_enter(BPy_DataContext *self)
 
 static PyObject *bpy_rna_data_context_exit(BPy_DataContext *self, PyObject * /*args*/)
 {
-  BKE_main_free(static_cast<Main *>(self->data_rna->ptr.data));
-  RNA_POINTER_INVALIDATE(&self->data_rna->ptr);
+  BKE_main_free(static_cast<Main *>(self->data_rna->ptr->data));
+  RNA_POINTER_INVALIDATE(&self->data_rna->ptr.value());
   Py_RETURN_NONE;
 }
 

@@ -15,6 +15,8 @@
 #include "BLI_bit_vector.hh"
 #include "BLI_map.hh"
 
+#include "DNA_world_types.h"
+
 #include "eevee_defines.hh"
 #include "eevee_sync.hh"
 
@@ -133,7 +135,7 @@ struct VolumeProbe : public LightProbe, VolumeProbeData {
   const LightProbeObjectCache *cache = nullptr;
   /** List of associated atlas bricks that are used by this grid. */
   Vector<IrradianceBrickPacked> bricks;
-  /** True if the grid needs to be reuploaded & re-composited with other light-grids. */
+  /** True if the grid needs to be re-uploaded & re-composited with other light-grids. */
   bool do_update;
   /** Index of the grid inside the grid UBO. */
   int grid_index;

@@ -6,21 +6,15 @@
  * \ingroup bke
  */
 
-#include <memory>
-#include <utility>
-
 #include "BLI_fileops.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
-#include "BLI_vector.hh"
 
 #include "DNA_asset_types.h"
 #include "DNA_space_types.h"
 
-#include "AS_asset_identifier.hh"
 #include "AS_asset_library.hh"
 
-#include "BKE_asset.hh"
 #include "BKE_asset_edit.hh"
 #include "BKE_blendfile.hh"
 #include "BKE_blendfile_link_append.hh"
@@ -30,7 +24,7 @@
 #include "BKE_lib_remap.hh"
 #include "BKE_library.hh"
 #include "BKE_main.hh"
-#include "BKE_packedFile.h"
+#include "BKE_packedFile.hh"
 #include "BKE_preferences.h"
 #include "BKE_report.hh"
 
@@ -41,14 +35,13 @@
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_build.hh"
 
-#include "MEM_guardedalloc.h"
-
 namespace blender::bke {
 
 static ID *asset_link_id(Main &global_main,
                          const ID_Type id_type,
                          const char *filepath,
-                         const char *asset_name)
+                         const char *asset_name,
+                         ReportList *reports = nullptr)
 {
   /* Load asset from asset library. */
   LibraryLink_Params lapp_params{};
@@ -62,7 +55,11 @@ static ID *asset_link_id(Main &global_main,
       lapp_context, asset_name, id_type, nullptr);
   BKE_blendfile_link_append_context_item_library_index_enable(lapp_context, lapp_item, 0);
 
-  BKE_blendfile_link(lapp_context, nullptr);
+  BKE_blendfile_link_append_context_init_done(lapp_context);
+
+  BKE_blendfile_link(lapp_context, reports);
+
+  BKE_blendfile_link_append_context_finalize(lapp_context);
 
   ID *local_asset = BKE_blendfile_link_append_context_item_newid_get(lapp_context, lapp_item);
 
@@ -126,87 +123,23 @@ static std::string asset_blendfile_path_for_save(const bUserAssetLibrary &user_l
               std::min(sizeof(base_name_filesafe), size_t(base_name.size() + 1)));
   BLI_path_make_safe_filename(base_name_filesafe);
 
-  const std::string filepath = root_path + SEP + base_name_filesafe + BLENDER_ASSET_FILE_SUFFIX;
-
-  if (!BLI_is_file(filepath.c_str())) {
-    return filepath;
+  {
+    const std::string filepath = root_path + SEP + base_name_filesafe + BLENDER_ASSET_FILE_SUFFIX;
+    if (!BLI_is_file(filepath.c_str())) {
+      return filepath;
+    }
   }
 
   /* Avoid overwriting existing file by adding number suffix. */
   for (int i = 1;; i++) {
     const std::string filepath = root_path + SEP + base_name_filesafe + "_" + std::to_string(i++) +
                                  BLENDER_ASSET_FILE_SUFFIX;
-    if (!BLI_is_file((filepath.c_str()))) {
+    if (!BLI_is_file(filepath.c_str())) {
       return filepath;
     }
   }
 
   return "";
-}
-
-static void asset_main_create_expander(void * /*handle*/, Main * /*bmain*/, void *vid)
-{
-  ID *id = static_cast<ID *>(vid);
-
-  if (id && (id->tag & LIB_TAG_DOIT) == 0) {
-    id->tag |= LIB_TAG_NEED_EXPAND | LIB_TAG_DOIT;
-  }
-}
-
-static Main *asset_main_create_from_ID(Main &bmain_src, ID &id_asset, ID **id_asset_new)
-{
-  /* Tag asset ID and its dependencies. */
-  ID *id_src;
-  FOREACH_MAIN_ID_BEGIN (&bmain_src, id_src) {
-    id_src->tag &= ~(LIB_TAG_NEED_EXPAND | LIB_TAG_DOIT);
-  }
-  FOREACH_MAIN_ID_END;
-
-  id_asset.tag |= LIB_TAG_NEED_EXPAND | LIB_TAG_DOIT;
-
-  BLO_expand_main(nullptr, &bmain_src, asset_main_create_expander);
-
-  /* Create main and copy all tagged datablocks. */
-  Main *bmain_dst = BKE_main_new();
-  STRNCPY(bmain_dst->filepath, bmain_src.filepath);
-  bmain_dst->is_asset_edit_file = true;
-
-  blender::bke::id::IDRemapper id_remapper;
-
-  FOREACH_MAIN_ID_BEGIN (&bmain_src, id_src) {
-    if (id_src->tag & LIB_TAG_DOIT) {
-      /* Note that this will not copy Library datablocks, and all copied
-       * datablocks will become local as a result. */
-      ID *id_dst = BKE_id_copy_ex(bmain_dst,
-                                  id_src,
-                                  nullptr,
-                                  LIB_ID_CREATE_NO_USER_REFCOUNT | LIB_ID_CREATE_NO_DEG_TAG |
-                                      ((id_src == &id_asset) ? LIB_ID_COPY_ASSET_METADATA : 0));
-      id_remapper.add(id_src, id_dst);
-      if (id_src == &id_asset) {
-        *id_asset_new = id_dst;
-      }
-    }
-    else {
-      id_remapper.add(id_src, nullptr);
-    }
-
-    id_src->tag &= ~(LIB_TAG_NEED_EXPAND | LIB_TAG_DOIT);
-  }
-  FOREACH_MAIN_ID_END;
-
-  /* Remap datablock pointers. */
-  BKE_libblock_remap_multiple_raw(bmain_dst, id_remapper, ID_REMAP_SKIP_USER_CLEAR);
-
-  /* Compute reference counts. */
-  ID *id_dst;
-  FOREACH_MAIN_ID_BEGIN (bmain_dst, id_dst) {
-    id_dst->tag &= ~LIB_TAG_NO_USER_REFCOUNT;
-  }
-  FOREACH_MAIN_ID_END;
-  BKE_main_id_refcount_recompute(bmain_dst, false);
-
-  return bmain_dst;
 }
 
 static bool asset_write_in_library(Main &bmain,
@@ -216,52 +149,51 @@ static bool asset_write_in_library(Main &bmain,
                                    std::string &final_full_file_path,
                                    ReportList &reports)
 {
+  using namespace blender::bke::blendfile;
+
   ID &id = const_cast<ID &>(id_const);
 
-  ID *new_id = nullptr;
-  Main *new_main = asset_main_create_from_ID(bmain, id, &new_id);
+  PartialWriteContext lib_write_ctx{BKE_main_blendfile_path(&bmain)};
+  ID *new_id = lib_write_ctx.id_add(&id,
+                                    {(PartialWriteContext::IDAddOperations::MAKE_LOCAL |
+                                      PartialWriteContext::IDAddOperations::SET_FAKE_USER |
+                                      PartialWriteContext::IDAddOperations::ADD_DEPENDENCIES)});
 
   std::string new_name = name;
-  BKE_libblock_rename(new_main, new_id, new_name.c_str());
-  id_fake_user_set(new_id);
+  BKE_libblock_rename(lib_write_ctx.bmain, *new_id, new_name);
 
-  BlendFileWriteParams blend_file_write_params{};
-  blend_file_write_params.remap_mode = BLO_WRITE_PATH_REMAP_RELATIVE;
-
-  BKE_packedfile_pack_all(new_main, nullptr, false);
+  BKE_packedfile_pack_all(&lib_write_ctx.bmain, nullptr, false);
+  lib_write_ctx.bmain.is_asset_edit_file = true;
 
   const int write_flags = G_FILE_COMPRESS | G_FILE_ASSET_EDIT_FILE;
-  const bool success = BLO_write_file(
-      new_main, filepath.c_str(), write_flags, &blend_file_write_params, &reports);
+  const int remap_mode = BLO_WRITE_PATH_REMAP_RELATIVE;
+  const bool success = lib_write_ctx.write(filepath.c_str(), write_flags, remap_mode, reports);
 
   if (success) {
     const IDTypeInfo *idtype = BKE_idtype_get_info_from_id(&id);
     final_full_file_path = std::string(filepath) + SEP + std::string(idtype->name) + SEP + name;
   }
 
-  BKE_main_free(new_main);
-
   return success;
 }
 
-static void asset_reload(Main &global_main, Library *lib, ReportList &reports)
+static ID *asset_reload(Main &global_main, ID &id, ReportList *reports)
 {
-  /* Fill fresh main database with same datablock as before. */
-  LibraryLink_Params lapp_params{};
-  lapp_params.bmain = &global_main;
-  BlendfileLinkAppendContext *lapp_context = BKE_blendfile_link_append_context_new(&lapp_params);
-  BKE_blendfile_link_append_context_flag_set(
-      lapp_context, BLO_LIBLINK_FORCE_INDIRECT | BLO_LIBLINK_USE_PLACEHOLDERS, true);
+  BLI_assert(ID_IS_LINKED(&id));
 
-  BKE_blendfile_link_append_context_library_add(lapp_context, lib->runtime.filepath_abs, nullptr);
-  BKE_blendfile_library_relocate(lapp_context, &reports, lib, true);
-  BKE_blendfile_link_append_context_free(lapp_context);
+  const std::string name = BKE_id_name(id);
+  const std::string filepath = id.lib->runtime.filepath_abs;
+  const ID_Type id_type = GS(id.name);
 
-  /* Clear temporary tag from relocation. */
-  BKE_main_id_tag_all(&global_main, LIB_TAG_PRE_EXISTING, false);
+  /* TODO: There's no API to reload a single data block (and its dependencies) yet. For now
+   * deleting the brush and re-linking it is the best way to get reloading to work. */
+  BKE_id_delete(&global_main, &id);
+  ID *new_id = asset_link_id(global_main, id_type, filepath.c_str(), name.c_str(), reports);
 
   /* Recreate dependency graph to include new IDs. */
   DEG_relations_tag_update(&global_main);
+
+  return new_id;
 }
 
 static AssetWeakReference asset_weak_reference_for_user_library(
@@ -309,7 +241,7 @@ std::optional<std::string> asset_edit_id_save_as(Main &global_main,
                                                  const ID &id,
                                                  const StringRefNull name,
                                                  const bUserAssetLibrary &user_library,
-                                                 AssetWeakReference &new_weak_ref,
+                                                 AssetWeakReference &r_weak_ref,
                                                  ReportList &reports)
 {
   const std::string filepath = asset_blendfile_path_for_save(
@@ -323,7 +255,7 @@ std::optional<std::string> asset_edit_id_save_as(Main &global_main,
     return std::nullopt;
   }
 
-  new_weak_ref = asset_weak_reference_for_user_library(
+  r_weak_ref = asset_weak_reference_for_user_library(
       user_library, GS(id.name), name.c_str(), filepath.c_str());
 
   BKE_reportf(&reports, RPT_INFO, "Saved \"%s\"", filepath.c_str());
@@ -353,17 +285,13 @@ bool asset_edit_id_save(Main &global_main, const ID &id, ReportList &reports)
   return true;
 }
 
-bool asset_edit_id_revert(Main &global_main, ID &id, ReportList &reports)
+ID *asset_edit_id_revert(Main &global_main, ID &id, ReportList &reports)
 {
   if (!asset_edit_id_is_editable(id)) {
-    return false;
+    return nullptr;
   }
 
-  /* Reload entire main, including texture dependencies. This relies on there
-   * being only a single asset per blend file. */
-  asset_reload(global_main, id.lib, reports);
-
-  return true;
+  return asset_reload(global_main, id, &reports);
 }
 
 bool asset_edit_id_delete(Main &global_main, ID &id, ReportList &reports)

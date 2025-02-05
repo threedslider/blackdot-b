@@ -3,6 +3,10 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+__all__ = (
+    "main",
+)
+
 import os
 import sys
 
@@ -10,10 +14,6 @@ PWD = os.path.dirname(__file__)
 sys.path.append(os.path.join(PWD, "modules"))
 
 from batch_edit_text import run
-
-from typing import (
-    Optional,
-)
 
 SOURCE_DIR = os.path.normpath(os.path.abspath(os.path.normpath(os.path.join(PWD, "..", ".."))))
 
@@ -31,7 +31,7 @@ SOURCE_EXT = (
 )
 
 
-def sort_struct_lists(fn: str, data_src: str) -> Optional[str]:
+def sort_struct_lists(fn: str, data_src: str) -> str | None:
     import re
 
     # eg:
@@ -53,7 +53,7 @@ def sort_struct_lists(fn: str, data_src: str) -> Optional[str]:
 
     lines = data_src.splitlines(keepends=True)
 
-    def can_sort(l: str) -> Optional[int]:
+    def can_sort(l: str) -> int | None:
         if re_match_struct.match(l):
             return 1
         if re_match_struct_type.match(l):
@@ -87,9 +87,15 @@ def sort_struct_lists(fn: str, data_src: str) -> Optional[str]:
     return None
 
 
-run(
-    directories=[os.path.join(SOURCE_DIR, d) for d in SOURCE_DIRS],
-    is_text=lambda fn: fn.endswith(SOURCE_EXT),
-    text_operation=sort_struct_lists,
-    use_multiprocess=True,
-)
+def main() -> int:
+    run(
+        directories=[os.path.join(SOURCE_DIR, d) for d in SOURCE_DIRS],
+        is_text=lambda fn: fn.endswith(SOURCE_EXT),
+        text_operation=sort_struct_lists,
+        use_multiprocess=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

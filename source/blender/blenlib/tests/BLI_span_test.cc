@@ -7,7 +7,7 @@
 #include "BLI_span.hh"
 #include "BLI_vector.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 namespace blender::tests {
 
@@ -160,6 +160,18 @@ TEST(span, Contains)
 {
   Vector<int> a = {4, 5, 6, 7};
   Span<int> a_span = a;
+  EXPECT_TRUE(a_span.contains(4));
+  EXPECT_TRUE(a_span.contains(5));
+  EXPECT_TRUE(a_span.contains(6));
+  EXPECT_TRUE(a_span.contains(7));
+  EXPECT_FALSE(a_span.contains(3));
+  EXPECT_FALSE(a_span.contains(8));
+}
+
+TEST(mutable_span, Contains)
+{
+  Vector<int> a = {4, 5, 6, 7};
+  MutableSpan<int> a_span = a;
   EXPECT_TRUE(a_span.contains(4));
   EXPECT_TRUE(a_span.contains(5));
   EXPECT_TRUE(a_span.contains(6));

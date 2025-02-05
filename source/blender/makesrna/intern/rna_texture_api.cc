@@ -6,11 +6,8 @@
  * \ingroup RNA
  */
 
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-#include "BLI_utildefines.h"
 
 #include "RNA_define.hh"
 
@@ -57,7 +54,7 @@ void RNA_api_texture(StructRNA *srna)
       -FLT_MAX,
       FLT_MAX,
       "The coordinates (x,y,z) of the texture, in case of a 3D texture, the z value is the slice "
-      "of the texture that is evaluated. For 2D textures such as images, the z value is ignored",
+      "of the texture that is evaluated. For 2D textures such as images, the z value is ignored.",
       "",
       -1e4,
       1e4);
@@ -72,7 +69,7 @@ void RNA_api_texture(StructRNA *srna)
       -FLT_MAX,
       FLT_MAX,
       "The result of the texture where (x,y,z,w) are (red, green, blue, intensity). "
-      "For grayscale textures, often intensity only will be used",
+      "For grayscale textures, often intensity only will be used.",
       nullptr,
       -1e4,
       1e4);

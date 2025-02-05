@@ -17,6 +17,7 @@
 #include "MEM_guardedalloc.h"
 
 #include "DNA_anim_types.h"
+#include "DNA_brush_types.h"
 #include "DNA_collection_types.h"
 #include "DNA_curveprofile_types.h"
 #include "DNA_defaults.h"
@@ -40,12 +41,10 @@
 #include "DNA_windowmanager_types.h"
 #include "DNA_world_types.h"
 
-#include "BKE_callbacks.hh"
-#include "BLI_blenlib.h"
 #include "BLI_math_rotation.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_string_utils.hh"
-#include "BLI_task.h"
 #include "BLI_threads.h"
 #include "BLI_utildefines.h"
 
@@ -53,10 +52,11 @@
 
 #include "BLT_translation.hh"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_anim_data.hh"
 #include "BKE_animsys.h"
 #include "BKE_bpath.hh"
+#include "BKE_callbacks.hh"
 #include "BKE_collection.hh"
 #include "BKE_colortools.hh"
 #include "BKE_curveprofile.h"
@@ -66,8 +66,8 @@
 #include "BKE_fcurve.hh"
 #include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
-#include "BKE_image.h"
-#include "BKE_image_format.h"
+#include "BKE_image.hh"
+#include "BKE_image_format.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
@@ -226,7 +226,7 @@ static void scene_init_data(ID *id)
 
   BKE_color_managed_display_settings_init(&scene->display_settings);
   BKE_color_managed_view_settings_init_render(
-      &scene->view_settings, &scene->display_settings, "Filmic");
+      &scene->view_settings, &scene->display_settings, "AgX");
   STRNCPY(scene->sequencer_colorspace_settings.name, colorspace_name);
 
   BKE_image_format_init(&scene->r.im_format, true);
@@ -268,10 +268,10 @@ static void scene_copy_data(Main *bmain,
 {
   Scene *scene_dst = (Scene *)id_dst;
   const Scene *scene_src = (const Scene *)id_src;
-  /* We never handle user-count here for own data. */
+  /* Never handle user-count here for own sub-data. */
   const int flag_subdata = flag | LIB_ID_CREATE_NO_USER_REFCOUNT;
-  /* We always need allocation of our private ID data. */
-  const int flag_private_id_data = flag & ~LIB_ID_CREATE_NO_ALLOCATE;
+  /* Always need allocation of the embedded ID data. */
+  const int flag_embedded_id_data = flag_subdata & ~LIB_ID_CREATE_NO_ALLOCATE;
 
   scene_dst->ed = nullptr;
   scene_dst->depsgraph_hash = nullptr;
@@ -284,7 +284,7 @@ static void scene_copy_data(Main *bmain,
                        &scene_src->master_collection->id,
                        &scene_dst->id,
                        reinterpret_cast<ID **>(&scene_dst->master_collection),
-                       flag_private_id_data);
+                       flag_embedded_id_data);
   }
 
   /* View Layers */
@@ -312,7 +312,7 @@ static void scene_copy_data(Main *bmain,
                        &scene_src->nodetree->id,
                        &scene_dst->id,
                        reinterpret_cast<ID **>(&scene_dst->nodetree),
-                       flag_private_id_data);
+                       flag_embedded_id_data);
     /* TODO this should not be needed anymore? Should be handled by generic remapping code in
      * #BKE_id_copy_in_lib. */
     BKE_libblock_relink_ex(bmain,
@@ -352,11 +352,15 @@ static void scene_copy_data(Main *bmain,
   if (scene_src->ed) {
     scene_dst->ed = MEM_cnew<Editing>(__func__);
     scene_dst->ed->seqbasep = &scene_dst->ed->seqbase;
+    scene_dst->ed->cache_flag = scene_src->ed->cache_flag;
+    scene_dst->ed->show_missing_media_flag = scene_src->ed->show_missing_media_flag;
+    scene_dst->ed->proxy_storage = scene_src->ed->proxy_storage;
+    STRNCPY(scene_dst->ed->proxy_dir, scene_src->ed->proxy_dir);
     SEQ_sequence_base_dupli_recursive(scene_src,
                                       scene_dst,
                                       &scene_dst->ed->seqbase,
                                       &scene_src->ed->seqbase,
-                                      SEQ_DUPE_ALL,
+                                      STRIP_DUPE_ALL,
                                       flag_subdata);
     BLI_duplicatelist(&scene_dst->ed->channels, &scene_src->ed->channels);
     scene_dst->ed->displayed_channels = &scene_dst->ed->channels;
@@ -398,7 +402,7 @@ static void scene_free_data(ID *id)
 
   /* is no lib link block, but scene extension */
   if (scene->nodetree) {
-    blender::bke::ntreeFreeEmbeddedTree(scene->nodetree);
+    blender::bke::node_tree_free_embedded_tree(scene->nodetree);
     MEM_freeN(scene->nodetree);
     scene->nodetree = nullptr;
   }
@@ -463,7 +467,7 @@ static void scene_free_data(ID *id)
 static void scene_foreach_rigidbodyworldSceneLooper(RigidBodyWorld * /*rbw*/,
                                                     ID **id_pointer,
                                                     void *user_data,
-                                                    int cb_flag)
+                                                    const LibraryForeachIDCallbackFlag cb_flag)
 {
   LibraryForeachIDData *data = (LibraryForeachIDData *)user_data;
   BKE_LIB_FOREACHID_PROCESS_FUNCTION_CALL(
@@ -780,15 +784,16 @@ static void scene_foreach_layer_collection(LibraryForeachIDData *data,
 
   LISTBASE_FOREACH (LayerCollection *, lc, lb) {
     if ((data_flags & IDWALK_NO_ORIG_POINTERS_ACCESS) == 0 && lc->collection != nullptr) {
-      BLI_assert(is_master == ((lc->collection->id.flag & LIB_EMBEDDED_DATA) != 0));
+      BLI_assert(is_master == ((lc->collection->id.flag & ID_FLAG_EMBEDDED_DATA) != 0));
     }
-    const int cb_flag = is_master ? IDWALK_CB_EMBEDDED_NOT_OWNING : IDWALK_CB_NOP;
+    const LibraryForeachIDCallbackFlag cb_flag = is_master ? IDWALK_CB_EMBEDDED_NOT_OWNING :
+                                                             IDWALK_CB_NOP;
     BKE_LIB_FOREACHID_PROCESS_IDSUPER(data, lc->collection, cb_flag | IDWALK_CB_DIRECT_WEAK_LINK);
     scene_foreach_layer_collection(data, &lc->layer_collections, false);
   }
 }
 
-static bool seq_foreach_member_id_cb(Sequence *seq, void *user_data)
+static bool strip_foreach_member_id_cb(Strip *strip, void *user_data)
 {
   LibraryForeachIDData *data = static_cast<LibraryForeachIDData *>(user_data);
   const int flag = BKE_lib_query_foreachid_process_flags_get(data);
@@ -810,25 +815,25 @@ static bool seq_foreach_member_id_cb(Sequence *seq, void *user_data)
   } \
   ((void)0)
 
-  FOREACHID_PROCESS_IDSUPER(data, seq->scene, IDWALK_CB_NEVER_SELF);
-  FOREACHID_PROCESS_IDSUPER(data, seq->scene_camera, IDWALK_CB_NOP);
-  FOREACHID_PROCESS_IDSUPER(data, seq->clip, IDWALK_CB_USER);
-  FOREACHID_PROCESS_IDSUPER(data, seq->mask, IDWALK_CB_USER);
-  FOREACHID_PROCESS_IDSUPER(data, seq->sound, IDWALK_CB_USER);
-  IDP_foreach_property(seq->prop, IDP_TYPE_FILTER_ID, [&](IDProperty *prop) {
+  FOREACHID_PROCESS_IDSUPER(data, strip->scene, IDWALK_CB_NEVER_SELF);
+  FOREACHID_PROCESS_IDSUPER(data, strip->scene_camera, IDWALK_CB_NOP);
+  FOREACHID_PROCESS_IDSUPER(data, strip->clip, IDWALK_CB_USER);
+  FOREACHID_PROCESS_IDSUPER(data, strip->mask, IDWALK_CB_USER);
+  FOREACHID_PROCESS_IDSUPER(data, strip->sound, IDWALK_CB_USER);
+  IDP_foreach_property(strip->prop, IDP_TYPE_FILTER_ID, [&](IDProperty *prop) {
     BKE_lib_query_idpropertiesForeachIDLink_callback(prop, data);
   });
-  LISTBASE_FOREACH (SequenceModifierData *, smd, &seq->modifiers) {
+  LISTBASE_FOREACH (SequenceModifierData *, smd, &strip->modifiers) {
     FOREACHID_PROCESS_IDSUPER(data, smd->mask_id, IDWALK_CB_USER);
   }
 
-  if (seq->type == SEQ_TYPE_TEXT && seq->effectdata) {
-    TextVars *text_data = static_cast<TextVars *>(seq->effectdata);
+  if (strip->type == STRIP_TYPE_TEXT && strip->effectdata) {
+    TextVars *text_data = static_cast<TextVars *>(strip->effectdata);
     FOREACHID_PROCESS_IDSUPER(data, text_data->text_font, IDWALK_CB_USER);
   }
 
   if (flag & IDWALK_DO_DEPRECATED_POINTERS) {
-    FOREACHID_PROCESS_ID_NOCHECK(data, seq->ipo, IDWALK_CB_USER);
+    FOREACHID_PROCESS_ID_NOCHECK(data, strip->ipo, IDWALK_CB_USER);
   }
 
 #undef FOREACHID_PROCESS_IDSUPER
@@ -855,7 +860,7 @@ static void scene_foreach_id(ID *id, LibraryForeachIDData *data)
   }
   if (scene->ed) {
     BKE_LIB_FOREACHID_PROCESS_FUNCTION_CALL(
-        data, SEQ_for_each_callback(&scene->ed->seqbase, seq_foreach_member_id_cb, data));
+        data, SEQ_for_each_callback(&scene->ed->seqbase, strip_foreach_member_id_cb, data));
   }
 
   BKE_LIB_FOREACHID_PROCESS_FUNCTION_CALL(data,
@@ -936,20 +941,20 @@ static void scene_foreach_id(ID *id, LibraryForeachIDData *data)
   }
 }
 
-static bool seq_foreach_path_callback(Sequence *seq, void *user_data)
+static bool strip_foreach_path_callback(Strip *strip, void *user_data)
 {
-  if (SEQ_HAS_PATH(seq)) {
-    StripElem *se = seq->strip->stripdata;
+  if (STRIP_HAS_PATH(strip)) {
+    StripElem *se = strip->data->stripdata;
     BPathForeachPathData *bpath_data = (BPathForeachPathData *)user_data;
 
-    if (ELEM(seq->type, SEQ_TYPE_MOVIE, SEQ_TYPE_SOUND_RAM) && se) {
+    if (ELEM(strip->type, STRIP_TYPE_MOVIE, STRIP_TYPE_SOUND_RAM) && se) {
       BKE_bpath_foreach_path_dirfile_fixed_process(bpath_data,
-                                                   seq->strip->dirpath,
-                                                   sizeof(seq->strip->dirpath),
+                                                   strip->data->dirpath,
+                                                   sizeof(strip->data->dirpath),
                                                    se->filename,
                                                    sizeof(se->filename));
     }
-    else if ((seq->type == SEQ_TYPE_IMAGE) && se) {
+    else if ((strip->type == STRIP_TYPE_IMAGE) && se) {
       /* NOTE: An option not to loop over all strips could be useful? */
       uint len = uint(MEM_allocN_len(se)) / uint(sizeof(*se));
       uint i;
@@ -961,8 +966,8 @@ static bool seq_foreach_path_callback(Sequence *seq, void *user_data)
 
       for (i = 0; i < len; i++, se++) {
         BKE_bpath_foreach_path_dirfile_fixed_process(bpath_data,
-                                                     seq->strip->dirpath,
-                                                     sizeof(seq->strip->dirpath),
+                                                     strip->data->dirpath,
+                                                     sizeof(strip->data->dirpath),
                                                      se->filename,
                                                      sizeof(se->filename));
       }
@@ -970,7 +975,7 @@ static bool seq_foreach_path_callback(Sequence *seq, void *user_data)
     else {
       /* simple case */
       BKE_bpath_foreach_path_fixed_process(
-          bpath_data, seq->strip->dirpath, sizeof(seq->strip->dirpath));
+          bpath_data, strip->data->dirpath, sizeof(strip->data->dirpath));
     }
   }
   return true;
@@ -980,15 +985,27 @@ static void scene_foreach_path(ID *id, BPathForeachPathData *bpath_data)
 {
   Scene *scene = (Scene *)id;
   if (scene->ed != nullptr) {
-    SEQ_for_each_callback(&scene->ed->seqbase, seq_foreach_path_callback, bpath_data);
+    SEQ_for_each_callback(&scene->ed->seqbase, strip_foreach_path_callback, bpath_data);
+  }
+}
+
+static void scene_foreach_cache(ID *id,
+                                IDTypeForeachCacheFunctionCallback function_callback,
+                                void *user_data)
+{
+  Scene *scene = (Scene *)id;
+  if (scene->ed != nullptr) {
+    IDCacheKey key;
+    key.id_session_uid = id->session_uid;
+    /* Preserve VSE thumbnail cache across global undo steps. */
+    key.identifier = offsetof(Editing, runtime.thumbnail_cache);
+    function_callback(id, &key, (void **)&scene->ed->runtime.thumbnail_cache, 0, user_data);
   }
 }
 
 static void scene_blend_write(BlendWriter *writer, ID *id, const void *id_address)
 {
   Scene *sce = (Scene *)id;
-
-  BLO_Write_IDBuffer *temp_embedded_id_buffer = BLO_write_allocate_id_buffer();
 
   if (BLO_write_is_undo(writer)) {
     /* Clean up, important in undo case to reduce false detection of changed data-blocks. */
@@ -1103,14 +1120,12 @@ static void scene_blend_write(BlendWriter *writer, ID *id, const void *id_addres
   }
 
   if (sce->nodetree) {
-    BLO_write_init_id_buffer_from_id(
-        temp_embedded_id_buffer, &sce->nodetree->id, BLO_write_is_undo(writer));
-    bNodeTree *temp_nodetree = reinterpret_cast<bNodeTree *>(
-        BLO_write_get_id_buffer_temp_id(temp_embedded_id_buffer));
+    BLO_Write_IDBuffer temp_embedded_id_buffer{sce->nodetree->id, writer};
+    bNodeTree *temp_nodetree = reinterpret_cast<bNodeTree *>(temp_embedded_id_buffer.get());
     /* Set deprecated chunksize for forward compatibility. */
     temp_nodetree->chunksize = 256;
     BLO_write_struct_at_address(writer, bNodeTree, sce->nodetree, temp_nodetree);
-    blender::bke::ntreeBlendWrite(writer, temp_nodetree);
+    blender::bke::node_tree_blend_write(writer, temp_nodetree);
   }
 
   BKE_color_managed_view_settings_blend_write(writer, &sce->view_settings);
@@ -1137,26 +1152,17 @@ static void scene_blend_write(BlendWriter *writer, ID *id, const void *id_addres
   }
 
   if (sce->master_collection) {
-    BLO_write_init_id_buffer_from_id(
-        temp_embedded_id_buffer, &sce->master_collection->id, BLO_write_is_undo(writer));
-    BKE_collection_blend_write_prepare_nolib(
-        writer,
-        reinterpret_cast<Collection *>(BLO_write_get_id_buffer_temp_id(temp_embedded_id_buffer)));
-    BLO_write_struct_at_address(writer,
-                                Collection,
-                                sce->master_collection,
-                                BLO_write_get_id_buffer_temp_id(temp_embedded_id_buffer));
-    BKE_collection_blend_write_nolib(
-        writer,
-        reinterpret_cast<Collection *>(BLO_write_get_id_buffer_temp_id(temp_embedded_id_buffer)));
+    BLO_Write_IDBuffer temp_embedded_id_buffer{sce->master_collection->id, writer};
+    Collection *temp_collection = reinterpret_cast<Collection *>(temp_embedded_id_buffer.get());
+    BKE_collection_blend_write_prepare_nolib(writer, temp_collection);
+    BLO_write_struct_at_address(writer, Collection, sce->master_collection, temp_collection);
+    BKE_collection_blend_write_nolib(writer, temp_collection);
   }
 
   BKE_screen_view3d_shading_blend_write(writer, &sce->display.shading);
 
   /* Freed on `do_versions()`. */
   BLI_assert(sce->layer_properties == nullptr);
-
-  BLO_write_destroy_id_buffer(&temp_embedded_id_buffer);
 }
 
 static void direct_link_paint_helper(BlendDataReader *reader, const Scene *scene, Paint **paint)
@@ -1171,11 +1177,11 @@ static void direct_link_paint_helper(BlendDataReader *reader, const Scene *scene
 
 static void link_recurs_seq(BlendDataReader *reader, ListBase *lb)
 {
-  BLO_read_struct_list(reader, Sequence, lb);
+  BLO_read_struct_list(reader, Strip, lb);
 
-  LISTBASE_FOREACH_MUTABLE (Sequence *, seq, lb) {
+  LISTBASE_FOREACH_MUTABLE (Strip *, seq, lb) {
     /* Sanity check. */
-    if (!SEQ_valid_strip_channel(seq)) {
+    if (!SEQ_is_valid_strip_channel(seq)) {
       BLI_freelinkN(lb, seq);
       BLO_read_data_reports(reader)->count.sequence_strips_skipped++;
     }
@@ -1291,11 +1297,13 @@ static void scene_blend_read_data(BlendDataReader *reader, ID *id)
     BLO_read_struct(reader, Editing, &sce->ed);
     Editing *ed = sce->ed;
 
-    BLO_read_struct(reader, Sequence, &ed->act_seq);
+    ed->act_seq = static_cast<Strip *>(
+        BLO_read_get_new_data_address_no_us(reader, ed->act_seq, sizeof(Strip)));
     ed->cache = nullptr;
     ed->prefetch_job = nullptr;
-    ed->runtime.sequence_lookup = nullptr;
+    ed->runtime.strip_lookup = nullptr;
     ed->runtime.media_presence = nullptr;
+    ed->runtime.thumbnail_cache = nullptr;
 
     /* recursive link sequences, lb will be correctly initialized */
     link_recurs_seq(reader, &ed->seqbase);
@@ -1307,14 +1315,22 @@ static void scene_blend_read_data(BlendDataReader *reader, ID *id)
     /* link metastack, slight abuse of structs here,
      * have to restore pointer to internal part in struct */
     {
-      Sequence temp;
       void *seqbase_poin;
       void *channels_poin;
-      intptr_t seqbase_offset;
-      intptr_t channels_offset;
-
-      seqbase_offset = intptr_t(&(temp).seqbase) - intptr_t(&temp);
-      channels_offset = intptr_t(&(temp).channels) - intptr_t(&temp);
+      /* This whole thing with seqbasep offsets is really not good
+       * and prevents changes to the Sequence struct. A more correct approach
+       * would be to calculate offset using sDNA from the file (NOT from the
+       * current Blender). Even better would be having some sort of dedicated
+       * map of seqbase pointers to avoid this offset magic. */
+      constexpr intptr_t seqbase_offset = offsetof(Strip, seqbase);
+      constexpr intptr_t channels_offset = offsetof(Strip, channels);
+#if ARCH_CPU_64_BITS
+      static_assert(seqbase_offset == 264, "Sequence seqbase member offset cannot be changed");
+      static_assert(channels_offset == 280, "Sequence channels member offset cannot be changed");
+#else
+      static_assert(seqbase_offset == 204, "Sequence seqbase member offset cannot be changed");
+      static_assert(channels_offset == 212, "Sequence channels member offset cannot be changed");
+#endif
 
       /* seqbase root pointer */
       if (ed->seqbasep == old_seqbasep) {
@@ -1323,7 +1339,7 @@ static void scene_blend_read_data(BlendDataReader *reader, ID *id)
       else {
         seqbase_poin = POINTER_OFFSET(ed->seqbasep, -seqbase_offset);
 
-        seqbase_poin = BLO_read_get_new_data_address(reader, seqbase_poin);
+        seqbase_poin = BLO_read_get_new_data_address_no_us(reader, seqbase_poin, sizeof(Strip));
 
         if (seqbase_poin) {
           ed->seqbasep = (ListBase *)POINTER_OFFSET(seqbase_poin, seqbase_offset);
@@ -1339,7 +1355,8 @@ static void scene_blend_read_data(BlendDataReader *reader, ID *id)
       }
       else {
         channels_poin = POINTER_OFFSET(ed->displayed_channels, -channels_offset);
-        channels_poin = BLO_read_get_new_data_address(reader, channels_poin);
+        channels_poin = BLO_read_get_new_data_address_no_us(
+            reader, channels_poin, sizeof(SeqTimelineChannel));
 
         if (channels_poin) {
           ed->displayed_channels = (ListBase *)POINTER_OFFSET(channels_poin, channels_offset);
@@ -1353,14 +1370,14 @@ static void scene_blend_read_data(BlendDataReader *reader, ID *id)
       BLO_read_struct_list(reader, MetaStack, &(ed->metastack));
 
       LISTBASE_FOREACH (MetaStack *, ms, &ed->metastack) {
-        BLO_read_struct(reader, Sequence, &ms->parseq);
+        BLO_read_struct(reader, Strip, &ms->parseq);
 
         if (ms->oldbasep == old_seqbasep) {
           ms->oldbasep = &ed->seqbase;
         }
         else {
           seqbase_poin = POINTER_OFFSET(ms->oldbasep, -seqbase_offset);
-          seqbase_poin = BLO_read_get_new_data_address(reader, seqbase_poin);
+          seqbase_poin = BLO_read_get_new_data_address_no_us(reader, seqbase_poin, sizeof(Strip));
           if (seqbase_poin) {
             ms->oldbasep = (ListBase *)POINTER_OFFSET(seqbase_poin, seqbase_offset);
           }
@@ -1374,7 +1391,8 @@ static void scene_blend_read_data(BlendDataReader *reader, ID *id)
         }
         else {
           channels_poin = POINTER_OFFSET(ms->old_channels, -channels_offset);
-          channels_poin = BLO_read_get_new_data_address(reader, channels_poin);
+          channels_poin = BLO_read_get_new_data_address_no_us(
+              reader, channels_poin, sizeof(SeqTimelineChannel));
 
           if (channels_poin) {
             ms->old_channels = (ListBase *)POINTER_OFFSET(channels_poin, channels_offset);
@@ -1560,7 +1578,7 @@ constexpr IDTypeInfo get_type_info()
    * support all possible corner cases. */
   info.make_local = nullptr;
   info.foreach_id = scene_foreach_id;
-  info.foreach_cache = nullptr;
+  info.foreach_cache = scene_foreach_cache;
   info.foreach_path = scene_foreach_path;
   info.owner_pointer_get = nullptr;
 
@@ -1821,7 +1839,7 @@ Scene *BKE_scene_duplicate(Main *bmain, Scene *sce, eSceneCopyMethod type)
       /* In case root duplicated ID is linked, assume we want to get a local copy of it and
        * duplicate all expected linked data. */
       if (ID_IS_LINKED(sce)) {
-        duplicate_flags = (eDupli_ID_Flags)(duplicate_flags | USER_DUP_LINKED_ID);
+        duplicate_flags = (duplicate_flags | USER_DUP_LINKED_ID);
       }
     }
 
@@ -1842,6 +1860,7 @@ Scene *BKE_scene_duplicate(Main *bmain, Scene *sce, eSceneCopyMethod type)
      * duplicate along the object itself). */
     BKE_collection_duplicate(bmain,
                              nullptr,
+                             nullptr,
                              sce_copy->master_collection,
                              duplicate_flags,
                              LIB_ID_DUPLICATE_IS_SUBPROCESS);
@@ -1852,12 +1871,14 @@ Scene *BKE_scene_duplicate(Main *bmain, Scene *sce, eSceneCopyMethod type)
       if (sce_copy->rigidbody_world->group != nullptr) {
         BKE_collection_duplicate(bmain,
                                  nullptr,
+                                 nullptr,
                                  sce_copy->rigidbody_world->group,
                                  duplicate_flags,
                                  LIB_ID_DUPLICATE_IS_SUBPROCESS);
       }
       if (sce_copy->rigidbody_world->constraints != nullptr) {
         BKE_collection_duplicate(bmain,
+                                 nullptr,
                                  nullptr,
                                  sce_copy->rigidbody_world->constraints,
                                  duplicate_flags,
@@ -1866,7 +1887,7 @@ Scene *BKE_scene_duplicate(Main *bmain, Scene *sce, eSceneCopyMethod type)
     }
 
     if (!is_subprocess) {
-      /* This code will follow into all ID links using an ID tagged with LIB_TAG_NEW. */
+      /* This code will follow into all ID links using an ID tagged with ID_TAG_NEW. */
       BKE_libblock_relink_to_newid(bmain, &sce_copy->id, 0);
 
 #ifndef NDEBUG
@@ -1874,7 +1895,7 @@ Scene *BKE_scene_duplicate(Main *bmain, Scene *sce, eSceneCopyMethod type)
        * flags. */
       ID *id_iter;
       FOREACH_MAIN_ID_BEGIN (bmain, id_iter) {
-        BLI_assert((id_iter->tag & LIB_TAG_NEW) == 0);
+        BLI_assert((id_iter->tag & ID_TAG_NEW) == 0);
       }
       FOREACH_MAIN_ID_END;
 #endif
@@ -2479,7 +2500,7 @@ static void scene_graph_update_tagged(Depsgraph *depsgraph, Main *bmain, bool on
     /* (Re-)build dependency graph if needed. */
     DEG_graph_relations_update(depsgraph);
     /* Uncomment this to check if graph was properly tagged for update. */
-    // DEG_debug_graph_relations_validate(depsgraph, bmain, scene);
+    // DEG_debug_graph_relations_validate(depsgraph, bmain, scene, view_layer);
     /* Flush editing data if needed. */
     prepare_mesh_for_viewport_render(bmain, scene, view_layer);
     /* Update all objects: drivers, matrices, etc. flags set
@@ -2846,8 +2867,12 @@ void BKE_render_resolution(const RenderData *r, const bool use_crop, int *r_widt
   *r_height = (r->ysch * r->size) / 100;
 
   if (use_crop && (r->mode & R_BORDER) && (r->mode & R_CROP)) {
-    *r_width *= BLI_rctf_size_x(&r->border);
-    *r_height *= BLI_rctf_size_y(&r->border);
+    /* Compute the difference between the integer bounds instead of multiplying by the float
+     * border size directly to be consistent with how the render pipeline computes render size, see
+     * for instance render_init_from_main. That's because difference in rounding and imprecisions
+     * can cause off by one errors. */
+    *r_width = int(r->border.xmax * *r_width) - int(r->border.xmin * *r_width);
+    *r_height = int(r->border.ymax * *r_height) - int(r->border.ymin * *r_height);
   }
 }
 
@@ -2857,32 +2882,6 @@ int BKE_render_preview_pixel_size(const RenderData *r)
     return (U.pixelsize > 1.5f) ? 2 : 1;
   }
   return r->preview_pixel_size;
-}
-
-double BKE_scene_unit_scale(const UnitSettings *unit, const int unit_type, double value)
-{
-  if (unit->system == USER_UNIT_NONE) {
-    /* Never apply scale_length when not using a unit setting! */
-    return value;
-  }
-
-  switch (unit_type) {
-    case B_UNIT_LENGTH:
-    case B_UNIT_VELOCITY:
-    case B_UNIT_ACCELERATION:
-      return value * double(unit->scale_length);
-    case B_UNIT_AREA:
-    case B_UNIT_POWER:
-      return value * pow(unit->scale_length, 2);
-    case B_UNIT_VOLUME:
-      return value * pow(unit->scale_length, 3);
-    case B_UNIT_MASS:
-      return value * pow(unit->scale_length, 3);
-    case B_UNIT_CAMERA: /* *Do not* use scene's unit scale for camera focal lens! See #42026. */
-    case B_UNIT_WAVELENGTH: /* Wavelength values are independent of the scene scale. */
-    default:
-      return value;
-  }
 }
 
 /******************** multiview *************************/
@@ -3464,116 +3463,117 @@ int BKE_scene_transform_orientation_get_index(const Scene *scene,
  * Matches #BKE_object_rot_to_mat3 and #BKE_object_mat3_to_rot.
  * \{ */
 
-void BKE_scene_cursor_rot_to_mat3(const View3DCursor *cursor, float mat[3][3])
+template<> blender::float3x3 View3DCursor::matrix<blender::float3x3>() const
 {
-  if (cursor->rotation_mode > 0) {
-    eulO_to_mat3(mat, cursor->rotation_euler, cursor->rotation_mode);
+  blender::float3x3 mat;
+  if (this->rotation_mode > 0) {
+    eulO_to_mat3(mat.ptr(), this->rotation_euler, this->rotation_mode);
   }
-  else if (cursor->rotation_mode == ROT_MODE_AXISANGLE) {
-    axis_angle_to_mat3(mat, cursor->rotation_axis, cursor->rotation_angle);
+  else if (this->rotation_mode == ROT_MODE_AXISANGLE) {
+    axis_angle_to_mat3(mat.ptr(), this->rotation_axis, this->rotation_angle);
   }
   else {
     float tquat[4];
-    normalize_qt_qt(tquat, cursor->rotation_quaternion);
-    quat_to_mat3(mat, tquat);
+    normalize_qt_qt(tquat, this->rotation_quaternion);
+    quat_to_mat3(mat.ptr(), tquat);
   }
+  return mat;
 }
 
-void BKE_scene_cursor_rot_to_quat(const View3DCursor *cursor, float quat[4])
+blender::math::Quaternion View3DCursor::rotation() const
 {
-  if (cursor->rotation_mode > 0) {
-    eulO_to_quat(quat, cursor->rotation_euler, cursor->rotation_mode);
+  blender::math::Quaternion quat;
+  if (this->rotation_mode > 0) {
+    eulO_to_quat(&quat.w, this->rotation_euler, this->rotation_mode);
   }
-  else if (cursor->rotation_mode == ROT_MODE_AXISANGLE) {
-    axis_angle_to_quat(quat, cursor->rotation_axis, cursor->rotation_angle);
+  else if (this->rotation_mode == ROT_MODE_AXISANGLE) {
+    axis_angle_to_quat(&quat.w, this->rotation_axis, this->rotation_angle);
   }
   else {
-    normalize_qt_qt(quat, cursor->rotation_quaternion);
+    normalize_qt_qt(&quat.w, this->rotation_quaternion);
   }
+  return quat;
 }
 
-void BKE_scene_cursor_mat3_to_rot(View3DCursor *cursor, const float mat[3][3], bool use_compat)
+void View3DCursor::set_matrix(const blender::float3x3 &mat, const bool use_compat)
 {
-  BLI_ASSERT_UNIT_M3(mat);
+  BLI_ASSERT_UNIT_M3(mat.ptr());
 
-  switch (cursor->rotation_mode) {
+  switch (this->rotation_mode) {
     case ROT_MODE_QUAT: {
       float quat[4];
-      mat3_normalized_to_quat(quat, mat);
+      mat3_normalized_to_quat(quat, mat.ptr());
       if (use_compat) {
         float quat_orig[4];
-        copy_v4_v4(quat_orig, cursor->rotation_quaternion);
-        quat_to_compatible_quat(cursor->rotation_quaternion, quat, quat_orig);
+        copy_v4_v4(quat_orig, this->rotation_quaternion);
+        quat_to_compatible_quat(this->rotation_quaternion, quat, quat_orig);
       }
       else {
-        copy_v4_v4(cursor->rotation_quaternion, quat);
+        copy_v4_v4(this->rotation_quaternion, quat);
       }
       break;
     }
     case ROT_MODE_AXISANGLE: {
-      mat3_to_axis_angle(cursor->rotation_axis, &cursor->rotation_angle, mat);
+      mat3_to_axis_angle(this->rotation_axis, &this->rotation_angle, mat.ptr());
       break;
     }
     default: {
       if (use_compat) {
         mat3_to_compatible_eulO(
-            cursor->rotation_euler, cursor->rotation_euler, cursor->rotation_mode, mat);
+            this->rotation_euler, this->rotation_euler, this->rotation_mode, mat.ptr());
       }
       else {
-        mat3_to_eulO(cursor->rotation_euler, cursor->rotation_mode, mat);
+        mat3_to_eulO(this->rotation_euler, this->rotation_mode, mat.ptr());
       }
       break;
     }
   }
 }
 
-void BKE_scene_cursor_quat_to_rot(View3DCursor *cursor, const float quat[4], bool use_compat)
+void View3DCursor::set_rotation(const blender::math::Quaternion &quat, bool use_compat)
 {
-  BLI_ASSERT_UNIT_QUAT(quat);
+  BLI_ASSERT_UNIT_QUAT(&quat.w);
 
-  switch (cursor->rotation_mode) {
+  switch (this->rotation_mode) {
     case ROT_MODE_QUAT: {
       if (use_compat) {
         float quat_orig[4];
-        copy_v4_v4(quat_orig, cursor->rotation_quaternion);
-        quat_to_compatible_quat(cursor->rotation_quaternion, quat, quat_orig);
+        copy_v4_v4(quat_orig, this->rotation_quaternion);
+        quat_to_compatible_quat(this->rotation_quaternion, &quat.w, quat_orig);
       }
       else {
-        copy_qt_qt(cursor->rotation_quaternion, quat);
+        copy_qt_qt(this->rotation_quaternion, &quat.w);
       }
       break;
     }
     case ROT_MODE_AXISANGLE: {
-      quat_to_axis_angle(cursor->rotation_axis, &cursor->rotation_angle, quat);
+      quat_to_axis_angle(this->rotation_axis, &this->rotation_angle, &quat.w);
       break;
     }
     default: {
       if (use_compat) {
         quat_to_compatible_eulO(
-            cursor->rotation_euler, cursor->rotation_euler, cursor->rotation_mode, quat);
+            this->rotation_euler, this->rotation_euler, this->rotation_mode, &quat.w);
       }
       else {
-        quat_to_eulO(cursor->rotation_euler, cursor->rotation_mode, quat);
+        quat_to_eulO(this->rotation_euler, this->rotation_mode, &quat.w);
       }
       break;
     }
   }
 }
 
-void BKE_scene_cursor_to_mat4(const View3DCursor *cursor, float mat[4][4])
+template<> blender::float4x4 View3DCursor::matrix<blender::float4x4>() const
 {
-  float mat3[3][3];
-  BKE_scene_cursor_rot_to_mat3(cursor, mat3);
-  copy_m4_m3(mat, mat3);
-  copy_v3_v3(mat[3], cursor->location);
+  blender::float4x4 mat(this->matrix<blender::float3x3>());
+  mat.location() = blender::float3(this->location);
+  return mat;
 }
 
-void BKE_scene_cursor_from_mat4(View3DCursor *cursor, const float mat[4][4], bool use_compat)
+void View3DCursor::set_matrix(const blender::float4x4 &mat, const bool use_compat)
 {
-  float mat3[3][3];
-  copy_m3_m4(mat3, mat);
-  BKE_scene_cursor_mat3_to_rot(cursor, mat3, use_compat);
-  copy_v3_v3(cursor->location, mat[3]);
+  this->set_matrix(blender::float3x3(mat), use_compat);
+  copy_v3_v3(this->location, mat.location());
 }
 
 /** \} */

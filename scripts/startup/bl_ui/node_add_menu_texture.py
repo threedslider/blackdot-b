@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-import bpy
 from bpy.types import Menu
 from bpy.app.translations import (
     contexts as i18n_contexts,
@@ -75,6 +74,7 @@ class NODE_MT_category_texture_distort(Menu):
 class NODE_MT_category_texture_pattern(Menu):
     bl_idname = "NODE_MT_category_texture_pattern"
     bl_label = "Pattern"
+    bl_translation_context = i18n_contexts.id_texture
 
     def draw(self, _context):
         layout = self.layout

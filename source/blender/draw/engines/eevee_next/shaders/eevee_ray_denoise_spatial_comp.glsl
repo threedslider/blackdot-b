@@ -15,17 +15,21 @@
  * https://www.ea.com/seed/news/seed-dd18-presentation-slides-raytracing
  */
 
-#pragma BLENDER_REQUIRE(draw_view_lib.glsl)
-#pragma BLENDER_REQUIRE(gpu_shader_codegen_lib.glsl)
-#pragma BLENDER_REQUIRE(gpu_shader_utildefines_lib.glsl)
-#pragma BLENDER_REQUIRE(gpu_shader_math_matrix_lib.glsl)
-#pragma BLENDER_REQUIRE(eevee_gbuffer_lib.glsl)
-#pragma BLENDER_REQUIRE(eevee_ray_types_lib.glsl)
-#pragma BLENDER_REQUIRE(eevee_sampling_lib.glsl)
-#pragma BLENDER_REQUIRE(eevee_bxdf_lib.glsl)
-#pragma BLENDER_REQUIRE(eevee_bxdf_sampling_lib.glsl)
-#pragma BLENDER_REQUIRE(eevee_closure_lib.glsl)
-#pragma BLENDER_REQUIRE(eevee_thickness_lib.glsl)
+#include "infos/eevee_tracing_info.hh"
+
+COMPUTE_SHADER_CREATE_INFO(eevee_ray_denoise_spatial)
+
+#include "draw_view_lib.glsl"
+#include "eevee_bxdf_lib.glsl"
+#include "eevee_bxdf_sampling_lib.glsl"
+#include "eevee_closure_lib.glsl"
+#include "eevee_gbuffer_lib.glsl"
+#include "eevee_ray_types_lib.glsl"
+#include "eevee_sampling_lib.glsl"
+#include "eevee_thickness_lib.glsl"
+#include "gpu_shader_codegen_lib.glsl"
+#include "gpu_shader_math_matrix_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 void transmission_thickness_amend_closure(inout ClosureUndetermined cl,
                                           inout vec3 V,
@@ -51,21 +55,10 @@ void main()
   const uint tile_size = RAYTRACE_GROUP_SIZE;
   uvec2 tile_coord = unpackUvec2x16(tiles_coord_buf[gl_WorkGroupID.x]);
 
-#ifdef GPU_METAL
-  int rt_resolution_scale = raytrace_resolution_scale;
-#else /* TODO(fclem): Support specialization on OpenGL and Vulkan. */
-  int rt_resolution_scale = uniform_buf.raytrace.resolution_scale;
-#endif
-
   ivec2 texel_fullres = ivec2(gl_LocalInvocationID.xy + tile_coord * tile_size);
-  ivec2 texel = (texel_fullres) / rt_resolution_scale;
+  ivec2 texel = (texel_fullres) / raytrace_resolution_scale;
 
-#ifdef GPU_METAL
-  bool do_skip_denoise = skip_denoise;
-#else /* TODO(fclem): Support specialization on OpenGL and Vulkan. */
-  bool do_skip_denoise = uniform_buf.raytrace.skip_denoise;
-#endif
-  if (do_skip_denoise) {
+  if (skip_denoise) {
     imageStore(out_radiance_img, texel_fullres, imageLoad(ray_radiance_img, texel));
     return;
   }
@@ -126,7 +119,7 @@ void main()
   /* NOTE: filter_size should never be greater than twice RAYTRACE_GROUP_SIZE. Otherwise, the
    * reconstruction can becomes ill defined since we don't know if further tiles are valid. */
   float filter_size = 12.0 * sqrt(filter_size_factor);
-  if (rt_resolution_scale > 1) {
+  if (raytrace_resolution_scale > 1) {
     /* Filter at least 1 trace pixel to fight the undersampling. */
     filter_size = max(filter_size, 3.0);
     sample_count = max(sample_count, 5u);

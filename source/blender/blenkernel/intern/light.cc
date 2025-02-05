@@ -18,7 +18,6 @@
 #include "DNA_light_types.h"
 #include "DNA_node_types.h"
 #include "DNA_scene_types.h"
-#include "DNA_texture_types.h"
 
 #include "BLI_utildefines.h"
 
@@ -64,12 +63,15 @@ static void light_copy_data(Main *bmain,
   const Light *la_src = (const Light *)id_src;
 
   const bool is_localized = (flag & LIB_ID_CREATE_LOCAL) != 0;
-  /* We always need allocation of our private ID data. */
-  const int flag_private_id_data = flag & ~LIB_ID_CREATE_NO_ALLOCATE;
+  /* We always need allocation of our private ID data.
+   * User reference-counting is also handled by calling code,
+   * so the duplication calls for embedded data should _never_ handle it from here. */
+  const int flag_embedded_id_data = (flag & ~LIB_ID_CREATE_NO_ALLOCATE) |
+                                    LIB_ID_CREATE_NO_USER_REFCOUNT;
 
   if (la_src->nodetree) {
     if (is_localized) {
-      la_dst->nodetree = blender::bke::ntreeLocalize(la_src->nodetree, &la_dst->id);
+      la_dst->nodetree = blender::bke::node_tree_localize(la_src->nodetree, &la_dst->id);
     }
     else {
       BKE_id_copy_in_lib(bmain,
@@ -77,7 +79,7 @@ static void light_copy_data(Main *bmain,
                          &la_src->nodetree->id,
                          &la_dst->id,
                          reinterpret_cast<ID **>(&la_dst->nodetree),
-                         flag_private_id_data);
+                         flag_embedded_id_data);
     }
   }
 
@@ -95,7 +97,7 @@ static void light_free_data(ID *id)
 
   /* is no lib link block, but light extension */
   if (la->nodetree) {
-    blender::bke::ntreeFreeEmbeddedTree(la->nodetree);
+    blender::bke::node_tree_free_embedded_tree(la->nodetree);
     MEM_freeN(la->nodetree);
     la->nodetree = nullptr;
   }
@@ -137,14 +139,10 @@ static void light_blend_write(BlendWriter *writer, ID *id, const void *id_addres
 
   /* Node-tree is integral part of lights, no libdata. */
   if (la->nodetree) {
-    BLO_Write_IDBuffer *temp_embedded_id_buffer = BLO_write_allocate_id_buffer();
-    BLO_write_init_id_buffer_from_id(
-        temp_embedded_id_buffer, &la->nodetree->id, BLO_write_is_undo(writer));
-    BLO_write_struct_at_address(
-        writer, bNodeTree, la->nodetree, BLO_write_get_id_buffer_temp_id(temp_embedded_id_buffer));
-    blender::bke::ntreeBlendWrite(
-        writer, (bNodeTree *)BLO_write_get_id_buffer_temp_id(temp_embedded_id_buffer));
-    BLO_write_destroy_id_buffer(&temp_embedded_id_buffer);
+    BLO_Write_IDBuffer temp_embedded_id_buffer{la->nodetree->id, writer};
+    BLO_write_struct_at_address(writer, bNodeTree, la->nodetree, temp_embedded_id_buffer.get());
+    blender::bke::node_tree_blend_write(
+        writer, reinterpret_cast<bNodeTree *>(temp_embedded_id_buffer.get()));
   }
 
   BKE_previewimg_blend_write(writer, la->preview);

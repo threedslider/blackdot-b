@@ -7,13 +7,13 @@
  */
 
 #include <cmath>
-#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "MEM_guardedalloc.h"
 
+#include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_time.h"
 #include "BLI_utildefines.h"
@@ -29,10 +29,10 @@
 #include "BKE_tracking.h"
 
 #include "DNA_gpencil_legacy_types.h"
-#include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_windowmanager_types.h"
 
+#include "UI_resources.hh"
 #include "UI_view2d.hh"
 
 #include "ED_clip.hh"
@@ -107,7 +107,7 @@ struct tGPsdata {
   /** For operations that require occlusion testing. */
   ViewDepths *depths;
   /** for using the camera rect within the 3d view. */
-  rctf *subrect;
+  const rctf *subrect;
   rctf subrect_data;
 
   /** settings to pass to gp_points_to_xy(). */
@@ -300,7 +300,7 @@ static bool annotation_stroke_filtermval(tGPsdata *p, const float mval[2], const
 
 /* convert screen-coordinates to buffer-coordinates */
 static void annotation_stroke_convertcoords(tGPsdata *p,
-                                            const float mval[2],
+                                            const blender::float2 mval,
                                             float out[3],
                                             const float *depth)
 {
@@ -311,8 +311,7 @@ static void annotation_stroke_convertcoords(tGPsdata *p,
 
   /* in 3d-space - pt->x/y/z are 3 side-by-side floats */
   if (gpd->runtime.sbuffer_sflag & GP_STROKE_3DSPACE) {
-    int mval_i[2];
-    round_v2i_v2fl(mval_i, mval);
+    blender::int2 mval_i = blender::int2(mval);
     if (annotation_project_check(p) && ED_view3d_autodist_simple(p->region, mval_i, out, 0, depth))
     {
       /* projecting onto 3D-Geometry
@@ -658,12 +657,12 @@ static short annotation_stroke_addpoint(tGPsdata *p,
             mode = V3D_DEPTH_SELECTED_ONLY;
           }
           else {
-            mode = V3D_DEPTH_NO_OVERLAYS;
+            mode = V3D_DEPTH_ALL;
           }
         }
 
-        view3d_region_operator_needs_opengl(p->win, p->region);
-        ED_view3d_depth_override(p->depsgraph, p->region, v3d, nullptr, mode, nullptr);
+        view3d_region_operator_needs_gpu(p->region);
+        ED_view3d_depth_override(p->depsgraph, p->region, v3d, nullptr, mode, false, nullptr);
       }
 
       /* convert screen-coordinates to appropriate coordinates (and store them) */
@@ -966,7 +965,7 @@ static void annotation_stroke_newfrombuffer(tGPsdata *p)
 
     /* get an array of depths, far depths are blended */
     if (annotation_project_check(p)) {
-      int mval_i[2], mval_prev[2] = {0};
+      blender::int2 mval_i, mval_prev = {0, 0};
       int interp_depth = 0;
       int found_depth = 0;
 
@@ -978,8 +977,7 @@ static void annotation_stroke_newfrombuffer(tGPsdata *p)
            i < gpd->runtime.sbuffer_used;
            i++, ptc++, pt++)
       {
-        round_v2i_v2fl(mval_i, ptc->m_xy);
-
+        mval_i = blender::int2(ptc->m_xy);
         if ((ED_view3d_depth_read_cached(depths, mval_i, depth_margin, depth_arr + i) == 0) &&
             (i && (ED_view3d_depth_read_cached_seg(
                        depths, mval_i, mval_prev, depth_margin + 1, depth_arr + i) == 0)))
@@ -1121,8 +1119,7 @@ static void annotation_stroke_eraser_dostroke(tGPsdata *p,
   bGPDspoint *pt1, *pt2;
   int pc1[2] = {0};
   int pc2[2] = {0};
-  int mval_i[2];
-  round_v2i_v2fl(mval_i, mval);
+  blender::int2 mval_i = blender::int2(mval);
 
   if (gps->totpoints == 0) {
     /* just free stroke */
@@ -1224,9 +1221,9 @@ static void annotation_stroke_doeraser(tGPsdata *p)
   if (p->area->spacetype == SPACE_VIEW3D) {
     if (p->flags & GP_PAINTFLAG_V3D_ERASER_DEPTH) {
       View3D *v3d = static_cast<View3D *>(p->area->spacedata.first);
-      view3d_region_operator_needs_opengl(p->win, p->region);
+      view3d_region_operator_needs_gpu(p->region);
       ED_view3d_depth_override(
-          p->depsgraph, p->region, v3d, nullptr, V3D_DEPTH_NO_GPENCIL, &p->depths);
+          p->depsgraph, p->region, v3d, nullptr, V3D_DEPTH_NO_GPENCIL, false, &p->depths);
     }
   }
 
@@ -1397,7 +1394,7 @@ static bool annotation_session_initdata(bContext *C, tGPsdata *p)
 
   /* get gp-data */
   gpd_ptr = ED_annotation_data_get_pointers(C, &p->ownerPtr);
-  if ((gpd_ptr == nullptr) || !ED_gpencil_data_owner_is_annotation(&p->ownerPtr)) {
+  if (gpd_ptr == nullptr) {
     p->status = GP_STATUS_ERROR;
     return false;
   }
@@ -1635,7 +1632,7 @@ static void annotation_paint_initstroke(tGPsdata *p,
       if (rv3d->persp == RV3D_CAMOB) {
         /* no shift */
         ED_view3d_calc_camera_border(
-            p->scene, depsgraph, p->region, v3d, rv3d, &p->subrect_data, true);
+            p->scene, depsgraph, p->region, v3d, rv3d, true, &p->subrect_data);
         p->subrect = &p->subrect_data;
       }
     }
@@ -1690,13 +1687,13 @@ static void annotation_paint_strokeend(tGPsdata *p)
         mode = V3D_DEPTH_SELECTED_ONLY;
       }
       else {
-        mode = V3D_DEPTH_NO_OVERLAYS;
+        mode = V3D_DEPTH_ALL;
       }
     }
     /* need to restore the original projection settings before packing up */
-    view3d_region_operator_needs_opengl(p->win, p->region);
+    view3d_region_operator_needs_gpu(p->region);
     ED_view3d_depth_override(
-        p->depsgraph, p->region, v3d, nullptr, mode, is_eraser ? nullptr : &p->depths);
+        p->depsgraph, p->region, v3d, nullptr, mode, false, is_eraser ? nullptr : &p->depths);
   }
 
   /* check if doing eraser or not */
@@ -1954,62 +1951,39 @@ static void annotation_draw_cursor_set(tGPsdata *p)
 /* update UI indicators of status, including cursor and header prints */
 static void annotation_draw_status_indicators(bContext *C, tGPsdata *p)
 {
+  WorkspaceStatus status(C);
+
   /* header prints */
   switch (p->status) {
     case GP_STATUS_PAINTING:
       switch (p->paintmode) {
         case GP_PAINTMODE_DRAW_POLY:
-          /* Provide usage tips, since this is modal, and unintuitive without hints */
-          ED_workspace_status_text(
-              C,
-              IFACE_("Annotation Create Poly: LMB click to place next stroke vertex | "
-                     "ESC/Enter to end  (or click outside this area)"));
+          status.item(IFACE_("End"), ICON_EVENT_ESC);
+          status.item(IFACE_("Place Next Stroke Vertex"), ICON_MOUSE_LMB);
           break;
-        default:
-          /* Do nothing - the others are self explanatory, exit quickly once the mouse is
-           * released Showing any text would just be annoying as it would flicker.
-           */
+        case GP_PAINTMODE_ERASER:
+          status.item(IFACE_("End"), ICON_EVENT_ESC);
+          status.item(IFACE_("Erase"), ICON_MOUSE_LMB);
+          break;
+        case GP_PAINTMODE_DRAW_STRAIGHT:
+          status.item(IFACE_("End"), ICON_EVENT_ESC);
+          status.item(IFACE_("Draw"), ICON_MOUSE_LMB);
+          break;
+        case GP_PAINTMODE_DRAW:
+          status.item(IFACE_("End"), ICON_EVENT_ESC);
+          status.item(IFACE_("Draw"), ICON_MOUSE_LMB);
+          break;
+
+        default: /* unhandled future cases */
+          status.item(IFACE_("End"), ICON_EVENT_ESC);
           break;
       }
       break;
 
     case GP_STATUS_IDLING:
-      /* print status info */
-      switch (p->paintmode) {
-        case GP_PAINTMODE_ERASER:
-          ED_workspace_status_text(C,
-                                   IFACE_("Annotation Eraser: Hold and drag LMB or RMB to erase | "
-                                          "ESC/Enter to end  (or click outside this area)"));
-          break;
-        case GP_PAINTMODE_DRAW_STRAIGHT:
-          ED_workspace_status_text(C,
-                                   IFACE_("Annotation Line Draw: Hold and drag LMB to draw | "
-                                          "ESC/Enter to end  (or click outside this area)"));
-          break;
-        case GP_PAINTMODE_DRAW:
-          ED_workspace_status_text(C,
-                                   IFACE_("Annotation Freehand Draw: Hold and drag LMB to draw | "
-                                          "E/ESC/Enter to end  (or click outside this area)"));
-          break;
-        case GP_PAINTMODE_DRAW_POLY:
-          ED_workspace_status_text(
-              C,
-              IFACE_("Annotation Create Poly: LMB click to place next stroke vertex | "
-                     "ESC/Enter to end  (or click outside this area)"));
-          break;
-
-        default: /* unhandled future cases */
-          ED_workspace_status_text(
-              C, IFACE_("Annotation Session: ESC/Enter to end   (or click outside this area)"));
-          break;
-      }
-      break;
-
     case GP_STATUS_ERROR:
     case GP_STATUS_DONE:
     case GP_STATUS_CAPTURE:
-      /* clear status string */
-      ED_workspace_status_text(C, nullptr);
       break;
   }
 }
@@ -2519,7 +2493,8 @@ static int annotation_draw_modal(bContext *C, wmOperator *op, const wmEvent *eve
        * - Since this operator is non-modal, we can just call it here, and keep going...
        * - This operator is especially useful when animating
        */
-      WM_operator_name_call(C, "GPENCIL_OT_blank_frame_add", WM_OP_EXEC_DEFAULT, nullptr, event);
+      WM_operator_name_call(
+          C, "GPENCIL_OT_layer_annotation_add", WM_OP_EXEC_DEFAULT, nullptr, event);
       estate = OPERATOR_RUNNING_MODAL;
     }
     else {

@@ -15,20 +15,18 @@ Otherwise you may call this script directly, for example:
    ./tools/utils_maintenance/autopep8_format_paths.py --changed-only tests/python
 """
 
+__all__ = (
+    "main",
+)
+
 import os
 import sys
 
 import subprocess
 import argparse
 
-from typing import (
-    List,
-    Tuple,
-    Optional,
-)
-
-VERSION_MIN = (1, 6, 0)
-VERSION_MAX_RECOMMENDED = (1, 6, 0)
+VERSION_MIN = (2, 3, 1)
+VERSION_MAX_RECOMMENDED = (2, 3, 1)
 AUTOPEP8_FORMAT_CMD = "autopep8"
 AUTOPEP8_FORMAT_DEFAULT_ARGS = (
     # Operate on all directories recursively.
@@ -54,7 +52,7 @@ ignore_files = {
 }
 
 
-def compute_paths(paths: List[str], use_default_paths: bool) -> List[str]:
+def compute_paths(paths: list[str], use_default_paths: bool) -> list[str]:
     # Optionally pass in files to operate on.
     if use_default_paths:
         paths = [
@@ -78,7 +76,7 @@ def compute_paths(paths: List[str], use_default_paths: bool) -> List[str]:
     return paths
 
 
-def source_files_from_git(paths: List[str], changed_only: bool) -> List[str]:
+def source_files_from_git(paths: list[str], changed_only: bool) -> list[str]:
     if changed_only:
         cmd = ("git", "diff", "HEAD", "--name-only", "-z", "--", *paths)
     else:
@@ -87,22 +85,22 @@ def source_files_from_git(paths: List[str], changed_only: bool) -> List[str]:
     return [f.decode('ascii') for f in files]
 
 
-def autopep8_parse_version(version: str) -> Tuple[int, int, int]:
+def autopep8_parse_version(version: str) -> tuple[int, int, int]:
     # Ensure exactly 3 numbers.
     major, minor, patch = (tuple(int(n) for n in version.split("-")[0].split(".")) + (0, 0, 0))[0:3]
     return major, minor, patch
 
 
-def version_str_from_tuple(version: Tuple[int, ...]) -> str:
+def version_str_from_tuple(version: tuple[int, ...]) -> str:
     return ".".join(str(x) for x in version)
 
 
 def autopep8_ensure_version_from_command(
         autopep8_format_cmd_argument: str,
-) -> Optional[Tuple[str, Tuple[int, int, int]]]:
+) -> tuple[str, tuple[int, int, int]] | None:
 
     # The version to parse.
-    version_str: Optional[str] = None
+    version_str: str | None = None
 
     global AUTOPEP8_FORMAT_CMD
     autopep8_format_cmd = None
@@ -141,10 +139,10 @@ def autopep8_ensure_version_from_command(
     return None
 
 
-def autopep8_ensure_version_from_module() -> Optional[Tuple[str, Tuple[int, int, int]]]:
+def autopep8_ensure_version_from_module() -> tuple[str, tuple[int, int, int]] | None:
 
     # The version to parse.
-    version_str: Optional[str] = None
+    version_str: str | None = None
 
     # Extract the version from the module.
     try:
@@ -163,7 +161,7 @@ def autopep8_ensure_version_from_module() -> Optional[Tuple[str, Tuple[int, int,
     return None
 
 
-def autopep8_format(files: List[str]) -> bytes:
+def autopep8_format(files: list[str]) -> bytes:
     cmd = [
         AUTOPEP8_FORMAT_CMD,
         *AUTOPEP8_FORMAT_DEFAULT_ARGS,
@@ -177,7 +175,7 @@ def autopep8_format(files: List[str]) -> bytes:
     return subprocess.check_output(cmd, stderr=subprocess.STDOUT)
 
 
-def autopep8_format_no_subprocess(files: List[str]) -> None:
+def autopep8_format_no_subprocess(files: list[str]) -> None:
     cmd = [
         *AUTOPEP8_FORMAT_DEFAULT_ARGS,
         *files
@@ -235,7 +233,7 @@ def argparse_create() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main() -> int:
     args = argparse_create().parse_args()
 
     if args.no_subprocess:
@@ -252,7 +250,7 @@ def main() -> None:
         sys.stderr.write("You may want to install autopep8-{:s}, or use the pre-compiled libs repository.\n".format(
             version_str_from_tuple(VERSION_MAX_RECOMMENDED[0:2]),
         ))
-        sys.exit(1)
+        return 1
 
     autopep8_source, version = source_and_version
 
@@ -262,7 +260,7 @@ def main() -> None:
             version_str_from_tuple(version),
             version_str_from_tuple(VERSION_MIN),
         ))
-        sys.exit(1)
+        return 1
     if version > VERSION_MAX_RECOMMENDED:
         sys.stderr.write("Using \"{:s}\"\nWARNING: the autopep8 version is too recent: {:s} > {:s}.\n".format(
             autopep8_source,
@@ -276,8 +274,12 @@ def main() -> None:
         print("Using \"{:s}\", ({:s})...".format(autopep8_source, version_str_from_tuple(version)))
 
     use_default_paths = not (bool(args.paths) or bool(args.changed_only))
-
     paths = compute_paths(args.paths, use_default_paths)
+    # Check if user-defined paths exclude all Python sources.
+    if args.paths and not paths:
+        print("Skip autopep8: no target to format")
+        return 0
+
     print("Operating on:" + (" ({:d} changed paths)".format(len(paths)) if args.changed_only else ""))
     for p in paths:
         print(" ", p)
@@ -291,14 +293,15 @@ def main() -> None:
     # Happens when users run "make format" passing in individual C/C++ files
     # (and no Python files).
     if not files:
-        return
+        return 0
 
     if args.no_subprocess:
         autopep8_format_no_subprocess(files)
-        return
+    else:
+        autopep8_format(files)
 
-    autopep8_format(files)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

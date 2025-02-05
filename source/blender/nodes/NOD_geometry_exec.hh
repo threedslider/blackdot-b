@@ -11,8 +11,9 @@
 #include "FN_lazy_function.hh"
 #include "FN_multi_function_builder.hh"
 
-#include "BKE_attribute_math.hh"
+#include "BKE_attribute_filter.hh"
 #include "BKE_geometry_fields.hh"
+#include "BKE_geometry_nodes_reference_set.hh"
 #include "BKE_geometry_set.hh"
 #include "BKE_node_socket_value.hh"
 #include "BKE_volume_grid_fwd.hh"
@@ -24,15 +25,12 @@
 
 namespace blender::nodes {
 
-using bke::AnonymousAttributeFieldInput;
-using bke::AnonymousAttributeID;
-using bke::AnonymousAttributeIDPtr;
-using bke::AnonymousAttributePropagationInfo;
 using bke::AttrDomain;
 using bke::AttributeAccessor;
+using bke::AttributeDomainAndType;
 using bke::AttributeFieldInput;
-using bke::AttributeIDRef;
-using bke::AttributeKind;
+using bke::AttributeFilter;
+using bke::AttributeIter;
 using bke::AttributeMetaData;
 using bke::AttributeReader;
 using bke::AttributeWriter;
@@ -41,6 +39,7 @@ using bke::GAttributeReader;
 using bke::GAttributeWriter;
 using bke::GeometryComponent;
 using bke::GeometryComponentEditData;
+using bke::GeometryNodesReferenceSet;
 using bke::GeometrySet;
 using bke::GreasePencilComponent;
 using bke::GSpanAttributeWriter;
@@ -60,6 +59,16 @@ using fn::GField;
 using geo_eval_log::NamedAttributeUsage;
 using geo_eval_log::NodeWarningType;
 
+class NodeAttributeFilter : public AttributeFilter {
+ private:
+  const GeometryNodesReferenceSet &set_;
+
+ public:
+  NodeAttributeFilter(const GeometryNodesReferenceSet &set) : set_(set) {}
+
+  Result filter(StringRef attribute_name) const override;
+};
+
 class GeoNodeExecParams {
  private:
   const bNode &node_;
@@ -67,7 +76,7 @@ class GeoNodeExecParams {
   const lf::Context &lf_context_;
   const Span<int> lf_input_for_output_bsocket_usage_;
   const Span<int> lf_input_for_attribute_propagation_to_output_;
-  const FunctionRef<AnonymousAttributeIDPtr(int)> get_output_attribute_id_;
+  const FunctionRef<std::string(int)> get_output_attribute_id_;
 
  public:
   GeoNodeExecParams(const bNode &node,
@@ -75,7 +84,7 @@ class GeoNodeExecParams {
                     const lf::Context &lf_context,
                     const Span<int> lf_input_for_output_bsocket_usage,
                     const Span<int> lf_input_for_attribute_propagation_to_output,
-                    const FunctionRef<AnonymousAttributeIDPtr(int)> get_output_attribute_id)
+                    const FunctionRef<std::string(int)> get_output_attribute_id)
       : node_(node),
         params_(params),
         lf_context_(lf_context),
@@ -87,18 +96,18 @@ class GeoNodeExecParams {
   }
 
   template<typename T>
-  static inline constexpr bool is_field_base_type_v = is_same_any_v<T,
-                                                                    float,
-                                                                    int,
-                                                                    bool,
-                                                                    ColorGeometry4f,
-                                                                    float3,
-                                                                    std::string,
-                                                                    math::Quaternion,
-                                                                    float4x4>;
+  static constexpr bool is_field_base_type_v = is_same_any_v<T,
+                                                             float,
+                                                             int,
+                                                             bool,
+                                                             ColorGeometry4f,
+                                                             float3,
+                                                             std::string,
+                                                             math::Quaternion,
+                                                             float4x4>;
 
   template<typename T>
-  static inline constexpr bool stored_as_SocketValueVariant_v =
+  static constexpr bool stored_as_SocketValueVariant_v =
       is_field_base_type_v<T> || fn::is_field_v<T> || bke::is_VolumeGrid_v<T> ||
       is_same_any_v<T, GField, bke::GVolumeGrid>;
 
@@ -275,31 +284,26 @@ class GeoNodeExecParams {
    * Return a new anonymous attribute id for the given output. None is returned if the anonymous
    * attribute is not needed.
    */
-  AnonymousAttributeIDPtr get_output_anonymous_attribute_id_if_needed(
+  std::optional<std::string> get_output_anonymous_attribute_id_if_needed(
       const StringRef output_identifier, const bool force_create = false)
   {
     if (!this->anonymous_attribute_output_is_required(output_identifier) && !force_create) {
-      return {};
+      return std::nullopt;
     }
     const bNodeSocket &output_socket = node_.output_by_identifier(output_identifier);
     return get_output_attribute_id_(output_socket.index());
   }
 
   /**
-   * Get information about which anonymous attributes should be propagated to the given output.
+   * Get information about which attributes should be propagated to the given output.
    */
-  AnonymousAttributePropagationInfo get_output_propagation_info(
-      const StringRef output_identifier) const
+  NodeAttributeFilter get_attribute_filter(const StringRef output_identifier) const
   {
     const int lf_index =
         lf_input_for_attribute_propagation_to_output_[node_.output_by_identifier(output_identifier)
                                                           .index_in_all_outputs()];
-    const bke::AnonymousAttributeSet &set = params_.get_input<bke::AnonymousAttributeSet>(
-        lf_index);
-    AnonymousAttributePropagationInfo info;
-    info.names = set.names;
-    info.propagate_all = false;
-    return info;
+    const GeometryNodesReferenceSet &set = params_.get_input<GeometryNodesReferenceSet>(lf_index);
+    return NodeAttributeFilter(set);
   }
 
  private:

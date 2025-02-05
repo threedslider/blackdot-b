@@ -8,17 +8,22 @@
 
 #pragma once
 
-struct bArmature;
+#include "DNA_listBase.h"
+
+#include "BLI_span.hh"
+
 struct Base;
-struct bContext;
 struct Bone;
-struct bPoseChannel;
 struct EditBone;
 struct GPUSelectResult;
+struct IDProperty;
 struct LinkData;
 struct ListBase;
 struct Object;
 struct Scene;
+struct bArmature;
+struct bContext;
+struct bPoseChannel;
 struct wmOperatorType;
 
 /* -------------------------------------------------------------------- */
@@ -165,10 +170,13 @@ struct tPChanFCurveLink {
 
 /** Returns a valid pose armature for this object, else returns NULL. */
 Object *poseAnim_object_get(Object *ob_);
-/** Get sets of F-Curves providing transforms for the bones in the Pose. */
-void poseAnim_mapping_get(bContext *C, ListBase *pfLinks);
+/**
+ * Build up a list of tPChanFCurveLink. First only selected, and if that yields no result, all
+ * visible.
+ */
+void poseAnim_mapping_get(bContext *C, ListBase /*tPChanFCurveLink*/ *pfLinks);
 /** Free F-Curve <-> PoseChannel links. */
-void poseAnim_mapping_free(ListBase *pfLinks);
+void poseAnim_mapping_free(ListBase /*tPChanFCurveLink*/ *pfLinks);
 
 /**
  * Helper for apply() / reset() - refresh the data.
@@ -230,9 +238,6 @@ EditBone *make_boneList(ListBase *edbo, ListBase *bones, Bone *actBone);
 
 /* Duplicate method. */
 
-/** Call this before doing any duplications. */
-void preEditBoneDuplicate(ListBase *editbones);
-void postEditBoneDuplicate(ListBase *editbones, Object *ob);
 EditBone *duplicateEditBone(EditBone *cur_bone, const char *name, ListBase *editbones, Object *ob);
 
 /* Duplicate method (cross objects). */
@@ -262,10 +267,6 @@ void armature_tag_unselect(bArmature *arm);
 /* -------------------------------------------------------------------- */
 /** \name Selection Picking
  * \{ */
-
-EditBone *ED_armature_pick_ebone(bContext *C, const int xy[2], bool findunsel, Base **r_base);
-bPoseChannel *ED_armature_pick_pchan(bContext *C, const int xy[2], bool findunsel, Base **r_base);
-Bone *ED_armature_pick_bone(bContext *C, const int xy[2], bool findunsel, Base **r_base);
 
 EditBone *ED_armature_pick_ebone_from_selectbuffer(blender::Span<Base *> bases,
                                                    const GPUSelectResult *hit_results,

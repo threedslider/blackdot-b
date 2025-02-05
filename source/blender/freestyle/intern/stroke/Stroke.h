@@ -20,9 +20,7 @@
 #include "../system/FreestyleConfig.h"
 #include "../system/StringUtils.h"
 
-#ifdef WITH_CXX_GUARDEDALLOC
-#  include "MEM_guardedalloc.h"
-#endif
+#include "MEM_guardedalloc.h"
 
 extern "C" {
 struct MTex;
@@ -300,9 +298,7 @@ class StrokeAttribute {
   Vec2fMap *_userAttributesVec2f;
   Vec3fMap *_userAttributesVec3f;
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("Freestyle:StrokeAttribute")
-#endif
 };
 
 //
@@ -366,7 +362,7 @@ class StrokeVertex : public CurvePoint {
     return getPoint2D();
   }
 
-  /** Returns the ith 2D point coordinate (i=0 or 1). */
+  /** Returns the i-th 2D point coordinate (i=0 or 1). */
   inline real operator[](const int i) const
   {
     return _Point2d[i];
@@ -429,7 +425,7 @@ class StrokeVertex : public CurvePoint {
     _Point2d[1] = p[1];
   }
 
-  /** Returns a reference to the ith 2D point coordinate (i=0 or 1) */
+  /** Returns a reference to the i-th 2D point coordinate (i=0 or 1). */
   inline real &operator[](const int i)
   {
     return _Point2d[i];
@@ -458,9 +454,7 @@ class StrokeVertex : public CurvePoint {
   /* interface definition */
   /* inherited */
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("Freestyle:StrokeVertex")
-#endif
 };
 
 //
@@ -857,9 +851,7 @@ class Stroke : public Interface1D {
   virtual Interface0DIterator pointsBegin(float t = 0.0f);
   virtual Interface0DIterator pointsEnd(float t = 0.0f);
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("Freestyle:Stroke")
-#endif
 };
 
 //

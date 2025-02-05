@@ -6,18 +6,11 @@
  * \ingroup collada
  */
 
-/* COLLADABU_ASSERT, may be able to remove later */
-#include "COLLADABUPlatform.h"
-
-#include "COLLADAFWGeometry.h"
-#include "COLLADAFWMeshPrimitive.h"
 #include "COLLADAFWMeshVertexData.h"
 #include "COLLADAFWNode.h"
 
 #include <set>
 #include <string>
-
-#include "MEM_guardedalloc.h"
 
 #include "DNA_armature_types.h"
 #include "DNA_constraint_types.h"
@@ -31,25 +24,30 @@
 #include "BLI_linklist.h"
 #include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
+#include "BLI_string.h"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_armature.hh"
 #include "BKE_constraint.h"
 #include "BKE_context.hh"
 #include "BKE_customdata.hh"
 #include "BKE_global.hh"
+#include "BKE_idprop.hh"
 #include "BKE_key.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_mesh.hh"
 #include "BKE_mesh_legacy_convert.hh"
 #include "BKE_mesh_runtime.hh"
 #include "BKE_mesh_wrapper.hh"
 #include "BKE_node.hh"
+#include "BKE_node_legacy_types.hh"
 #include "BKE_object.hh"
 #include "BKE_scene.hh"
 
+#include "ANIM_action.hh"
+#include "ANIM_action_legacy.hh"
 #include "ANIM_bone_collections.hh"
 
 #include "ED_node.hh"
@@ -64,9 +62,6 @@
 
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_query.hh"
-#if 0
-#  include "NOD_common.h"
-#endif
 
 #include "BlenderContext.h"
 #include "ExportSettings.h"
@@ -285,13 +280,13 @@ Mesh *bc_get_mesh_copy(BlenderContext &blender_context,
 
   Mesh *mesh = BKE_mesh_copy_for_eval(*tmpmesh);
 
+  /* Ensure data exists if currently in edit mode. */
+  BKE_mesh_wrapper_ensure_mdata(mesh);
+
   if (triangulate) {
     bc_triangulate_mesh(mesh);
   }
   BKE_mesh_tessface_ensure(mesh);
-
-  /* Ensure data exists if currently in edit mode. */
-  BKE_mesh_wrapper_ensure_mdata(mesh);
 
   return mesh;
 }
@@ -655,7 +650,7 @@ int BoneExtended::get_use_connect()
 
 void bc_set_IDPropertyMatrix(EditBone *ebone, const char *key, float mat[4][4])
 {
-  IDProperty *idgroup = (IDProperty *)ebone->prop;
+  IDProperty *idgroup = ebone->prop;
   if (idgroup == nullptr) {
     idgroup = blender::bke::idprop::create_group("RNA_EditBone ID properties").release();
     ebone->prop = idgroup;
@@ -701,7 +696,7 @@ float bc_get_property(Bone *bone, std::string key, float def)
         result = float(IDP_Int(property));
         break;
       case IDP_FLOAT:
-        result = float(IDP_Float(property));
+        result = IDP_Float(property);
         break;
       case IDP_DOUBLE:
         result = float(IDP_Double(property));
@@ -751,8 +746,12 @@ static bool has_custom_props(Bone *bone, bool enabled, std::string key)
           bc_get_IDProperty(bone, key + "_z"));
 }
 
-void bc_enable_fcurves(bAction *act, char *bone_name)
+void bc_enable_fcurves(AnimData *adt, char *bone_name)
 {
+  if (adt == nullptr) {
+    return;
+  }
+
   char prefix[200];
 
   if (bone_name) {
@@ -761,7 +760,7 @@ void bc_enable_fcurves(bAction *act, char *bone_name)
     SNPRINTF(prefix, "pose.bones[\"%s\"]", bone_name_esc);
   }
 
-  LISTBASE_FOREACH (FCurve *, fcu, &act->curves) {
+  for (FCurve *fcu : blender::animrig::legacy::fcurves_for_assigned_action(adt)) {
     if (bone_name) {
       if (STREQLEN(fcu->rna_path, prefix, strlen(prefix))) {
         fcu->flag &= ~FCURVE_DISABLED;
@@ -786,10 +785,9 @@ bool bc_bone_matrix_local_get(Object *ob, Bone *bone, Matrix &mat, bool for_open
     return false;
   }
 
-  bAction *action = bc_getSceneObjectAction(ob);
   bPoseChannel *parchan = pchan->parent;
 
-  bc_enable_fcurves(action, bone->name);
+  bc_enable_fcurves(ob->adt, bone->name);
   float ipar[4][4];
 
   if (bone->parent) {
@@ -818,7 +816,7 @@ bool bc_bone_matrix_local_get(Object *ob, Bone *bone, Matrix &mat, bool for_open
       mul_m4_m4m4(mat, temp, mat);
     }
   }
-  bc_enable_fcurves(action, nullptr);
+  bc_enable_fcurves(ob->adt, nullptr);
   return true;
 }
 
@@ -850,9 +848,9 @@ bool bc_is_animated(BCMatrixSampleMap &values)
 bool bc_has_animations(Object *ob)
 {
   /* Check for object, light and camera transform animations */
-  if ((bc_getSceneObjectAction(ob) && bc_getSceneObjectAction(ob)->curves.first) ||
-      (bc_getSceneLightAction(ob) && bc_getSceneLightAction(ob)->curves.first) ||
-      (bc_getSceneCameraAction(ob) && bc_getSceneCameraAction(ob)->curves.first))
+  if (blender::animrig::legacy::assigned_action_has_keyframes(ob->adt) ||
+      blender::animrig::legacy::assigned_action_has_keyframes(bc_getSceneLightAnimData(ob)) ||
+      blender::animrig::legacy::assigned_action_has_keyframes(bc_getSceneCameraAnimData(ob)))
   {
     return true;
   }
@@ -863,13 +861,13 @@ bool bc_has_animations(Object *ob)
     if (!ma) {
       continue;
     }
-    if (ma->adt && ma->adt->action && ma->adt->action->curves.first) {
+    if (blender::animrig::legacy::assigned_action_has_keyframes(bc_getSceneMaterialAnimData(ma))) {
       return true;
     }
   }
 
   Key *key = BKE_key_from_object(ob);
-  if ((key && key->adt && key->adt->action) && key->adt->action->curves.first) {
+  if (key && blender::animrig::legacy::assigned_action_has_keyframes(key->adt)) {
     return true;
   }
 
@@ -1103,7 +1101,8 @@ static std::string bc_get_uvlayer_name(Mesh *mesh, int layer)
 static bNodeTree *prepare_material_nodetree(Material *ma)
 {
   if (ma->nodetree == nullptr) {
-    blender::bke::ntreeAddTreeEmbedded(nullptr, &ma->id, "Shader Nodetree", "ShaderNodeTree");
+    blender::bke::node_tree_add_tree_embedded(
+        nullptr, &ma->id, "Shader Nodetree", "ShaderNodeTree");
     ma->use_nodes = true;
   }
   return ma->nodetree;
@@ -1112,13 +1111,13 @@ static bNodeTree *prepare_material_nodetree(Material *ma)
 static bNode *bc_add_node(
     bContext *C, bNodeTree *ntree, int node_type, int locx, int locy, std::string label)
 {
-  bNode *node = blender::bke::nodeAddStaticNode(C, ntree, node_type);
+  bNode *node = blender::bke::node_add_static_node(C, ntree, node_type);
   if (node) {
     if (label.length() > 0) {
       STRNCPY(node->label, label.c_str());
     }
-    node->locx = locx;
-    node->locy = locy;
+    node->location[0] = locx;
+    node->location[1] = locy;
     node->flag |= NODE_SELECT;
   }
   return node;
@@ -1135,7 +1134,7 @@ static void bc_node_add_link(
   bNodeSocket *from_socket = (bNodeSocket *)BLI_findlink(&from_node->outputs, from_index);
   bNodeSocket *to_socket = (bNodeSocket *)BLI_findlink(&to_node->inputs, to_index);
 
-  blender::bke::nodeAddLink(ntree, from_node, from_socket, to_node, to_socket);
+  blender::bke::node_add_link(ntree, from_node, from_socket, to_node, to_socket);
 }
 
 void bc_add_default_shader(bContext *C, Material *ma)
@@ -1270,7 +1269,7 @@ double bc_get_reflectivity(Material *ma)
 
 bool bc_get_float_from_shader(bNode *shader, double &val, std::string nodeid)
 {
-  bNodeSocket *socket = blender::bke::nodeFindSocket(shader, SOCK_IN, nodeid);
+  bNodeSocket *socket = blender::bke::node_find_socket(shader, SOCK_IN, nodeid);
   if (socket) {
     bNodeSocketValueFloat *ref = (bNodeSocketValueFloat *)socket->default_value;
     val = double(ref->value);
@@ -1284,7 +1283,7 @@ COLLADASW::ColorOrTexture bc_get_cot_from_shader(bNode *shader,
                                                  Color &default_color,
                                                  bool with_alpha)
 {
-  bNodeSocket *socket = blender::bke::nodeFindSocket(shader, SOCK_IN, nodeid);
+  bNodeSocket *socket = blender::bke::node_find_socket(shader, SOCK_IN, nodeid);
   if (socket) {
     bNodeSocketValueRGBA *dcol = (bNodeSocketValueRGBA *)socket->default_value;
     float *col = dcol->value;
@@ -1299,7 +1298,7 @@ bNode *bc_get_master_shader(Material *ma)
   bNodeTree *nodetree = ma->nodetree;
   if (nodetree) {
     LISTBASE_FOREACH (bNode *, node, &nodetree->nodes) {
-      if (node->typeinfo->type == SH_NODE_BSDF_PRINCIPLED) {
+      if (node->typeinfo->type_legacy == SH_NODE_BSDF_PRINCIPLED) {
         return node;
       }
     }

@@ -24,8 +24,8 @@ struct BMesh;
 struct BMeshNormalsUpdate_Params;
 struct Base;
 struct Depsgraph;
-struct ID;
 struct KeyBlock;
+struct Main;
 struct MDeformVert;
 struct Mesh;
 struct Object;
@@ -38,7 +38,6 @@ struct UvVertMap;
 struct View3D;
 struct ViewContext;
 struct bContext;
-struct bDeformGroup;
 struct wmKeyConfig;
 struct wmOperator;
 struct UvElement;
@@ -175,12 +174,12 @@ UvVertMap *BM_uv_vert_map_create(BMesh *bm, bool use_select);
 void EDBM_flag_enable_all(BMEditMesh *em, char hflag);
 void EDBM_flag_disable_all(BMEditMesh *em, char hflag);
 
-bool BMBVH_EdgeVisible(BMBVHTree *tree,
-                       BMEdge *e,
-                       Depsgraph *depsgraph,
-                       ARegion *region,
-                       View3D *v3d,
-                       Object *obedit);
+bool BMBVH_EdgeVisible(const BMBVHTree *tree,
+                       const BMEdge *e,
+                       const Depsgraph *depsgraph,
+                       const ARegion *region,
+                       const View3D *v3d,
+                       const Object *obedit);
 
 void EDBM_project_snap_verts(
     bContext *C, Depsgraph *depsgraph, ARegion *region, Object *obedit, BMEditMesh *em);
@@ -573,6 +572,11 @@ bool ED_mesh_pick_face(bContext *C, Object *ob, const int mval[2], uint dist_px,
  */
 bool ED_mesh_pick_face_vert(
     bContext *C, Object *ob, const int mval[2], uint dist_px, uint *r_index);
+/**
+ * Used for paint face loop selection which needs to get closest edge even though in face select
+ * mode. Changes the select_buffer context to edge selection for this.
+ */
+bool ED_mesh_pick_edge(bContext *C, Object *ob, const int mval[2], uint dist_px, uint *r_index);
 
 MDeformVert *ED_mesh_active_dvert_get_em(Object *ob, BMVert **r_eve);
 MDeformVert *ED_mesh_active_dvert_get_ob(Object *ob, int *r_index);

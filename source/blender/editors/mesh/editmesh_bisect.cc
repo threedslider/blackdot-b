@@ -17,6 +17,7 @@
 #include "BKE_global.hh"
 #include "BKE_layer.hh"
 #include "BKE_report.hh"
+#include "BKE_workspace.hh"
 
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
@@ -172,7 +173,9 @@ static int mesh_bisect_invoke(bContext *C, wmOperator *op, const wmEvent *event)
     G.moving = G_TRANSFORM_EDIT;
 
     /* Initialize modal callout. */
-    ED_workspace_status_text(C, IFACE_("LMB: Click and drag to draw cut line"));
+    WorkspaceStatus status(C);
+    status.item(IFACE_("Cancel"), ICON_EVENT_ESC);
+    status.item(IFACE_("Draw Cut Line"), ICON_MOUSE_LMB_DRAG);
   }
   return ret;
 }
@@ -199,13 +202,10 @@ static int mesh_bisect_modal(bContext *C, wmOperator *op, const wmEvent *event)
   ret = WM_gesture_straightline_modal(C, op, event);
 
   /* update or clear modal callout */
-  if (event->type == EVT_MODAL_MAP) {
-    if (event->val == GESTURE_MODAL_BEGIN) {
-      ED_workspace_status_text(C, IFACE_("LMB: Release to confirm cut line"));
-    }
-    else {
-      ED_workspace_status_text(C, nullptr);
-    }
+  WorkSpace *workspace = CTX_wm_workspace(C);
+
+  if (workspace) {
+    BKE_workspace_status_clear(workspace);
   }
 
   if (ret & (OPERATOR_FINISHED | OPERATOR_CANCELLED)) {
@@ -501,8 +501,8 @@ struct GizmoGroup {
 static void gizmo_bisect_exec(GizmoGroup *ggd)
 {
   wmOperator *op = ggd->data.op;
-  if (op == WM_operator_last_redo((bContext *)ggd->data.context)) {
-    ED_undo_operator_repeat((bContext *)ggd->data.context, op);
+  if (op == WM_operator_last_redo(ggd->data.context)) {
+    ED_undo_operator_repeat(ggd->data.context, op);
   }
 }
 
@@ -751,7 +751,7 @@ static void gizmo_mesh_bisect_draw_prepare(const bContext * /*C*/, wmGizmoGroup 
 {
   GizmoGroup *ggd = static_cast<GizmoGroup *>(gzgroup->customdata);
   if (ggd->data.op->next) {
-    ggd->data.op = WM_operator_last_redo((bContext *)ggd->data.context);
+    ggd->data.op = WM_operator_last_redo(ggd->data.context);
   }
   gizmo_mesh_bisect_update_from_op(ggd);
 }

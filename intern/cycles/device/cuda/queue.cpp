@@ -74,7 +74,7 @@ void CUDADeviceQueue::init_execution()
 
 bool CUDADeviceQueue::enqueue(DeviceKernel kernel,
                               const int work_size,
-                              DeviceKernelArguments const &args)
+                              const DeviceKernelArguments &args)
 {
   if (cuda_device_->have_error()) {
     return false;
@@ -83,9 +83,17 @@ bool CUDADeviceQueue::enqueue(DeviceKernel kernel,
   debug_enqueue_begin(kernel, work_size);
 
   const CUDAContextScope scope(cuda_device_);
-  const CUDADeviceKernel &cuda_kernel = cuda_device_->kernels.get(kernel);
+
+  /* Update texture info in case integrator memory alloc caused texture to move to host. */
+  if (cuda_device_->load_texture_info()) {
+    cuda_device_assert(cuda_device_, cuCtxSynchronize());
+    if (cuda_device_->have_error()) {
+      return false;
+    }
+  }
 
   /* Compute kernel launch parameters. */
+  const CUDADeviceKernel &cuda_kernel = cuda_device_->kernels.get(kernel);
   const int num_threads_per_block = cuda_kernel.num_threads_per_block;
   const int num_blocks = divide_up(work_size, num_threads_per_block);
 
@@ -119,7 +127,7 @@ bool CUDADeviceQueue::enqueue(DeviceKernel kernel,
                                 shared_mem_bytes,
                                 cuda_stream_,
                                 const_cast<void **>(args.values),
-                                0),
+                                nullptr),
                  "enqueue");
 
   debug_enqueue_end();

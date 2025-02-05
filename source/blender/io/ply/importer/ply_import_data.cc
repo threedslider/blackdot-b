@@ -17,6 +17,9 @@
 
 #include <charconv>
 
+#include "CLG_log.h"
+static CLG_LogRef LOG = {"io.ply"};
+
 static bool is_whitespace(char c)
 {
   return c <= ' ';
@@ -258,8 +261,9 @@ static const char *load_vertex_element(PlyReadBuffer &file,
     const PlyProperty &prop = element.properties[prop_idx];
     bool is_standard = ELEM(
         prop.name, "x", "y", "z", "nx", "ny", "nz", "red", "green", "blue", "alpha", "s", "t");
-    if (is_standard)
+    if (is_standard) {
       continue;
+    }
 
     custom_attr_indices.append(prop_idx);
     PlyCustomAttribute attr(prop.name, element.count);
@@ -440,7 +444,7 @@ static const char *load_face_element(PlyReadBuffer &file,
       /* Previous python based importer was accepting faces with fewer
        * than 3 vertices, and silently dropping them. */
       if (count < 3) {
-        fprintf(stderr, "PLY Importer: ignoring face %i (%i vertices)\n", i, count);
+        CLOG_WARN(&LOG, "PLY Importer: ignoring face %i (%i vertices)", i, count);
         continue;
       }
 
@@ -476,7 +480,7 @@ static const char *load_face_element(PlyReadBuffer &file,
       /* Previous python based importer was accepting faces with fewer
        * than 3 vertices, and silently dropping them. */
       if (count < 3) {
-        fprintf(stderr, "PLY Importer: ignoring face %i (%i vertices)\n", i, int(count));
+        CLOG_WARN(&LOG, "PLY Importer: ignoring face %i (%u vertices)", i, count);
       }
       else {
         ptr = scratch.data();

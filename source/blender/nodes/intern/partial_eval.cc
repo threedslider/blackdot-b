@@ -7,14 +7,14 @@
 #include "NOD_partial_eval.hh"
 
 #include "BKE_compute_contexts.hh"
-#include "BKE_node.hh"
+#include "BKE_node_legacy_types.hh"
 #include "BKE_node_runtime.hh"
 
 namespace blender::nodes::partial_eval {
 
 bool is_supported_value_node(const bNode &node)
 {
-  return ELEM(node.type,
+  return ELEM(node.type_legacy,
               SH_NODE_VALUE,
               FN_NODE_INPUT_VECTOR,
               FN_NODE_INPUT_BOOL,
@@ -198,6 +198,13 @@ void eval_downstream(
         forward_output({context, &node.output_socket(0)});
       }
     }
+    else if (node.is_muted()) {
+      for (const bNodeLink &link : node.internal_links()) {
+        if (propagate_value_fn({context, link.fromsock}, {context, link.tosock})) {
+          forward_output({context, link.tosock});
+        }
+      }
+    }
     else if (node.is_group()) {
       const bNodeTree *group = reinterpret_cast<const bNodeTree *>(node.id);
       if (!group) {
@@ -372,6 +379,13 @@ UpstreamEvalTargets eval_upstream(
     else if (node.is_reroute()) {
       propagate_value_fn({context, &node.output_socket(0)}, {context, &node.input_socket(0)});
       forward_input({context, &node.input_socket(0)});
+    }
+    else if (node.is_muted()) {
+      for (const bNodeLink &link : node.internal_links()) {
+        if (propagate_value_fn({context, link.tosock}, {context, link.fromsock})) {
+          forward_input({context, link.fromsock});
+        }
+      }
     }
     else if (node.is_group()) {
       /* Once we get here, the nodes within the group have all been evaluated already and the

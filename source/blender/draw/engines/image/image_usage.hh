@@ -8,7 +8,12 @@
 
 #pragma once
 
-namespace blender::draw::image_engine {
+#include <cstring>
+
+#include "DNA_color_types.h"
+#include "DNA_image_types.h"
+
+namespace blender::image_engine {
 
 /**
  * ImageUsage contains data of the image and image user to identify changes that require a rebuild
@@ -30,7 +35,7 @@ struct ImageUsage {
   const void *last_image = nullptr;
 
   ImageUsage() = default;
-  ImageUsage(const Image *image, const ImageUser *image_user, bool do_tile_drawing)
+  ImageUsage(const ::Image *image, const ::ImageUser *image_user, bool do_tile_drawing)
   {
     pass = image_user ? image_user->pass : 0;
     layer = image_user ? image_user->layer : 0;
@@ -51,4 +56,4 @@ struct ImageUsage {
   }
 };
 
-}  // namespace blender::draw::image_engine
+}  // namespace blender::image_engine

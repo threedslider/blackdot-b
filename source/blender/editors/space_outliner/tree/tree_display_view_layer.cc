@@ -6,8 +6,6 @@
  * \ingroup spoutliner
  */
 
-#include <iostream>
-
 #include "DNA_collection_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_space_types.h"
@@ -35,7 +33,7 @@ class ObjectsChildrenBuilder {
   ObjectTreeElementsMap object_tree_elements_map_;
 
  public:
-  ObjectsChildrenBuilder(SpaceOutliner &soutliner);
+  ObjectsChildrenBuilder(SpaceOutliner &space_outliner);
   ~ObjectsChildrenBuilder() = default;
 
   void operator()(TreeElement &collection_tree_elem);
@@ -194,7 +192,10 @@ void TreeDisplayViewLayer::add_layer_collection_objects_children(TreeElement &co
  *
  * \{ */
 
-ObjectsChildrenBuilder::ObjectsChildrenBuilder(SpaceOutliner &outliner) : outliner_(outliner) {}
+ObjectsChildrenBuilder::ObjectsChildrenBuilder(SpaceOutliner &space_outliner)
+    : outliner_(space_outliner)
+{
+}
 
 void ObjectsChildrenBuilder::operator()(TreeElement &collection_tree_elem)
 {

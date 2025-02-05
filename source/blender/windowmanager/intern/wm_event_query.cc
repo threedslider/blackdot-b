@@ -11,14 +11,14 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "DNA_listBase.h"
 #include "DNA_screen_types.h"
 #include "DNA_userdef_types.h"
 #include "DNA_windowmanager_types.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
+#include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 
 #include "RNA_access.hh"
@@ -57,6 +57,7 @@ static void event_ids_from_flag(char *str,
     }
   }
   ofs += BLI_strncpy_rlen(str + ofs, "}", str_maxncpy - ofs);
+  UNUSED_VARS(ofs); /* Quiet warning. */
 }
 
 static void event_ids_from_type_and_value(const short type,
@@ -540,19 +541,19 @@ bool WM_event_is_xr(const wmEvent *event)
 /** \name Event Tablet Input Access
  * \{ */
 
-float wm_pressure_curve(float pressure)
+float wm_pressure_curve(float raw_pressure)
 {
   if (U.pressure_threshold_max != 0.0f) {
-    pressure /= U.pressure_threshold_max;
+    raw_pressure /= U.pressure_threshold_max;
   }
 
-  CLAMP(pressure, 0.0f, 1.0f);
+  CLAMP(raw_pressure, 0.0f, 1.0f);
 
   if (U.pressure_softness != 0.0f) {
-    pressure = powf(pressure, powf(4.0f, -U.pressure_softness));
+    raw_pressure = powf(raw_pressure, powf(4.0f, -U.pressure_softness));
   }
 
-  return pressure;
+  return raw_pressure;
 }
 
 float WM_event_tablet_data(const wmEvent *event, bool *r_pen_flip, float r_tilt[2])
@@ -613,14 +614,13 @@ int WM_event_absolute_delta_y(const wmEvent *event)
  * \{ */
 
 #ifdef WITH_INPUT_IME
-/**
- * Most OS's use `Ctrl+Space` / `OsKey+Space` to switch IME,
- * so don't type in the space character.
- *
- * \note Shift is excluded from this check since it prevented typing `Shift+Space`, see: #85517.
- */
 bool WM_event_is_ime_switch(const wmEvent *event)
 {
+  /* Most OS's use `Ctrl+Space` / `OsKey+Space` to switch IME,
+   * so don't type in the space character.
+   *
+   * NOTE: Shift is excluded from this check since it prevented typing `Shift+Space`, see: #85517.
+   */
   return (event->val == KM_PRESS) && (event->type == EVT_SPACEKEY) &&
          (event->modifier & (KM_CTRL | KM_OSKEY | KM_ALT));
 }

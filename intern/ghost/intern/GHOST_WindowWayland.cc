@@ -260,6 +260,98 @@ int gwl_window_scale_int_from(const GWL_WindowScaleParams &scale_params, int val
 /** \} */
 
 /* -------------------------------------------------------------------- */
+/** \name Internal #GWL_WindowCursorCustomShape
+ * \{ */
+
+struct GWL_WindowCursorCustomShape {
+  uint8_t *bitmap = nullptr;
+  uint8_t *mask = nullptr;
+  int32_t hot_spot[2] = {0, 0};
+  int32_t size[2] = {0, 0};
+  bool can_invert_color = false;
+};
+
+static void gwl_window_cursor_custom_free(GWL_WindowCursorCustomShape &ccs)
+{
+  if (ccs.bitmap) {
+    free(ccs.bitmap);
+  }
+  if (ccs.mask) {
+    free(ccs.mask);
+  }
+}
+
+static void gwl_window_cursor_custom_clear(GWL_WindowCursorCustomShape &ccs)
+{
+  gwl_window_cursor_custom_free(ccs);
+  ccs = GWL_WindowCursorCustomShape{};
+}
+
+static void gwl_window_cursor_custom_store(GWL_WindowCursorCustomShape &ccs,
+                                           const uint8_t *bitmap,
+                                           const uint8_t *mask,
+                                           const int32_t size[2],
+                                           const int32_t hot_spot[2],
+                                           bool can_invert_color)
+{
+  gwl_window_cursor_custom_clear(ccs);
+  /* The width is divided by 8, rounding up. */
+  const size_t bitmap_size = sizeof(uint8_t) * ((size[0] + 7) / 8) * size[1];
+
+  if (bitmap) {
+    ccs.bitmap = static_cast<uint8_t *>(malloc(bitmap_size));
+    memcpy(ccs.bitmap, bitmap, bitmap_size);
+  }
+  if (mask) {
+    ccs.mask = static_cast<uint8_t *>(malloc(bitmap_size));
+    memcpy(ccs.mask, mask, bitmap_size);
+  }
+
+  ccs.size[0] = size[0];
+  ccs.size[1] = size[1];
+
+  ccs.hot_spot[0] = hot_spot[0];
+  ccs.hot_spot[1] = hot_spot[1];
+
+  ccs.can_invert_color = can_invert_color;
+}
+
+static GHOST_TSuccess gwl_window_cursor_custom_load(const GWL_WindowCursorCustomShape &ccs,
+                                                    GHOST_SystemWayland *system)
+{
+  return system->cursor_shape_custom_set(ccs.bitmap,
+                                         ccs.mask,
+                                         ccs.size[0],
+                                         ccs.size[1],
+                                         ccs.hot_spot[0],
+                                         ccs.hot_spot[1],
+                                         ccs.can_invert_color);
+}
+
+static GHOST_TSuccess gwl_window_cursor_shape_refresh(GHOST_TStandardCursor shape,
+                                                      const GWL_WindowCursorCustomShape &ccs,
+                                                      GHOST_SystemWayland *system)
+{
+#ifdef USE_EVENT_BACKGROUND_THREAD
+  GHOST_ASSERT(system->main_thread_id == std::this_thread::get_id(), "Only from main thread!");
+#endif
+
+  if (shape == GHOST_kStandardCursorCustom) {
+    const GHOST_TSuccess ok = gwl_window_cursor_custom_load(ccs, system);
+    if (ok == GHOST_kSuccess) {
+      return ok;
+    }
+    shape = GHOST_kStandardCursorDefault;
+    system->cursor_shape_set(shape);
+    return GHOST_kFailure;
+  }
+
+  return system->cursor_shape_set(shape);
+}
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
 /** \name Internal #GWL_Window
  * \{ */
 
@@ -294,8 +386,13 @@ enum eGWL_PendingWindowActions {
    */
   PENDING_WINDOW_SURFACE_COMMIT,
 
+  /**
+   * The window has gained focus and the cursor shape needs to be refreshed.
+   */
+  PENDING_WINDOW_CURSOR_SHAPE_REFRESH,
+
 };
-#  define PENDING_NUM (PENDING_WINDOW_SURFACE_COMMIT + 1)
+#  define PENDING_NUM (PENDING_WINDOW_CURSOR_SHAPE_REFRESH + 1)
 
 #endif /* USE_EVENT_BACKGROUND_THREAD */
 
@@ -389,9 +486,17 @@ struct GWL_Window {
   std::mutex frame_pending_mutex;
 #endif
 
+  GWL_WindowCursorCustomShape cursor_custom_shape;
+
   std::string title;
 
   bool is_dialog = false;
+
+  /** True once the window has been initialized. */
+  bool is_init = false;
+
+  /** True when the GPU context is valid. */
+  bool is_valid_setup = false;
 
   /** Currently only initialized on access (avoids allocations & allows to keep private). */
   GWL_WindowScaleParams scale_params;
@@ -857,6 +962,10 @@ static void gwl_window_pending_actions_handle(GWL_Window *win)
   }
   if (actions[PENDING_WINDOW_SURFACE_COMMIT]) {
     wl_surface_commit(win->wl.surface);
+  }
+  if (actions[PENDING_WINDOW_CURSOR_SHAPE_REFRESH]) {
+    gwl_window_cursor_shape_refresh(
+        win->ghost_window->getCursorShape(), win->cursor_custom_shape, win->ghost_system);
   }
 }
 
@@ -1646,12 +1755,13 @@ GHOST_WindowWayland::GHOST_WindowWayland(GHOST_SystemWayland *system,
                                          const bool is_dialog,
                                          const bool stereoVisual,
                                          const bool exclusive,
-                                         const bool is_debug)
+                                         const bool is_debug,
+                                         const GHOST_GPUDevice &preferred_device)
     : GHOST_Window(width, height, state, stereoVisual, exclusive),
       system_(system),
       window_(new GWL_Window),
-      valid_setup_(false),
-      is_debug_context_(is_debug)
+      is_debug_context_(is_debug),
+      preferred_device_(preferred_device)
 {
 #ifdef USE_EVENT_BACKGROUND_THREAD
   std::lock_guard lock_server_guard{*system->server_mutex};
@@ -1912,10 +2022,10 @@ GHOST_WindowWayland::GHOST_WindowWayland(GHOST_SystemWayland *system,
     GHOST_PRINT("Failed to create drawing context" << std::endl);
   }
   else {
-    valid_setup_ = true;
+    window_->is_valid_setup = true;
   }
 
-  if (valid_setup_ == false) {
+  if (window_->is_valid_setup == false) {
     /* Don't attempt to setup the window if there is no context.
      * This window is considered invalid and will be removed. */
   }
@@ -1942,7 +2052,13 @@ GHOST_WindowWayland::GHOST_WindowWayland(GHOST_SystemWayland *system,
       const int format_size = 4;
       const int buffer_size = (window_->frame.size[0] * window_->frame.size[1]) * format_size;
       const int fd = memfd_create_sealed_for_vulkan_hack("ghost-wl-dummy-buffer");
-      ftruncate(fd, buffer_size);
+
+      const int truncate_result = ftruncate(fd, buffer_size);
+      GHOST_ASSERT(truncate_result == 0, "expecting ftruncate of the dummy buffer to work");
+#    ifndef NDEBUG
+      (void)truncate_result;
+#    endif
+
       wl_shm *shm = system_->wl_shm_get();
       wl_shm_pool *pool = wl_shm_create_pool(shm, fd, buffer_size);
       dummy_buffer = wl_shm_pool_create_buffer(pool,
@@ -2005,6 +2121,8 @@ GHOST_WindowWayland::GHOST_WindowWayland(GHOST_SystemWayland *system,
    * isn't essential, it reduces flickering. */
   wl_surface_commit(window_->wl.surface);
 
+  window_->is_init = true;
+
   /* Set swap interval to 0 to prevent blocking. */
   setSwapInterval(0);
 }
@@ -2064,6 +2182,8 @@ GHOST_WindowWayland::~GHOST_WindowWayland()
    * This is not fool-proof though, hence the call to #window_surface_unref, see: #99078. */
   wl_display_flush(system_->wl_display_get());
 
+  gwl_window_cursor_custom_free(window_->cursor_custom_shape);
+
   delete window_;
 }
 
@@ -2113,12 +2233,33 @@ GHOST_TSuccess GHOST_WindowWayland::setWindowCursorShape(GHOST_TStandardCursor s
 #ifdef USE_EVENT_BACKGROUND_THREAD
   std::lock_guard lock_server_guard{*system_->server_mutex};
 #endif
-  const GHOST_TSuccess ok = system_->cursor_shape_set(shape);
-  m_cursorShape = (ok == GHOST_kSuccess) ? shape : GHOST_kStandardCursorDefault;
 
-  if (ok == GHOST_kSuccess) {
-    /* For the cursor to display when the event queue isn't being handled. */
-    wl_display_flush(system_->wl_display_get());
+  const bool is_active = this == static_cast<const GHOST_WindowWayland *>(
+                                     system_->getWindowManager()->getActiveWindow());
+  gwl_window_cursor_custom_clear(window_->cursor_custom_shape);
+  m_cursorShape = shape;
+
+  GHOST_TSuccess ok;
+  if (is_active) {
+    ok = system_->cursor_shape_set(m_cursorShape);
+    GHOST_TSuccess ok_test = ok;
+    if (ok == GHOST_kFailure) {
+      /* Failed, try again with the default cursor. */
+      m_cursorShape = GHOST_kStandardCursorDefault;
+      ok_test = system_->cursor_shape_set(m_cursorShape);
+    }
+
+    if (ok_test == GHOST_kFailure) {
+      /* For the cursor to display when the event queue isn't being handled. */
+      wl_display_flush(system_->wl_display_get());
+    }
+  }
+  else {
+    /* Set later when activating the window. */
+    ok = system_->cursor_shape_check(shape);
+    if (ok == GHOST_kFailure) {
+      m_cursorShape = GHOST_kStandardCursorDefault;
+    }
   }
   return ok;
 }
@@ -2137,12 +2278,33 @@ GHOST_TSuccess GHOST_WindowWayland::setWindowCustomCursorShape(
 #ifdef USE_EVENT_BACKGROUND_THREAD
   std::lock_guard lock_server_guard{*system_->server_mutex};
 #endif
-  const GHOST_TSuccess ok = system_->cursor_shape_custom_set(
-      bitmap, mask, sizex, sizey, hotX, hotY, canInvertColor);
 
-  if (ok == GHOST_kSuccess) {
-    /* For the cursor to display when the event queue isn't being handled. */
-    wl_display_flush(system_->wl_display_get());
+  const bool is_active = this == static_cast<const GHOST_WindowWayland *>(
+                                     system_->getWindowManager()->getActiveWindow());
+  const int32_t size[2] = {sizex, sizey};
+  const int32_t hot_spot[2] = {hotX, hotY};
+
+  gwl_window_cursor_custom_store(
+      window_->cursor_custom_shape, bitmap, mask, size, hot_spot, canInvertColor);
+  m_cursorShape = GHOST_kStandardCursorCustom;
+
+  GHOST_TSuccess ok;
+  if (is_active) {
+    ok = gwl_window_cursor_custom_load(window_->cursor_custom_shape, system_);
+    GHOST_TSuccess ok_test = ok;
+    if (ok == GHOST_kFailure) {
+      /* Failed, try again with the default cursor. */
+      m_cursorShape = GHOST_kStandardCursorDefault;
+      ok_test = system_->cursor_shape_set(m_cursorShape);
+    }
+    if (ok_test == GHOST_kSuccess) {
+      /* For the cursor to display when the event queue isn't being handled. */
+      wl_display_flush(system_->wl_display_get());
+    }
+  }
+  else {
+    /* Set later when activating the window. */
+    ok = GHOST_kSuccess;
   }
   return ok;
 }
@@ -2157,7 +2319,7 @@ GHOST_TSuccess GHOST_WindowWayland::getCursorBitmap(GHOST_CursorBitmapRef *bitma
 
 bool GHOST_WindowWayland::getValid() const
 {
-  return GHOST_Window::getValid() && valid_setup_;
+  return GHOST_Window::getValid() && window_->is_valid_setup;
 }
 
 void GHOST_WindowWayland::setTitle(const char *title)
@@ -2351,7 +2513,8 @@ GHOST_Context *GHOST_WindowWayland::newDrawingContext(GHOST_TDrawingContextType 
                                                      window_->backend.vulkan_window_info,
                                                      1,
                                                      2,
-                                                     is_debug_context_);
+                                                     is_debug_context_,
+                                                     preferred_device_);
       if (context->initializeDrawingContext()) {
         return context;
       }
@@ -2476,8 +2639,12 @@ GHOST_TSuccess GHOST_WindowWayland::activate()
   if (is_main_thread)
 #endif
   {
-    if (system_->getWindowManager()->setActiveWindow(this) == GHOST_kFailure) {
-      return GHOST_kFailure;
+    /* This can run while the window being initialized.
+     * In this case, skip setting the window active but add the event, see: #120465. */
+    if (window_->is_init) {
+      if (system_->getWindowManager()->setActiveWindow(this) == GHOST_kFailure) {
+        return GHOST_kFailure;
+      }
     }
   }
   const GHOST_TSuccess success = system_->pushEvent_maybe_pending(
@@ -2501,7 +2668,10 @@ GHOST_TSuccess GHOST_WindowWayland::deactivate()
   if (is_main_thread)
 #endif
   {
-    system_->getWindowManager()->setWindowInactive(this);
+    /* See code comments for #GHOST_WindowWayland::activate. */
+    if (window_->is_init) {
+      system_->getWindowManager()->setWindowInactive(this);
+    }
   }
   const GHOST_TSuccess success = system_->pushEvent_maybe_pending(
       new GHOST_Event(system_->getMilliSeconds(), GHOST_kEventWindowDeactivate, this));
@@ -2537,6 +2707,17 @@ GHOST_TSuccess GHOST_WindowWayland::notify_decor_redraw()
  *
  * Functionality only used for the WAYLAND implementation.
  * \{ */
+
+GHOST_TSuccess GHOST_WindowWayland::cursor_shape_refresh()
+{
+#ifdef USE_EVENT_BACKGROUND_THREAD
+  if (system_->main_thread_id != std::this_thread::get_id()) {
+    gwl_window_pending_actions_tag(window_, PENDING_WINDOW_CURSOR_SHAPE_REFRESH);
+    return GHOST_kSuccess;
+  }
+#endif
+  return gwl_window_cursor_shape_refresh(m_cursorShape, window_->cursor_custom_shape, system_);
+}
 
 void GHOST_WindowWayland::outputs_changed_update_scale_tag()
 {
@@ -2720,7 +2901,7 @@ bool GHOST_WindowWayland::outputs_leave(GWL_Output *output)
 
 #ifdef USE_EVENT_BACKGROUND_THREAD
 
-void GHOST_WindowWayland::pending_actions_handle()
+const void GHOST_WindowWayland::pending_actions_handle()
 {
   /* Caller must lock `server_mutex`, while individual actions could lock,
    * it's simpler to lock once when handling all window actions. */

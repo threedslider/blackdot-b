@@ -8,20 +8,14 @@
 
 #pragma once
 
+#include "DNA_world_types.h"
+
 #include "eevee_lightprobe.hh"
 #include "eevee_shader_shared.hh"
-
-#include "BKE_cryptomatte.hh"
-
-extern "C" {
-struct Material;
-}
 
 namespace blender::eevee {
 
 class Instance;
-struct ObjectHandle;
-struct WorldHandle;
 class CaptureView;
 
 /* -------------------------------------------------------------------- */

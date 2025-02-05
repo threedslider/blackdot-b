@@ -46,8 +46,8 @@ static void sh_node_vector_rotate_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_vector_rotate(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "rotation_type", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "invert", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "rotation_type", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "invert", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 }
 
 static const char *gpu_shader_get_name(int mode)
@@ -206,14 +206,14 @@ static void sh_node_vector_rotate_build_multi_function(NodeMultiFunctionBuilder 
 
 static void node_shader_update_vector_rotate(bNodeTree *ntree, bNode *node)
 {
-  bNodeSocket *sock_rotation = bke::nodeFindSocket(node, SOCK_IN, "Rotation");
-  bke::nodeSetSocketAvailability(
+  bNodeSocket *sock_rotation = bke::node_find_socket(node, SOCK_IN, "Rotation");
+  bke::node_set_socket_availability(
       ntree, sock_rotation, ELEM(node->custom1, NODE_VECTOR_ROTATE_TYPE_EULER_XYZ));
-  bNodeSocket *sock_axis = bke::nodeFindSocket(node, SOCK_IN, "Axis");
-  bke::nodeSetSocketAvailability(
+  bNodeSocket *sock_axis = bke::node_find_socket(node, SOCK_IN, "Axis");
+  bke::node_set_socket_availability(
       ntree, sock_axis, ELEM(node->custom1, NODE_VECTOR_ROTATE_TYPE_AXIS));
-  bNodeSocket *sock_angle = bke::nodeFindSocket(node, SOCK_IN, "Angle");
-  bke::nodeSetSocketAvailability(
+  bNodeSocket *sock_angle = bke::node_find_socket(node, SOCK_IN, "Angle");
+  bke::node_set_socket_availability(
       ntree, sock_angle, !ELEM(node->custom1, NODE_VECTOR_ROTATE_TYPE_EULER_XYZ));
 }
 
@@ -268,7 +268,11 @@ void register_node_type_sh_vector_rotate()
 
   static blender::bke::bNodeType ntype;
 
-  sh_fn_node_type_base(&ntype, SH_NODE_VECTOR_ROTATE, "Vector Rotate", NODE_CLASS_OP_VECTOR);
+  sh_fn_node_type_base(&ntype, "ShaderNodeVectorRotate", SH_NODE_VECTOR_ROTATE);
+  ntype.ui_name = "Vector Rotate";
+  ntype.ui_description = "Rotate a vector around a pivot point (center)";
+  ntype.enum_name_legacy = "VECTOR_ROTATE";
+  ntype.nclass = NODE_CLASS_OP_VECTOR;
   ntype.declare = file_ns::sh_node_vector_rotate_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_vector_rotate;
   ntype.gpu_fn = file_ns::gpu_shader_vector_rotate;
@@ -276,5 +280,5 @@ void register_node_type_sh_vector_rotate()
   ntype.build_multi_function = file_ns::sh_node_vector_rotate_build_multi_function;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

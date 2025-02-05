@@ -8,7 +8,7 @@
 
 #include "DNA_node_types.h"
 
-#include "NOD_common.h"
+#include "NOD_common.hh"
 #include "node_common.h"
 #include "node_composite_util.hh"
 
@@ -24,7 +24,8 @@ void register_node_type_cmp_group()
    * to the shared NODE_GROUP integer type id. */
   blender::bke::node_type_base_custom(
       &ntype, "CompositorNodeGroup", "Group", "GROUP", NODE_CLASS_GROUP);
-  ntype.type = NODE_GROUP;
+  ntype.enum_name_legacy = "GROUP";
+  ntype.type_legacy = NODE_GROUP;
   ntype.poll = cmp_node_poll_default;
   ntype.poll_instance = node_group_poll_instance;
   ntype.insert_link = node_insert_link_default;
@@ -38,7 +39,7 @@ void register_node_type_cmp_group()
   ntype.labelfunc = node_group_label;
   ntype.declare = blender::nodes::node_group_declare;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 
 void register_node_type_cmp_custom_group(blender::bke::bNodeType *ntype)

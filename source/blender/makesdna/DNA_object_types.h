@@ -44,9 +44,7 @@ struct Curve;
 struct FluidsimSettings;
 struct Ipo;
 struct LightgroupMembership;
-struct LightProbeGridCacheFrame;
 struct Material;
-struct Mesh;
 struct Object;
 struct PartDeflect;
 struct Path;
@@ -775,5 +773,3 @@ enum {
 typedef enum ObjectModifierFlag {
   OB_MODIFIER_FLAG_ADD_REST_POSITION = 1 << 0,
 } ObjectModifierFlag;
-
-#define MAX_DUPLI_RECUR 8

@@ -11,7 +11,6 @@
 
 #include "DNA_material_types.h"
 #include "DNA_mesh_types.h"
-#include "DNA_texture_types.h"
 
 #include "BLI_math_rotation.h"
 
@@ -60,6 +59,7 @@ const EnumPropertyItem rna_enum_ramp_blend_items[] = {
 #  include "MEM_guardedalloc.h"
 
 #  include "DNA_gpencil_legacy_types.h"
+#  include "DNA_meshdata_types.h"
 #  include "DNA_node_types.h"
 #  include "DNA_object_types.h"
 #  include "DNA_screen_types.h"
@@ -71,7 +71,7 @@ const EnumPropertyItem rna_enum_ramp_blend_items[] = {
 #  include "BKE_gpencil_legacy.h"
 #  include "BKE_grease_pencil.hh"
 #  include "BKE_main.hh"
-#  include "BKE_material.h"
+#  include "BKE_material.hh"
 #  include "BKE_node.hh"
 #  include "BKE_paint.hh"
 #  include "BKE_scene.hh"
@@ -110,10 +110,6 @@ static void rna_MaterialGpencil_update(Main *bmain, Scene *scene, PointerRNA *pt
   for (Object *ob = static_cast<Object *>(bmain->objects.first); ob;
        ob = static_cast<Object *>(ob->id.next))
   {
-    if (ob->type == OB_GPENCIL_LEGACY) {
-      bGPdata *gpd = (bGPdata *)ob->data;
-      DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY);
-    }
     if (ob->type == OB_GREASE_PENCIL) {
       GreasePencil &grease_pencil = *static_cast<GreasePencil *>(ob->data);
       DEG_id_tag_update(&grease_pencil.id, ID_RECALC_GEOMETRY);
@@ -148,7 +144,7 @@ static void rna_Material_texpaint_begin(CollectionPropertyIterator *iter, Pointe
 {
   Material *ma = (Material *)ptr->data;
   rna_iterator_array_begin(
-      iter, (void *)ma->texpaintslot, sizeof(TexPaintSlot), ma->tot_slots, 0, nullptr);
+      iter, ptr, (void *)ma->texpaintslot, sizeof(TexPaintSlot), ma->tot_slots, 0, nullptr);
 }
 
 static void rna_Material_active_paint_texture_index_update(bContext *C, PointerRNA *ptr)
@@ -160,7 +156,7 @@ static void rna_Material_active_paint_texture_index_update(bContext *C, PointerR
     bNode *node = BKE_texpaint_slot_material_find_node(ma, ma->paint_active_slot);
 
     if (node) {
-      blender::bke::nodeSetActive(ma->nodetree, node);
+      blender::bke::node_set_active(ma->nodetree, node);
     }
   }
 
@@ -394,15 +390,6 @@ static bool rna_is_grease_pencil_get(PointerRNA *ptr)
   return false;
 }
 
-static void rna_gpcolordata_uv_update(Main *bmain, Scene *scene, PointerRNA *ptr)
-{
-  /* update all uv strokes of this color */
-  Material *ma = (Material *)ptr->owner_id;
-  ED_gpencil_update_color_uv(bmain, ma);
-
-  rna_MaterialGpencil_update(bmain, scene, ptr);
-}
-
 static std::optional<std::string> rna_GpencilColorData_path(const PointerRNA * /*ptr*/)
 {
   return "grease_pencil";
@@ -453,6 +440,10 @@ static void rna_def_material_display(StructRNA *srna)
   RNA_def_property_array(prop, 4);
   RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
   RNA_def_property_ui_text(prop, "Diffuse Color", "Diffuse color of the material");
+  /* See #82514 for details, for now re-define defaults here. Keep in sync with
+   * #DNA_material_defaults.h */
+  static float diffuse_color_default[4] = {0.8f, 0.8f, 0.8f, 1.0f};
+  RNA_def_property_float_array_default(prop, diffuse_color_default);
   RNA_def_property_update(prop, 0, "rna_Material_draw_update");
 
   prop = RNA_def_property(srna, "specular_color", PROP_FLOAT, PROP_COLOR);
@@ -620,7 +611,7 @@ static void rna_def_material_greasepencil(BlenderRNA *brna)
   RNA_def_property_float_sdna(prop, nullptr, "texture_pixsize");
   RNA_def_property_range(prop, 1, 5000);
   RNA_def_property_ui_text(prop, "UV Factor", "Texture Pixel Size factor along the stroke");
-  RNA_def_property_update(prop, NC_GPENCIL | ND_SHADING, "rna_gpcolordata_uv_update");
+  RNA_def_property_update(prop, NC_GPENCIL | ND_SHADING, "rna_MaterialGpencil_update");
 
   /* Flags */
   prop = RNA_def_property(srna, "hide", PROP_BOOLEAN, PROP_NONE);
@@ -698,7 +689,7 @@ static void rna_def_material_greasepencil(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Rotation",
                            "Additional rotation applied to dots and square texture of strokes. "
-                           "Only applies in texture shading mode");
+                           "Only applies in texture shading mode.");
   RNA_def_property_update(prop, NC_GPENCIL | ND_SHADING, "rna_MaterialGpencil_update");
 
   /* pass index for future compositing and editing tools */
@@ -789,8 +780,7 @@ static void rna_def_material_lineart(BlenderRNA *brna)
 
   prop = RNA_def_property(srna, "use_material_mask_bits", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_default(prop, false);
-  RNA_def_property_boolean_sdna(prop, nullptr, "material_mask_bits", 1);
-  RNA_def_property_array(prop, 8);
+  RNA_def_property_boolean_bitset_array_sdna(prop, nullptr, "material_mask_bits", 1 << 0, 8);
   RNA_def_property_ui_text(prop, "Mask", "");
   RNA_def_property_update(prop, NC_GPENCIL | ND_SHADING, "rna_MaterialLineArt_update");
 
@@ -843,14 +833,14 @@ void RNA_def_material(BlenderRNA *brna)
        0,
        "Fast",
        "Each face is considered as a medium interface. Gives correct results for manifold "
-       "geometry that contains no inner parts"},
+       "geometry that contains no inner parts."},
       {MA_VOLUME_ISECT_ACCURATE,
        "ACCURATE",
        0,
        "Accurate",
        "Faces are considered as medium interface only when they have different consecutive "
        "facing. Gives correct results as long as the max ray depth is not exceeded. Have "
-       "significant memory overhead compared to the fast method"},
+       "significant memory overhead compared to the fast method."},
       {0, nullptr, 0, nullptr, nullptr},
   };
 
@@ -889,22 +879,6 @@ void RNA_def_material(BlenderRNA *brna)
        "Render polygon transparent, depending on alpha channel of the texture"},
       {0, nullptr, 0, nullptr, nullptr},
   };
-
-  static EnumPropertyItem prop_eevee_blend_shadow_items[] = {
-      {MA_BS_NONE, "NONE", 0, "None", "Material will cast no shadow"},
-      {MA_BS_SOLID, "OPAQUE", 0, "Opaque", "Material will cast shadows without transparency"},
-      {MA_BS_CLIP,
-       "CLIP",
-       0,
-       "Alpha Clip",
-       "Use the alpha threshold to clip the visibility (binary visibility)"},
-      {MA_BS_HASHED,
-       "HASHED",
-       0,
-       "Alpha Hashed",
-       "Use noise to dither the binary visibility and use filtering to reduce the noise"},
-      {0, nullptr, 0, nullptr, nullptr},
-  };
 #  endif
 
   static EnumPropertyItem prop_eevee_surface_render_method_items[] = {
@@ -913,13 +887,13 @@ void RNA_def_material(BlenderRNA *brna)
        0,
        "Dithered",
        "Allows for grayscale hashed transparency, and compatible with render passes and "
-       "raytracing. Also known as deferred rendering"},
+       "raytracing. Also known as deferred rendering."},
       {MA_SURFACE_METHOD_FORWARD,
        "BLENDED",
        0,
        "Blended",
        "Allows for colored transparency, but incompatible with render passes and raytracing. Also "
-       "known as forward rendering"},
+       "known as forward rendering."},
       {0, nullptr, 0, nullptr, nullptr},
   };
 
@@ -976,12 +950,6 @@ void RNA_def_material(BlenderRNA *brna)
   RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_ID_MATERIAL);
   RNA_def_property_update(prop, 0, "rna_Material_draw_update");
 
-  prop = RNA_def_property(srna, "shadow_method", PROP_ENUM, PROP_NONE);
-  RNA_def_property_enum_sdna(prop, nullptr, "blend_shadow");
-  RNA_def_property_enum_items(prop, prop_eevee_blend_shadow_items);
-  RNA_def_property_ui_text(prop, "Shadow Mode", "Shadow mapping method");
-  RNA_def_property_update(prop, 0, "rna_Material_draw_update");
-
   prop = RNA_def_property(srna, "alpha_threshold", PROP_FLOAT, PROP_FACTOR);
   RNA_def_property_range(prop, 0, 1);
   RNA_def_property_ui_text(prop,
@@ -1028,7 +996,7 @@ void RNA_def_material(BlenderRNA *brna)
       prop,
       "Light Probe Volume Backface Culling",
       "Consider material single sided for light probe volume capture. "
-      "Additionally helps rejecting probes inside the object to avoid light leaks");
+      "Additionally helps rejecting probes inside the object to avoid light leaks.");
   RNA_def_property_update(prop, 0, "rna_Material_draw_update");
 
   prop = RNA_def_property(srna, "use_transparent_shadow", PROP_BOOLEAN, PROP_NONE);
@@ -1048,7 +1016,7 @@ void RNA_def_material(BlenderRNA *brna)
       "Raytrace Transmission",
       "Use raytracing to determine transmitted color instead of using only light probes. "
       "This prevents the surface from contributing to the lighting of surfaces not using this "
-      "setting");
+      "setting.");
   RNA_def_property_update(prop, 0, "rna_Material_draw_update");
 
 #  if 1 /* This should be deleted in Blender 4.5 */
@@ -1059,7 +1027,7 @@ void RNA_def_material(BlenderRNA *brna)
       "Raytrace Transmission",
       "Use raytracing to determine transmitted color instead of using only light probes. "
       "This prevents the surface from contributing to the lighting of surfaces not using this "
-      "setting (Deprecated: use 'use_raytrace_refraction')");
+      "setting. Deprecated: use 'use_raytrace_refraction'.");
   RNA_def_property_update(prop, 0, "rna_Material_draw_update");
 
   prop = RNA_def_property(srna, "use_sss_translucency", PROP_BOOLEAN, PROP_NONE);
@@ -1107,7 +1075,7 @@ void RNA_def_material(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Max Vertex Displacement",
                            "The max distance a vertex can be displaced. "
-                           "Displacements over this threshold may cause visibility issues");
+                           "Displacements over this threshold may cause visibility issues.");
   RNA_def_property_update(prop, 0, "rna_Material_draw_update");
 
   /* For Preview Render */
@@ -1154,13 +1122,13 @@ void RNA_def_material(BlenderRNA *brna)
   prop = RNA_def_property(srna, "grease_pencil", PROP_POINTER, PROP_NONE);
   RNA_def_property_pointer_sdna(prop, nullptr, "gp_style");
   RNA_def_property_ui_text(
-      prop, "Grease Pencil Settings", "Grease pencil color settings for material");
+      prop, "Grease Pencil Settings", "Grease Pencil color settings for material");
 
   prop = RNA_def_property(srna, "is_grease_pencil", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_funcs(prop, "rna_is_grease_pencil_get", nullptr);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_ui_text(
-      prop, "Is Grease Pencil", "True if this material has grease pencil data");
+      prop, "Is Grease Pencil", "True if this material has Grease Pencil data");
 
   /* line art */
   prop = RNA_def_property(srna, "lineart", PROP_POINTER, PROP_NONE);

@@ -26,6 +26,8 @@
 
 namespace blender::draw::select {
 
+// #define DEBUG_PRINT
+
 enum class SelectionType { DISABLED = 0, ENABLED = 1 };
 
 class ID {
@@ -70,7 +72,7 @@ struct SelectBuf {
     }
   }
 
-  void select_bind(PassSimple &pass)
+  void select_bind(PassSimple::Sub &pass)
   {
     if (selection_type != SelectionType::DISABLED) {
       select_buf.push_update();
@@ -88,6 +90,8 @@ struct SelectMap {
 
   /** Mapping between internal IDs and `object->runtime->select_id`. */
   Vector<uint> select_id_map;
+  /** Track objects with OB_DRAW_IN_FRONT. */
+  Vector<bool> in_front_map;
 #ifndef NDEBUG
   /** Debug map containing a copy of the object name. */
   Vector<std::string> map_names;
@@ -98,8 +102,6 @@ struct SelectMap {
   StorageArrayBuffer<uint, 4, true> dummy_select_buf = {"dummy_select_buf"};
   /** Uniform buffer to bind to all passes to pass information about the selection state. */
   UniformBuffer<SelectInfoData> info_buf;
-  /** Will remove the depth test state from any pass drawing objects with select id. */
-  bool disable_depth_test;
 
   SelectMap(const SelectionType selection_type) : selection_type(selection_type){};
 
@@ -111,16 +113,36 @@ struct SelectMap {
       return {0};
     }
 
+    if (sub_object_id == uint(-1)) {
+      /* WORKAROUND: Armature code set the sub_object_id to -1 when individual bones are not
+       * selectable (i.e. in object mode). */
+      sub_object_id = 0;
+    }
+
     uint object_id = ob_ref.object->runtime->select_id;
     uint id = select_id_map.append_and_get_index(object_id | sub_object_id);
+    in_front_map.append(ob_ref.object->dtx & OB_DRAW_IN_FRONT);
+
+#ifdef DEBUG_PRINT
+    /* Print mapping from object name, select id and the mapping to internal select id.
+     * If something is wrong at this stage, it indicates an error in the caller code. */
+    printf("%s : %u | %u = %u -> %u\n",
+           ob_ref.object->id.name,
+           object_id,
+           sub_object_id,
+           object_id | sub_object_id,
+           id);
+#endif
+
 #ifndef NDEBUG
     map_names.append(ob_ref.object->id.name);
 #endif
     return {id};
   }
 
+  /* TODO: refactor this method to select::ID::invalid(). */
   /* Load an invalid index that will not write to the output (not selectable). */
-  [[nodiscard]] const ID select_invalid_id()
+  [[nodiscard]] static const ID select_invalid_id()
   {
     return {uint32_t(-1)};
   }
@@ -131,28 +153,8 @@ struct SelectMap {
       return;
     }
 
-    switch (gpu_select_next_get_mode()) {
-      case GPU_SELECT_ALL:
-        info_buf.mode = SelectType::SELECT_ALL;
-        disable_depth_test = true;
-        break;
-      /* Not sure if these 2 NEAREST are mapped to the right algorithm. */
-      case GPU_SELECT_NEAREST_FIRST_PASS:
-      case GPU_SELECT_NEAREST_SECOND_PASS:
-      case GPU_SELECT_PICK_ALL:
-        info_buf.mode = SelectType::SELECT_PICK_ALL;
-        info_buf.cursor = int2(gpu_select_next_get_pick_area_center());
-        disable_depth_test = true;
-        break;
-      case GPU_SELECT_PICK_NEAREST:
-        info_buf.mode = SelectType::SELECT_PICK_NEAREST;
-        info_buf.cursor = int2(gpu_select_next_get_pick_area_center());
-        disable_depth_test = true;
-        break;
-    }
-    info_buf.push_update();
-
     select_id_map.clear();
+    in_front_map.clear();
 #ifndef NDEBUG
     map_names.clear();
 #endif
@@ -165,10 +167,8 @@ struct SelectMap {
       return;
     }
 
-    if (disable_depth_test) {
-      /* TODO: clipping state. */
-      pass.state_set(DRW_STATE_WRITE_COLOR);
-    }
+    /* TODO: clipping state. */
+    pass.state_set(DRW_STATE_WRITE_COLOR);
     pass.bind_ubo(SELECT_DATA, &info_buf);
     pass.bind_ssbo(SELECT_ID_OUT, &select_output_buf);
   }
@@ -181,14 +181,29 @@ struct SelectMap {
     }
 
     pass.use_custom_ids = true;
-    if (disable_depth_test) {
-      /* TODO: clipping state. */
-      pass.state_set(DRW_STATE_WRITE_COLOR);
-    }
+    /* TODO: clipping state. */
+    pass.state_set(DRW_STATE_WRITE_COLOR);
     pass.bind_ubo(SELECT_DATA, &info_buf);
     /* IMPORTANT: This binds a dummy buffer `in_select_buf` but it is not supposed to be used. */
     pass.bind_ssbo(SELECT_ID_IN, &dummy_select_buf);
     pass.bind_ssbo(SELECT_ID_OUT, &select_output_buf);
+  }
+
+  /* TODO: Deduplicate. */
+  /** IMPORTANT: Changes the draw state. Need to be called after the pass's own state_set. */
+  void select_bind(PassMain &pass, PassMain::Sub &sub)
+  {
+    if (selection_type == SelectionType::DISABLED) {
+      return;
+    }
+
+    pass.use_custom_ids = true;
+    /* TODO: clipping state. */
+    sub.state_set(DRW_STATE_WRITE_COLOR);
+    sub.bind_ubo(SELECT_DATA, &info_buf);
+    /* IMPORTANT: This binds a dummy buffer `in_select_buf` but it is not supposed to be used. */
+    sub.bind_ssbo(SELECT_ID_IN, &dummy_select_buf);
+    sub.bind_ssbo(SELECT_ID_OUT, &select_output_buf);
   }
 
   void end_sync()
@@ -197,16 +212,45 @@ struct SelectMap {
       return;
     }
 
-    select_output_buf.resize(ceil_to_multiple_u(select_id_map.size(), 4));
+    BLI_assert(select_id_map.size() == in_front_map.size());
+
+    select_output_buf.resize(max_uu(ceil_to_multiple_u(select_id_map.size(), 4), 4));
     select_output_buf.push_update();
-    if (info_buf.mode == SelectType::SELECT_ALL) {
-      /* This mode uses atomicOr and store result as a bitmap. Clear to 0 (no selection). */
-      GPU_storagebuf_clear(select_output_buf, 0);
+  }
+
+  void pre_draw()
+  {
+    if (selection_type == SelectionType::DISABLED) {
+      return;
     }
-    else {
-      /* Other modes use atomicMin. Clear to UINT_MAX. */
-      GPU_storagebuf_clear(select_output_buf, 0xFFFFFFFFu);
+
+    switch (gpu_select_next_get_mode()) {
+      /* Should not be used anymore for viewport selection. */
+      case GPU_SELECT_NEAREST_FIRST_PASS:
+      case GPU_SELECT_NEAREST_SECOND_PASS:
+      case GPU_SELECT_INVALID:
+        BLI_assert_unreachable();
+        break;
+      case GPU_SELECT_ALL:
+        info_buf.mode = SelectType::SELECT_ALL;
+        info_buf.cursor = int2(0);
+        /* This mode uses atomicOr and store result as a bitmap. Clear to 0 (no selection). */
+        GPU_storagebuf_clear(select_output_buf, 0);
+        break;
+      case GPU_SELECT_PICK_ALL:
+        info_buf.mode = SelectType::SELECT_PICK_ALL;
+        info_buf.cursor = int2(gpu_select_next_get_pick_area_center());
+        /* Mode uses atomicMin. Clear to UINT_MAX. */
+        GPU_storagebuf_clear(select_output_buf, 0xFFFFFFFFu);
+        break;
+      case GPU_SELECT_PICK_NEAREST:
+        info_buf.mode = SelectType::SELECT_PICK_NEAREST;
+        info_buf.cursor = int2(gpu_select_next_get_pick_area_center());
+        /* Mode uses atomicMin. Clear to UINT_MAX. */
+        GPU_storagebuf_clear(select_output_buf, 0xFFFFFFFFu);
+        break;
     }
+    info_buf.push_update();
   }
 
   void read_result()
@@ -234,6 +278,23 @@ struct SelectMap {
         break;
 
       case SelectType::SELECT_PICK_ALL:
+        for (auto i : IndexRange(select_id_map.size())) {
+          if (select_output_buf[i] != 0xFFFFFFFFu) {
+            GPUSelectResult hit_result{};
+            hit_result.id = select_id_map[i];
+            hit_result.depth = select_output_buf[i];
+            if (in_front_map[i]) {
+              /* Divide "In Front" objects depth so they go first. */
+              /* TODO(Miguel Pozo): This reproduces the previous engine behavior, but it breaks
+               * with code using depth for position reconstruction. Should we improve this? */
+              float offset_depth = *reinterpret_cast<float *>(&hit_result.depth) / 100.0f;
+              hit_result.depth = *reinterpret_cast<uint32_t *>(&offset_depth);
+            }
+            hit_results.append(hit_result);
+          }
+        }
+        break;
+
       case SelectType::SELECT_PICK_NEAREST:
         for (auto i : IndexRange(select_id_map.size())) {
           if (select_output_buf[i] != 0xFFFFFFFFu) {
@@ -242,11 +303,27 @@ struct SelectMap {
             GPUSelectResult hit_result{};
             hit_result.id = select_id_map[i];
             hit_result.depth = select_output_buf[i];
-            hit_results.append(hit_result);
+            if (in_front_map[i]) {
+              /* Divide "In Front" objects depth so they go first. */
+              const uint32_t depth_mask = 0x00FFFFFFu;
+              uint32_t offset_depth = (hit_result.depth & depth_mask) / 100;
+              hit_result.depth &= ~depth_mask;
+              hit_result.depth |= offset_depth;
+            }
+            if (hit_results.is_empty() || hit_result.depth < hit_results[0].depth) {
+              hit_results = {hit_result};
+            }
           }
         }
         break;
     }
+#ifdef DEBUG_PRINT
+    for (auto &hit : hit_results) {
+      /* Print hit results right out of the GPU selection buffer.
+       * If something is wrong at this stage, it indicates an error in the selection shaders. */
+      printf(" hit: %u: depth %u\n", hit.id, hit.depth);
+    }
+#endif
 
     gpu_select_next_set_result(hit_results.data(), hit_results.size());
   }

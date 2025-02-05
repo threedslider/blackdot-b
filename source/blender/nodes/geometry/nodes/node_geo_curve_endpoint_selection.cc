@@ -6,8 +6,6 @@
 
 #include "BKE_curves.hh"
 
-#include "UI_resources.hh"
-
 #include "node_geometry_util.hh"
 
 namespace blender::nodes::node_geo_curve_endpoint_selection_cc {
@@ -29,32 +27,36 @@ static void node_declare(NodeDeclarationBuilder &b)
       .description("The selection from the start and end of the splines based on the input sizes");
 }
 
-class EndpointFieldInput final : public bke::CurvesFieldInput {
+class EndpointFieldInput final : public bke::GeometryFieldInput {
   Field<int> start_size_;
   Field<int> end_size_;
 
  public:
   EndpointFieldInput(Field<int> start_size, Field<int> end_size)
-      : bke::CurvesFieldInput(CPPType::get<bool>(), "Endpoint Selection node"),
+      : bke::GeometryFieldInput(CPPType::get<bool>(), "Endpoint Selection node"),
         start_size_(start_size),
         end_size_(end_size)
   {
     category_ = Category::Generated;
   }
 
-  GVArray get_varray_for_context(const bke::CurvesGeometry &curves,
-                                 const AttrDomain domain,
+  GVArray get_varray_for_context(const bke::GeometryFieldContext &context,
                                  const IndexMask & /*mask*/) const final
   {
-    if (domain != AttrDomain::Point) {
+    if (context.domain() != AttrDomain::Point) {
       return {};
     }
-    if (curves.points_num() == 0) {
+    const bke::CurvesGeometry *curves_ptr = context.curves_or_strokes();
+    if (!curves_ptr) {
+      return {};
+    }
+    const bke::CurvesGeometry &curves = *curves_ptr;
+    if (curves.is_empty()) {
       return {};
     }
 
-    const bke::CurvesFieldContext size_context{curves, AttrDomain::Curve};
-    fn::FieldEvaluator evaluator{size_context, curves.curves_num()};
+    const bke::GeometryFieldContext sub_context{context, AttrDomain::Curve};
+    fn::FieldEvaluator evaluator{sub_context, curves.curves_num()};
     evaluator.add(start_size_);
     evaluator.add(end_size_);
     evaluator.evaluate();
@@ -101,7 +103,7 @@ class EndpointFieldInput final : public bke::CurvesFieldInput {
     return false;
   }
 
-  std::optional<AttrDomain> preferred_domain(const bke::CurvesGeometry & /*curves*/) const final
+  std::optional<AttrDomain> preferred_domain(const GeometryComponent & /*component*/) const final
   {
     return AttrDomain::Point;
   }
@@ -118,13 +120,16 @@ static void node_geo_exec(GeoNodeExecParams params)
 static void node_register()
 {
   static blender::bke::bNodeType ntype;
-
   geo_node_type_base(
-      &ntype, GEO_NODE_CURVE_ENDPOINT_SELECTION, "Endpoint Selection", NODE_CLASS_INPUT);
+      &ntype, "GeometryNodeCurveEndpointSelection", GEO_NODE_CURVE_ENDPOINT_SELECTION);
+  ntype.ui_name = "Endpoint Selection";
+  ntype.ui_description = "Provide a selection for an arbitrary number of endpoints in each spline";
+  ntype.enum_name_legacy = "CURVE_ENDPOINT_SELECTION";
+  ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

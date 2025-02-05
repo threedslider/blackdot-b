@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-import bpy
 from bpy.types import Menu
 from bl_ui import node_add_menu
 from bpy.app.translations import (
@@ -114,12 +113,15 @@ class NODE_MT_geometry_node_GEO_CURVE_OPERATIONS(Menu):
 
     def draw(self, _context):
         layout = self.layout
+        node_add_menu.add_node_type(layout, "GeometryNodeCurvesToGreasePencil")
         node_add_menu.add_node_type(layout, "GeometryNodeCurveToMesh")
         node_add_menu.add_node_type(layout, "GeometryNodeCurveToPoints")
         node_add_menu.add_node_type(layout, "GeometryNodeDeformCurvesOnSurface")
         node_add_menu.add_node_type(layout, "GeometryNodeFillCurve")
         node_add_menu.add_node_type(layout, "GeometryNodeFilletCurve")
+        node_add_menu.add_node_type(layout, "GeometryNodeGreasePencilToCurves")
         node_add_menu.add_node_type(layout, "GeometryNodeInterpolateCurves")
+        node_add_menu.add_node_type(layout, "GeometryNodeMergeLayers")
         node_add_menu.add_node_type(layout, "GeometryNodeResampleCurve")
         node_add_menu.add_node_type(layout, "GeometryNodeReverseCurve")
         node_add_menu.add_node_type(layout, "GeometryNodeSubdivideCurve")
@@ -264,10 +266,12 @@ class NODE_MT_geometry_node_GEO_INPUT_CONSTANT(Menu):
     def draw(self, _context):
         layout = self.layout
         node_add_menu.add_node_type(layout, "FunctionNodeInputBool")
+        node_add_menu.add_node_type(layout, "GeometryNodeInputCollection")
         node_add_menu.add_node_type(layout, "FunctionNodeInputColor")
         node_add_menu.add_node_type(layout, "GeometryNodeInputImage")
         node_add_menu.add_node_type(layout, "FunctionNodeInputInt")
         node_add_menu.add_node_type(layout, "GeometryNodeInputMaterial")
+        node_add_menu.add_node_type(layout, "GeometryNodeInputObject")
         node_add_menu.add_node_type(layout, "FunctionNodeInputRotation")
         node_add_menu.add_node_type(layout, "FunctionNodeInputString")
         node_add_menu.add_node_type(layout, "ShaderNodeValue")
@@ -472,6 +476,7 @@ class NODE_MT_category_import(Menu):
     def draw(self, _context):
         layout = self.layout
         node_add_menu.add_node_type(layout, "GeometryNodeImportOBJ")
+        node_add_menu.add_node_type(layout, "GeometryNodeImportPLY")
         node_add_menu.add_node_type(layout, "GeometryNodeImportSTL")
         node_add_menu.draw_assets_for_catalog(layout, "Input/Import")
 
@@ -501,6 +506,7 @@ class NODE_MT_category_GEO_OUTPUT(Menu):
         layout = self.layout
         node_add_menu.add_node_type(layout, "NodeGroupOutput")
         node_add_menu.add_node_type(layout, "GeometryNodeViewer")
+        node_add_menu.add_node_type(layout, "GeometryNodeWarning")
         node_add_menu.draw_assets_for_catalog(layout, self.bl_label)
 
 
@@ -532,7 +538,7 @@ class NODE_MT_category_simulation(Menu):
 
     def draw(self, _context):
         layout = self.layout
-        node_add_menu.add_simulation_zone(layout, label="Simulation Zone")
+        node_add_menu.add_simulation_zone(layout, label="Simulation")
         node_add_menu.draw_assets_for_catalog(layout, self.bl_label)
 
 
@@ -547,6 +553,7 @@ class NODE_MT_category_GEO_TEXT(Menu):
         node_add_menu.add_node_type(layout, "FunctionNodeSliceString")
         layout.separator()
         node_add_menu.add_node_type(layout, "FunctionNodeStringLength")
+        node_add_menu.add_node_type(layout, "FunctionNodeFindInString")
         node_add_menu.add_node_type(layout, "GeometryNodeStringToCurves")
         node_add_menu.add_node_type(layout, "FunctionNodeValueToString")
         layout.separator()
@@ -562,6 +569,7 @@ class NODE_MT_category_GEO_TEXTURE(Menu):
         layout = self.layout
         node_add_menu.add_node_type(layout, "ShaderNodeTexBrick")
         node_add_menu.add_node_type(layout, "ShaderNodeTexChecker")
+        node_add_menu.add_node_type(layout, "ShaderNodeTexGabor")
         node_add_menu.add_node_type(layout, "ShaderNodeTexGradient")
         node_add_menu.add_node_type(layout, "GeometryNodeImageTexture")
         node_add_menu.add_node_type(layout, "ShaderNodeTexMagic")
@@ -588,10 +596,11 @@ class NODE_MT_category_GEO_UTILITIES(Menu):
         layout.menu("NODE_MT_category_GEO_UTILITIES_ROTATION")
         layout.menu("NODE_MT_category_GEO_UTILITIES_DEPRECATED")
         layout.separator()
+        node_add_menu.add_foreach_geometry_element_zone(layout, label="For Each Element")
         node_add_menu.add_node_type(layout, "GeometryNodeIndexSwitch")
         node_add_menu.add_node_type(layout, "GeometryNodeMenuSwitch")
         node_add_menu.add_node_type(layout, "FunctionNodeRandomValue")
-        node_add_menu.add_repeat_zone(layout, label="Repeat Zone")
+        node_add_menu.add_repeat_zone(layout, label="Repeat")
         node_add_menu.add_node_type(layout, "GeometryNodeSwitch")
         node_add_menu.draw_assets_for_catalog(layout, self.bl_label)
 
@@ -647,6 +656,7 @@ class NODE_MT_category_utilities_matrix(Menu):
         layout = self.layout
         node_add_menu.add_node_type(layout, "FunctionNodeCombineMatrix")
         node_add_menu.add_node_type(layout, "FunctionNodeCombineTransform")
+        node_add_menu.add_node_type(layout, "FunctionNodeMatrixDeterminant", label="Determinant")
         node_add_menu.add_node_type(layout, "FunctionNodeInvertMatrix")
         node_add_menu.add_node_type(layout, "FunctionNodeMatrixMultiply")
         node_add_menu.add_node_type(layout, "FunctionNodeProjectPoint")
@@ -665,10 +675,12 @@ class NODE_MT_category_GEO_UTILITIES_MATH(Menu):
     def draw(self, _context):
         layout = self.layout
         node_add_menu.add_node_type(layout, "FunctionNodeBooleanMath")
+        node_add_menu.add_node_type(layout, "FunctionNodeIntegerMath")
         node_add_menu.add_node_type(layout, "ShaderNodeClamp")
         node_add_menu.add_node_type(layout, "FunctionNodeCompare")
         node_add_menu.add_node_type(layout, "ShaderNodeFloatCurve")
         node_add_menu.add_node_type(layout, "FunctionNodeFloatToInt")
+        node_add_menu.add_node_type(layout, "FunctionNodeHashValue")
         node_add_menu.add_node_type(layout, "ShaderNodeMapRange")
         node_add_menu.add_node_type(layout, "ShaderNodeMath")
         node_add_menu.add_node_type(layout, "ShaderNodeMix")

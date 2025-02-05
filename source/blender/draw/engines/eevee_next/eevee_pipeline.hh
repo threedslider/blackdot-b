@@ -15,11 +15,12 @@
 #include "BLI_math_bits.h"
 
 #include "DRW_render.hh"
-#include "draw_shader_shared.hh"
 
 #include "eevee_lut.hh"
 #include "eevee_raytrace.hh"
 #include "eevee_subsurface.hh"
+
+struct Camera;
 
 namespace blender::eevee {
 
@@ -36,13 +37,15 @@ class BackgroundPipeline {
  private:
   Instance &inst_;
 
+  PassSimple clear_ps_ = {"World.Background.Clear"};
   PassSimple world_ps_ = {"World.Background"};
 
  public:
   BackgroundPipeline(Instance &inst) : inst_(inst){};
 
   void sync(GPUMaterial *gpumat, float background_opacity, float background_blur);
-  void render(View &view);
+  void clear(View &view);
+  void render(View &view, Framebuffer &combined_fb);
 };
 
 /** \} */
@@ -301,7 +304,7 @@ class DeferredLayer : DeferredLayerBase {
   }
 
   void begin_sync();
-  void end_sync(bool is_first_pass, bool is_last_pass);
+  void end_sync(bool is_first_pass, bool is_last_pass, bool next_layer_has_transmission);
 
   PassMain::Sub *prepass_add(::Material *blender_mat, GPUMaterial *gpumat, bool has_motion);
   PassMain::Sub *material_add(::Material *blender_mat, GPUMaterial *gpumat);
@@ -309,6 +312,11 @@ class DeferredLayer : DeferredLayerBase {
   bool is_empty() const
   {
     return closure_count_ == 0;
+  }
+
+  bool has_transmission() const
+  {
+    return closure_bits_ & CLOSURE_TRANSMISSION;
   }
 
   /* Returns the radiance buffer to feed the next layer. */
@@ -343,8 +351,8 @@ class DeferredPipeline {
   void begin_sync();
   void end_sync();
 
-  PassMain::Sub *prepass_add(::Material *material, GPUMaterial *gpumat, bool has_motion);
-  PassMain::Sub *material_add(::Material *material, GPUMaterial *gpumat);
+  PassMain::Sub *prepass_add(::Material *blender_mat, GPUMaterial *gpumat, bool has_motion);
+  PassMain::Sub *material_add(::Material *blender_mat, GPUMaterial *gpumat);
 
   void render(View &main_view,
               View &render_view,
@@ -431,9 +439,9 @@ class VolumeLayer {
                               GPUMaterial *gpumat);
 
   /* Return true if the given bounds overlaps any of the contained object in this layer. */
-  bool bounds_overlaps(const VolumeObjectBounds &object_aabb) const;
+  bool bounds_overlaps(const VolumeObjectBounds &object_bounds) const;
 
-  void add_object_bound(const VolumeObjectBounds &object_aabb);
+  void add_object_bound(const VolumeObjectBounds &object_bounds);
 
   void sync();
   void render(View &view, Texture &occupancy_tx);
@@ -467,7 +475,7 @@ class VolumePipeline {
 
   bool has_scatter() const
   {
-    for (auto &layer : layers_) {
+    for (const auto &layer : layers_) {
       if (layer->has_scatter) {
         return true;
       }
@@ -476,7 +484,7 @@ class VolumePipeline {
   }
   bool has_absorption() const
   {
-    for (auto &layer : layers_) {
+    for (const auto &layer : layers_) {
       if (layer->has_absorption) {
         return true;
       }
@@ -508,8 +516,8 @@ class DeferredProbePipeline {
   void begin_sync();
   void end_sync();
 
-  PassMain::Sub *prepass_add(::Material *material, GPUMaterial *gpumat);
-  PassMain::Sub *material_add(::Material *material, GPUMaterial *gpumat);
+  PassMain::Sub *prepass_add(::Material *blender_mat, GPUMaterial *gpumat);
+  PassMain::Sub *material_add(::Material *blender_mat, GPUMaterial *gpumat);
 
   void render(View &view,
               Framebuffer &prepass_fb,
@@ -548,8 +556,8 @@ class PlanarProbePipeline : DeferredLayerBase {
   void begin_sync();
   void end_sync();
 
-  PassMain::Sub *prepass_add(::Material *material, GPUMaterial *gpumat);
-  PassMain::Sub *material_add(::Material *material, GPUMaterial *gpumat);
+  PassMain::Sub *prepass_add(::Material *blender_mat, GPUMaterial *gpumat);
+  PassMain::Sub *material_add(::Material *blender_mat, GPUMaterial *gpumat);
 
   void render(View &view,
               GPUTexture *depth_layer_tx,
@@ -655,7 +663,7 @@ class UtilityTexture : public Texture {
     GPU_texture_update_mipmap(*this, 0, GPU_DATA_FLOAT, data.data());
   }
 
-  ~UtilityTexture(){};
+  ~UtilityTexture() = default;
 };
 
 /** \} */
@@ -682,7 +690,6 @@ class PipelineModule {
   UtilityTexture utility_tx;
   PipelineInfoData &data;
 
- public:
   PipelineModule(Instance &inst, PipelineInfoData &data)
       : background(inst),
         world(inst),

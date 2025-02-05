@@ -13,7 +13,6 @@
 #include "DNA_texture_types.h"
 
 #include "BLI_listbase.h"
-#include "BLI_string.h"
 #include "BLI_threads.h"
 #include "BLI_utildefines.h"
 
@@ -106,9 +105,9 @@ static void localize(bNodeTree *localtree, bNodeTree * /*ntree*/)
   for (node = static_cast<bNode *>(localtree->nodes.first); node; node = node_next) {
     node_next = node->next;
 
-    if (node->flag & NODE_MUTED || node->type == NODE_REROUTE) {
-      blender::bke::nodeInternalRelink(localtree, node);
-      blender::bke::ntreeFreeLocalNode(localtree, node);
+    if (node->is_muted() || node->is_reroute()) {
+      blender::bke::node_internal_relink(localtree, node);
+      blender::bke::node_tree_free_local_node(localtree, node);
     }
   }
 }
@@ -124,7 +123,7 @@ static void update(bNodeTree *ntree)
 static bool texture_node_tree_socket_type_valid(blender::bke::bNodeTreeType * /*ntreetype*/,
                                                 blender::bke::bNodeSocketType *socket_type)
 {
-  return blender::bke::nodeIsStaticSocketType(socket_type) &&
+  return blender::bke::node_is_static_socket_type(socket_type) &&
          ELEM(socket_type->type, SOCK_FLOAT, SOCK_VECTOR, SOCK_RGBA);
 }
 
@@ -132,15 +131,15 @@ blender::bke::bNodeTreeType *ntreeType_Texture;
 
 void register_node_tree_type_tex()
 {
-  blender::bke::bNodeTreeType *tt = ntreeType_Texture = MEM_cnew<blender::bke::bNodeTreeType>(
-      "texture node tree type");
+  blender::bke::bNodeTreeType *tt = ntreeType_Texture = MEM_new<blender::bke::bNodeTreeType>(
+      __func__);
 
   tt->type = NTREE_TEXTURE;
-  STRNCPY(tt->idname, "TextureNodeTree");
-  STRNCPY(tt->group_idname, "TextureNodeGroup");
-  STRNCPY(tt->ui_name, N_("Texture Node Editor"));
+  tt->idname = "TextureNodeTree";
+  tt->group_idname = "TextureNodeGroup";
+  tt->ui_name = N_("Texture Node Editor");
   tt->ui_icon = ICON_NODE_TEXTURE; /* Defined in `drawnode.cc`. */
-  STRNCPY(tt->ui_description, N_("Texture nodes"));
+  tt->ui_description = N_("Texture nodes");
 
   tt->foreach_nodeclass = foreach_nodeclass;
   tt->update = update;
@@ -150,7 +149,7 @@ void register_node_tree_type_tex()
 
   tt->rna_ext.srna = &RNA_TextureNodeTree;
 
-  blender::bke::ntreeTypeAdd(tt);
+  blender::bke::node_tree_type_add(tt);
 }
 
 /**** Material/Texture trees ****/
@@ -200,7 +199,7 @@ bool ntreeExecThreadNodes(bNodeTreeExec *exec, bNodeThreadStack *nts, void *call
        * If the mute func is not set, assume the node should never be muted,
        * and hence execute it!
        */
-      if (node->typeinfo->exec_fn && !(node->flag & NODE_MUTED)) {
+      if (node->typeinfo->exec_fn && !node->is_muted()) {
         node->typeinfo->exec_fn(callerdata, thread, node, &nodeexec->data, nsin, nsout);
       }
     }

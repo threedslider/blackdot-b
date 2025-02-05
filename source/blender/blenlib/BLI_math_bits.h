@@ -8,6 +8,7 @@
  * \ingroup bli
  */
 
+#include "BLI_build_config.h"
 #include "BLI_math_inline.h"
 #include "BLI_utildefines.h"
 
@@ -42,10 +43,15 @@ MINLINE unsigned int bitscan_reverse_clear_uint(unsigned int *a);
 MINLINE unsigned int highest_order_bit_uint(unsigned int n);
 MINLINE unsigned short highest_order_bit_s(unsigned short n);
 
-#ifdef __GNUC__
+#if COMPILER_GCC || COMPILER_CLANG
 #  define count_bits_i(i) __builtin_popcount(i)
+#  define count_bits_uint64(i) __builtin_popcountll(i)
+#elif COMPILER_MSVC
+#  define count_bits_i(i) __popcnt(i)
+#  define count_bits_uint64(i) __popcnt64(i)
 #else
 MINLINE int count_bits_i(unsigned int n);
+MINLINE int count_bits_uint64(uint64_t a);
 #endif
 
 MINLINE int float_as_int(float f);
@@ -54,10 +60,8 @@ MINLINE float int_as_float(int i);
 MINLINE float uint_as_float(unsigned int i);
 MINLINE float xor_fl(float x, int y);
 
-MINLINE float half_to_float(ushort h);
-
 #if BLI_MATH_DO_INLINE
-#  include "intern/math_bits_inline.c"
+#  include "intern/math_bits_inline.c"  // IWYU pragma: export
 #endif
 
 #ifdef __cplusplus

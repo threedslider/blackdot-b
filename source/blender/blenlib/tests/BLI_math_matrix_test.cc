@@ -4,6 +4,7 @@
 
 #include "testing/testing.h"
 
+#include "BLI_math_base.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_matrix.hh"
 #include "BLI_math_rotation.h"
@@ -567,6 +568,18 @@ TEST(math_matrix, MatrixTransform)
   float2 expect2 = {0.76923, 1.61538};
   float2 result2 = project_point(pers3, float2(p));
   EXPECT_V2_NEAR(result2, expect2, 1e-5);
+}
+
+TEST(math_matrix, MatrixTransform2D)
+{
+  const float2 sample_point = float2(2.0f, 3.0f);
+  const float3x3 transformation = math::from_loc_rot_scale<float3x3>(
+      float2(2.0f, 0.5f), AngleRadian(M_PI_2), float2(1.5f, 1.0f));
+
+  EXPECT_V2_NEAR(transform_point(transformation, sample_point), float2(-1.0f, 3.5f), 1e-3f);
+
+  const float2x2 transformation_2d = float2x2(transformation);
+  EXPECT_V2_NEAR(transform_point(transformation_2d, sample_point), float2(-3.0f, 3.0f), 1e-3f);
 }
 
 TEST(math_matrix, MatrixProjection)

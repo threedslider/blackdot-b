@@ -15,9 +15,8 @@
 #include "BLI_fileops.h"
 #include "BLI_fileops_types.h"
 #include "BLI_listbase.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
-#include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
 #include "BLI_tempfile.h"
 #include "BLI_utildefines.h"
@@ -30,11 +29,10 @@
 
 #include "GHOST_Path-api.hh"
 
-#include "MEM_guardedalloc.h"
-
 #include "CLG_log.h"
 
 #ifdef WIN32
+#  include "BLI_string_utf8.h"
 #  include "utf_winfunc.hh"
 #  include "utfconv.hh"
 #  include <io.h>
@@ -51,7 +49,7 @@
 #  endif
 /* #mkdtemp on OSX (and probably all *BSD?), not worth making specific check for this OS. */
 #  include <unistd.h>
-#endif /* WIN32 */
+#endif /* !WIN32 */
 
 static const char _str_null[] = "(null)";
 #define STR_OR_FALLBACK(a) ((a) ? (a) : _str_null)
@@ -134,7 +132,7 @@ static char *blender_version_decimal(const int version)
 const char *BKE_appdir_folder_default()
 {
 #ifndef WIN32
-  return BLI_getenv("HOME");
+  return BLI_dir_home();
 #else  /* Windows */
   static char documentfolder[FILE_MAXDIR];
 
@@ -166,17 +164,6 @@ const char *BKE_appdir_folder_default_or_root()
   return path;
 }
 
-const char *BKE_appdir_folder_home()
-{
-#ifdef WIN32
-  return BLI_getenv("userprofile");
-#elif defined(__APPLE__)
-  return BLI_expand_tilde("~/");
-#else
-  return BLI_getenv("HOME");
-#endif
-}
-
 bool BKE_appdir_folder_documents(char *dir)
 {
   dir[0] = '\0';
@@ -191,7 +178,7 @@ bool BKE_appdir_folder_documents(char *dir)
 
   /* Ghost couldn't give us a documents path, let's try if we can find it ourselves. */
 
-  const char *home_path = BKE_appdir_folder_home();
+  const char *home_path = BLI_dir_home();
   if (!home_path || !BLI_is_dir(home_path)) {
     return false;
   }
@@ -242,7 +229,9 @@ bool BKE_appdir_font_folder_default(char *dir, size_t dir_maxncpy)
     BLI_strncpy_wchar_as_utf8(test_dir, wpath, sizeof(test_dir));
   }
 #elif defined(__APPLE__)
-  STRNCPY(test_dir, BLI_expand_tilde("~/Library/Fonts"));
+  if (const char *home_dir = BLI_dir_home()) {
+    BLI_path_join(test_dir, sizeof(test_dir), home_dir, "Library/Fonts");
+  }
 #else
   STRNCPY(test_dir, "/usr/share/fonts");
 #endif
@@ -445,6 +434,43 @@ static bool get_path_environment(char *targetpath,
       targetpath, targetpath_maxncpy, subfolder_name, envvar, check_is_dir);
 }
 
+static blender::Vector<std::string> get_path_environment_multiple(const char *subfolder_name,
+                                                                  const char *envvar,
+                                                                  const bool check_is_dir)
+{
+  blender::Vector<std::string> paths;
+  const char *env_path = envvar ? BLI_getenv(envvar) : nullptr;
+  if (!env_path) {
+    return paths;
+  }
+
+#ifdef _WIN32
+  const char separator = ';';
+#else
+  const char separator = ':';
+#endif
+
+  const char *char_begin = env_path;
+  const char *char_end = BLI_strchr_or_end(char_begin, separator);
+  while (char_begin[0]) {
+    const size_t base_path_len = char_end - char_begin;
+    if (base_path_len > 0 && base_path_len < PATH_MAX) {
+      char base_path[PATH_MAX];
+      memcpy(base_path, char_begin, base_path_len);
+      base_path[base_path_len] = '\0';
+
+      char path[PATH_MAX];
+      if (test_path(path, sizeof(path), check_is_dir, base_path, subfolder_name, nullptr)) {
+        paths.append(path);
+      }
+    }
+    char_begin = char_end[0] ? char_end + 1 : char_end;
+    char_end = BLI_strchr_or_end(char_begin, separator);
+  }
+
+  return paths;
+}
+
 /**
  * Returns the path of a folder within the user-files area.
  *
@@ -525,16 +551,6 @@ static bool get_path_system_ex(char *targetpath,
                                const bool check_is_dir)
 {
   char system_path[FILE_MAX];
-  char relfolder[FILE_MAX];
-
-  if (folder_name) { /* `subfolder_name` may be nullptr. */
-    const char *path_array[] = {folder_name, subfolder_name};
-    const int path_array_num = subfolder_name ? 2 : 1;
-    BLI_path_join_array(relfolder, sizeof(relfolder), path_array, path_array_num);
-  }
-  else {
-    relfolder[0] = '\0';
-  }
 
   if (test_env_path(system_path, "BLENDER_SYSTEM_RESOURCES", check_is_dir)) {
     /* Pass. */
@@ -1035,13 +1051,8 @@ static blender::Vector<std::string> appdir_app_template_directories()
   }
 
   /* Environment variable. */
-  if (get_path_environment(temp_dir,
-                           sizeof(temp_dir),
-                           "startup" SEP_STR "bl_app_templates_system",
-                           "BLENDER_SYSTEM_SCRIPTS"))
-  {
-    directories.append(temp_dir);
-  }
+  directories.extend(get_path_environment_multiple(
+      "startup" SEP_STR "bl_app_templates_system", "BLENDER_SYSTEM_SCRIPTS", true));
 
   /* Local or system directory. */
   if (BKE_appdir_folder_id_ex(BLENDER_SYSTEM_SCRIPTS,

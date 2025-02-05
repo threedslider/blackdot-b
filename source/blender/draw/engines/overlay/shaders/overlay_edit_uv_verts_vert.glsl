@@ -2,7 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma BLENDER_REQUIRE(common_view_lib.glsl)
+#include "draw_model_lib.glsl"
+#include "draw_view_lib.glsl"
 
 void main()
 {
@@ -15,12 +16,12 @@ void main()
   fillColor = (is_selected) ? colorVertexSelect : deselect_col;
   outlineColor = (is_pinned) ? pinned_col : vec4(fillColor.rgb, 0.0);
 
-  vec3 world_pos = point_object_to_world(vec3(au, 0.0));
+  vec3 world_pos = vec3(au, 0.0);
   /* Move selected vertices to the top
    * Vertices are between 0.0 and 0.2, Edges between 0.2 and 0.4
    * actual pixels are at 0.75, 1.0 is used for the background. */
   float depth = is_selected ? (is_pinned ? 0.05 : 0.10) : 0.15;
-  gl_Position = vec4(point_world_to_ndc(world_pos).xy, depth, 1.0);
+  gl_Position = vec4(drw_point_world_to_homogenous(world_pos).xy, depth, 1.0);
   gl_PointSize = pointSize;
 
   /* calculate concentric radii in pixels */

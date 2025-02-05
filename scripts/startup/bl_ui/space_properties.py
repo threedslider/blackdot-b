@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 from bpy.types import Header, Panel
+from rna_prop_ui import PropertyPanel
+from . import anim
 
 
 class PROPERTIES_HT_header(Header):
@@ -70,6 +72,58 @@ class PROPERTIES_PT_options(Panel):
         col = layout.column()
         col.label(text="Sync with Outliner")
         col.row().prop(space, "outliner_sync", expand=True)
+
+
+class PropertiesAnimationMixin:
+    """Mix-in class for Animation panels.
+
+    This class can be used to show a generic 'Animation' panel for IDs shown in
+    the properties editor. Specific ID types need specific subclasses.
+
+    For an example, see DATA_PT_camera_animation in properties_data_camera.py
+    """
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "data"
+    bl_label = "Animation"
+    bl_options = {'DEFAULT_CLOSED'}
+    bl_order = PropertyPanel.bl_order - 1  # Order just above the Custom Properties.
+
+    _animated_id_context_property = ""
+    """context.{_animatable_id_context_property} is used to find the animated ID."""
+
+    @classmethod
+    def _animated_id(cls, context):
+        assert cls._animated_id_context_property, "set _animated_id_context_property on {!r}".format(cls)
+
+        # If the pinned ID is of a different type, there could still be a an ID
+        # for which to show this panel. For example, a camera object can be
+        # pinned, and then this panel can be shown for its camera data.
+        return getattr(context, cls._animated_id_context_property, None)
+
+    @classmethod
+    def poll(cls, context):
+        animated_id = cls._animated_id(context)
+        return animated_id is not None
+
+    def draw(self, context):
+        layout = self.layout
+
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        self.draw_action_and_slot_selector(context, col, self._animated_id(context))
+
+    @classmethod
+    def draw_action_and_slot_selector(cls, context, layout, animated_id):
+        if not animated_id:
+            class_list = [c.__name__ for c in cls.mro()]
+            print("PropertiesAnimationMixin: no animatable data-block, this is a bug "
+                  "in one of these classes: {!r}".format(class_list))
+            layout.label(text="No animatable data-block, please report as bug", icon='ERROR')
+            return
+
+        anim.draw_action_and_slot_selector_for_id(layout, animated_id)
 
 
 classes = (

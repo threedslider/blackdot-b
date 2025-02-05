@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "BLI_utildefines.h"
+
 #include "gpu_context_private.hh"
 
 #include "GHOST_Types.h"
@@ -16,6 +18,7 @@
 #include "vk_common.hh"
 #include "vk_debug.hh"
 #include "vk_descriptor_pools.hh"
+#include "vk_resource_pool.hh"
 
 namespace blender::gpu {
 class VKFrameBuffer;
@@ -23,26 +26,42 @@ class VKVertexAttributeObject;
 class VKBatch;
 class VKStateManager;
 class VKShader;
+class VKThreadData;
+
+enum RenderGraphFlushFlags {
+  NONE = 0,
+  RENEW_RENDER_GRAPH = 1 << 0,
+  SUBMIT = 1 << 1,
+  WAIT_FOR_COMPLETION = 1 << 2,
+};
+ENUM_OPERATORS(RenderGraphFlushFlags, RenderGraphFlushFlags::WAIT_FOR_COMPLETION);
 
 class VKContext : public Context, NonCopyable {
  private:
-  VKDescriptorPools descriptor_pools_;
-  VKDescriptorSetTracker descriptor_set_;
-
   VkExtent2D vk_extent_ = {};
-  VkFormat swap_chain_format_ = {};
+  VkSurfaceFormatKHR swap_chain_format_ = {};
   GPUTexture *surface_texture_ = nullptr;
   void *ghost_context_;
 
   /* Reusable data. Stored inside context to limit reallocations. */
   render_graph::VKResourceAccessInfo access_info_ = {};
 
-  bool is_init_ = false;
+  std::optional<std::reference_wrapper<VKThreadData>> thread_data_;
+  std::optional<std::reference_wrapper<render_graph::VKRenderGraph>> render_graph_;
 
  public:
-  render_graph::VKRenderGraph &render_graph;
+  VKDiscardPool discard_pool;
 
-  VKContext(void *ghost_window, void *ghost_context, render_graph::VKRenderGraph &render_graph);
+  const render_graph::VKRenderGraph &render_graph() const
+  {
+    return render_graph_.value().get();
+  }
+  render_graph::VKRenderGraph &render_graph()
+  {
+    return render_graph_.value().get();
+  }
+
+  VKContext(void *ghost_window, void *ghost_context);
   virtual ~VKContext();
 
   void activate() override;
@@ -51,7 +70,8 @@ class VKContext : public Context, NonCopyable {
   void end_frame() override;
 
   void flush() override;
-  void flush_render_graph();
+
+  TimelineValue flush_render_graph(RenderGraphFlushFlags flags);
   void finish() override;
 
   void memory_statistics_get(int *r_total_mem_kb, int *r_free_mem_kb) override;
@@ -81,7 +101,7 @@ class VKContext : public Context, NonCopyable {
    */
   void rendering_end();
 
-  render_graph::VKResourceAccessInfo &update_and_get_access_info();
+  render_graph::VKResourceAccessInfo &reset_and_get_access_info();
 
   /**
    * Update the give shader data with the current state of the context.
@@ -91,23 +111,15 @@ class VKContext : public Context, NonCopyable {
                             VKVertexAttributeObject &vao,
                             render_graph::VKPipelineData &r_pipeline_data);
 
-  void sync_backbuffer();
+  void sync_backbuffer(bool cycle_resource_pool);
 
   static VKContext *get()
   {
     return static_cast<VKContext *>(Context::get());
   }
 
-  VKDescriptorPools &descriptor_pools_get()
-  {
-    return descriptor_pools_;
-  }
-
-  VKDescriptorSetTracker &descriptor_set_get()
-  {
-    return descriptor_set_;
-  }
-
+  VKDescriptorPools &descriptor_pools_get();
+  VKDescriptorSetTracker &descriptor_set_get();
   VKStateManager &state_manager_get() const;
 
   static void swap_buffers_pre_callback(const GHOST_VulkanSwapChainData *data);

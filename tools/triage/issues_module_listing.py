@@ -10,11 +10,18 @@ Example usage:
 
     python ./issues_module_listing.py --severity High
 """
+__all__ = (
+    "main",
+)
 
 import argparse
 import dataclasses
+import sys
+
 from datetime import date
 from gitea_utils import gitea_json_issues_search
+
+IS_ATTY = sys.stdout.isatty()
 
 
 @dataclasses.dataclass
@@ -28,18 +35,21 @@ class ModuleInfo:
 # Label names and IDs are taken from https://projects.blender.org/blender/blender/labels.
 modules = {
     "Module/Animation & Rigging": ModuleInfo(name="Animation & Rigging", labelid="268"),
+    "Module/Asset System": ModuleInfo(name="Asset System", labelid="1708"),
     "Module/Core": ModuleInfo(name="Core", labelid="269"),
-    "Module/EEVEE & Viewport": ModuleInfo(name="EEVEE & Viewport", labelid="272"),
+    "Module/Development Management": ModuleInfo(name="Development Management", labelid="270"),
     "Module/Grease Pencil": ModuleInfo(name="Grease Pencil", labelid="273"),
     "Module/Modeling": ModuleInfo(name="Modeling", labelid="274"),
     "Module/Nodes & Physics": ModuleInfo(name="Nodes & Physics", labelid="275"),
-    "Module/Pipeline, Assets & IO": ModuleInfo(name="Pipeline, Assets & I/O", labelid="276"),
-    "Module/Platforms, Builds, Test & Devices": ModuleInfo(name="Platforms, Builds, Test & Devices", labelid="278"),
+    "Module/Pipeline & IO": ModuleInfo(name="Pipeline & I/O", labelid="276"),
+    "Module/Platforms, Builds & Tests": ModuleInfo(name="Platforms, Builds, Test & Devices", labelid="278"),
     "Module/Python API": ModuleInfo(name="Python API", labelid="279"),
     "Module/Render & Cycles": ModuleInfo(name="Render & Cycles", labelid="280"),
     "Module/Sculpt, Paint & Texture": ModuleInfo(name="Sculpt, Paint & Texture", labelid="281"),
+    "Module/Triaging": ModuleInfo(name="Triaging", labelid="282"),
     "Module/User Interface": ModuleInfo(name="User Interface", labelid="283"),
     "Module/VFX & Video": ModuleInfo(name="VFX & Video", labelid="284"),
+    "Module/Viewport & EEVEE": ModuleInfo(name="Viewport & EEVEE", labelid="272"),
 }
 
 base_url = (
@@ -61,13 +71,18 @@ severity_labelid = {
 
 def compile_list(severity: str) -> None:
 
-    label = f"Priority/{severity}"
+    label = f"Severity/{severity}"
     issues_json = gitea_json_issues_search(
         type="issues",
         state="open",
         labels=label,
         verbose=True,
     )
+
+    # Create a dictionary of format {module_id: module_name}
+    module_label_ids = {}
+    for module_name in modules:
+        module_label_ids[modules[module_name].labelid] = module_name
 
     uncategorized_reports = []
 
@@ -81,31 +96,44 @@ def compile_list(severity: str) -> None:
 
         # Check reports module assignment and fill in data.
         for label_iter in issue["labels"]:
-            label = label_iter["name"]
-            if label not in modules:
+            label_id = str(label_iter["id"])
+            if label_id not in module_label_ids:
                 continue
 
-            modules[label].buglist.append(f"[#{number}]({html_url})")
-            modules[label].buglist_full.append(f"* [{title}]({html_url}) - {created_at}\n")
+            current_module_name = module_label_ids[label_id]
+            if current_module_name != label_iter["name"]:
+                new_label_name = label_iter["name"]
+                print(f"ALERT: The name of label of '{current_module_name}' changed.")
+                print(f"The new name is '{new_label_name}'.")
+                if IS_ATTY:
+                    input("Press enter to continue: \n")
+
+            modules[current_module_name].buglist.append(f"[#{number}]({html_url})")
+            modules[current_module_name].buglist_full.append(f"* [{title}]({html_url}) - {created_at}\n")
             break
-    else:
-        uncategorized_reports.append(f"[#{number}]({html_url})")
+        else:
+            uncategorized_reports.append(f"[#{number}]({html_url})")
 
     # Print statistics
-    print(f"Open {severity} Priority bugs as of {date.today()}:\n")
+    print(f"Open {severity} Severity bugs as of {date.today()}:\n")
 
     # Module overview with numbers
     total = 0
+    modules_with_no_bugs = []
     for module in modules.values():
         buglist_str = (", ".join(module.buglist))
         buglist_len = len(module.buglist)
-        total += buglist_len
         full_url = base_url + severity_labelid[severity] + "%2c" + module.labelid
-        if not module.buglist or severity != "High":
-            print(f"- [{module.name}]({full_url}): *{buglist_len}*")
+        if buglist_len > 0:
+            total += buglist_len
+            if not module.buglist or severity != "High":
+                print(f"- [{module.name}]({full_url}): *{buglist_len}*")
+            else:
+                print(f"- [{module.name}]({full_url}): *{buglist_len}* _{buglist_str}_")
         else:
-            print(f"- [{module.name}]({full_url}): *{buglist_len}* _{buglist_str}_")
+            modules_with_no_bugs.append(f"[{module.name}]({full_url})")
 
+    print(f"- {', '.join(modules_with_no_bugs)}: *0*")
     print()
     print(f"[Total]({total_url}): {total}")
     print()

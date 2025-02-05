@@ -13,12 +13,11 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_listbase.h"
-#include "BLI_math_base.h"
 #include "BLI_math_matrix.hh"
-#include "BLI_math_vector.h"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
-#include "DNA_object_types.h"
+#include "DNA_scene_types.h"
 #include "DNA_volume_types.h"
 
 #include "BKE_global.hh"
@@ -29,8 +28,6 @@
 #include "GPU_batch.hh"
 #include "GPU_capabilities.hh"
 #include "GPU_texture.hh"
-
-#include "DEG_depsgraph_query.hh"
 
 #include "DRW_render.hh"
 
@@ -121,7 +118,7 @@ static void volume_batch_cache_clear(Volume *volume)
 
   LISTBASE_FOREACH (DRWVolumeGrid *, grid, &cache->grids) {
     MEM_SAFE_FREE(grid->name);
-    DRW_TEXTURE_FREE_SAFE(grid->texture);
+    GPU_TEXTURE_FREE_SAFE(grid->texture);
   }
   BLI_freelistN(&cache->grids);
 
@@ -301,8 +298,6 @@ static DRWVolumeGrid *volume_grid_cache_get(const Volume *volume,
     return cache_grid;
   }
 
-  const bool was_loaded = bke::volume_grid::is_loaded(*grid);
-
   DenseFloatVolumeGrid dense_grid;
   if (BKE_volume_grid_dense_floats(volume, grid, &dense_grid)) {
     cache_grid->texture_to_object = float4x4(dense_grid.texture_to_object);
@@ -329,11 +324,6 @@ static DRWVolumeGrid *volume_grid_cache_get(const Volume *volume,
     }
   }
 
-  /* Free grid from memory if it wasn't previously loaded. */
-  if (!was_loaded) {
-    bke::volume_grid::unload_tree_if_possible(*grid);
-  }
-
   return cache_grid;
 }
 
@@ -343,11 +333,6 @@ DRWVolumeGrid *DRW_volume_batch_cache_get_grid(Volume *volume,
   VolumeBatchCache *cache = volume_batch_cache_get(volume);
   DRWVolumeGrid *grid = volume_grid_cache_get(volume, volume_grid, cache);
   return (grid->texture != nullptr) ? grid : nullptr;
-}
-
-int DRW_volume_material_count_get(const Volume *volume)
-{
-  return max_ii(1, volume->totcol);
 }
 
 }  // namespace blender::draw

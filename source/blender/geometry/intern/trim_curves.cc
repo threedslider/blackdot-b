@@ -6,7 +6,6 @@
  * \ingroup bke
  */
 
-#include "BLI_array_utils.hh"
 #include "BLI_length_parameterize.hh"
 
 #include "BKE_attribute.hh"
@@ -159,7 +158,7 @@ static bke::curves::CurvePoint lookup_curve_point(
     return lookup_point_uniform_spacing(
         accumulated_lengths, sample_length, cyclic, resolution, num_curve_points);
   }
-  else if (curve_type == CURVE_TYPE_BEZIER) {
+  if (curve_type == CURVE_TYPE_BEZIER) {
     return lookup_point_bezier(src_curves,
                                evaluated_points_by_curve,
                                curve_index,
@@ -169,7 +168,7 @@ static bke::curves::CurvePoint lookup_curve_point(
                                resolution,
                                num_curve_points);
   }
-  else if (curve_type == CURVE_TYPE_POLY) {
+  if (curve_type == CURVE_TYPE_POLY) {
     return lookup_point_polygonal(accumulated_lengths, sample_length, cyclic, num_curve_points);
   }
   /* Handle evaluated curve. */
@@ -931,7 +930,7 @@ bke::CurvesGeometry trim_curves(const bke::CurvesGeometry &src_curves,
                                 const VArray<float> &starts,
                                 const VArray<float> &ends,
                                 const GeometryNodeCurveSampleMode mode,
-                                const bke::AnonymousAttributePropagationInfo &propagation_info)
+                                const bke::AttributeFilter &attribute_filter)
 {
   const OffsetIndices src_points_by_curve = src_curves.points_by_curve();
   IndexMaskMemory memory;
@@ -977,13 +976,13 @@ bke::CurvesGeometry trim_curves(const bke::CurvesGeometry &src_curves,
       src_attributes,
       dst_attributes,
       ATTR_DOMAIN_MASK_POINT,
-      propagation_info,
-      {"position",
-       "handle_left",
-       "handle_right",
-       "handle_type_left",
-       "handle_type_right",
-       "nurbs_weight"});
+      bke::attribute_filter_with_skip_ref(attribute_filter,
+                                          {"position",
+                                           "handle_left",
+                                           "handle_right",
+                                           "handle_type_left",
+                                           "handle_type_right",
+                                           "nurbs_weight"}));
 
   auto trim_catmull = [&](const IndexMask &selection) {
     trim_catmull_rom_curves(src_curves,
@@ -1058,14 +1057,15 @@ bke::CurvesGeometry trim_curves(const bke::CurvesGeometry &src_curves,
       copy_point_skip.add("nurbs_weight");
     }
 
-    bke::copy_attributes_group_to_group(src_attributes,
-                                        bke::AttrDomain::Point,
-                                        propagation_info,
-                                        copy_point_skip,
-                                        src_points_by_curve,
-                                        dst_points_by_curve,
-                                        unselected,
-                                        dst_attributes);
+    bke::copy_attributes_group_to_group(
+        src_attributes,
+        bke::AttrDomain::Point,
+        bke::AttrDomain::Point,
+        bke::attribute_filter_with_skip_ref(attribute_filter, copy_point_skip),
+        src_points_by_curve,
+        dst_points_by_curve,
+        unselected,
+        dst_attributes);
   }
 
   dst_curves.remove_attributes_based_on_types();

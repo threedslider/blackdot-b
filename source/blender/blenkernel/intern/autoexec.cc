@@ -15,8 +15,7 @@
 #include "DNA_userdef_types.h"
 
 #include "BLI_fnmatch.h"
-#include "BLI_path_util.h"
-#include "BLI_utildefines.h"
+#include "BLI_path_utils.hh"
 
 #ifdef WIN32
 #  include "BLI_string.h"

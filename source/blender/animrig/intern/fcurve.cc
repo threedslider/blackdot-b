@@ -88,6 +88,9 @@ FCurve *create_fcurve_for_channel(const FCurveDescriptor fcurve_descriptor)
 
 bool fcurve_delete_keyframe_at_time(FCurve *fcurve, const float time)
 {
+  if (BKE_fcurve_is_protected(fcurve)) {
+    return false;
+  }
   bool found;
 
   const int index = BKE_fcurve_bezt_binarysearch_index(
@@ -110,7 +113,7 @@ bool delete_keyframe_fcurve_legacy(AnimData *adt, FCurve *fcu, float cfra)
 
   /* Empty curves get automatically deleted. */
   if (BKE_fcurve_is_empty(fcu)) {
-    animdata_fcurve_delete(nullptr, adt, fcu);
+    animdata_fcurve_delete(adt, fcu);
   }
 
   return true;
@@ -150,7 +153,7 @@ int insert_bezt_fcurve(FCurve *fcu, const BezTriple *bezt, eInsertKeyFlags flag)
 
     /* Replace an existing keyframe? */
     if (replace) {
-      /* 'i' may in rare cases exceed arraylen. */
+      /* `i` may in rare cases exceed array bounds. */
       if ((i >= 0) && (i < fcu->totvert)) {
         if (flag & INSERTKEY_OVERWRITE_FULL) {
           fcu->bezt[i] = *bezt;
@@ -362,6 +365,48 @@ static bool new_key_needed(const FCurve &fcu, const float frame, const float val
   return true;
 }
 
+/**
+ * Move the point where a key is about to be inserted to be inside the main cycle range.
+ * Returns the type of the cycle if it is enabled and valid.
+ */
+static float2 remap_cyclic_keyframe_location(const FCurve &fcu,
+                                             const eFCU_Cycle_Type type,
+                                             float2 position)
+{
+  if (fcu.totvert < 2 || !fcu.bezt) {
+    return position;
+  }
+
+  if (type == FCU_CYCLE_NONE) {
+    return position;
+  }
+
+  BezTriple *first = &fcu.bezt[0], *last = &fcu.bezt[fcu.totvert - 1];
+  const float start = first->vec[1][0], end = last->vec[1][0];
+
+  if (start >= end) {
+    return position;
+  }
+
+  if (position.x < start || position.x > end) {
+    const float period = end - start;
+    const float step = floorf((position.x - start) / period);
+    position.x -= step * period;
+
+    if (type == FCU_CYCLE_OFFSET) {
+      /* Nasty check to handle the case when the modes are different better. */
+      FMod_Cycles *data = static_cast<FMod_Cycles *>(((FModifier *)fcu.modifiers.first)->data);
+      short mode = (step >= 0) ? data->after_mode : data->before_mode;
+
+      if (mode == FCM_EXTRAPOLATE_CYCLIC_OFFSET) {
+        position.y -= step * (last->vec[1][1] - first->vec[1][1]);
+      }
+    }
+  }
+
+  return position;
+}
+
 SingleKeyingResult insert_vert_fcurve(FCurve *fcu,
                                       const float2 position,
                                       const KeyframeSettings &settings,
@@ -369,12 +414,24 @@ SingleKeyingResult insert_vert_fcurve(FCurve *fcu,
 {
   BLI_assert(fcu != nullptr);
 
-  if ((flag & INSERTKEY_NEEDED) && !new_key_needed(*fcu, position[0], position[1])) {
+  float2 remapped_position = position;
+  /* Adjust coordinates for cycle aware insertion. */
+  if (flag & INSERTKEY_CYCLE_AWARE) {
+    eFCU_Cycle_Type type = BKE_fcurve_get_cycle_type(fcu);
+    remapped_position = remap_cyclic_keyframe_location(*fcu, type, position);
+    if (type != FCU_CYCLE_PERFECT) {
+      /* Inhibit action from insert_bezt_fcurve unless it's a perfect cycle. */
+      flag &= ~INSERTKEY_CYCLE_AWARE;
+    }
+  }
+
+  if ((flag & INSERTKEY_NEEDED) && !new_key_needed(*fcu, remapped_position.x, remapped_position.y))
+  {
     return SingleKeyingResult::NO_KEY_NEEDED;
   }
 
   BezTriple beztr = {{{0}}};
-  initialize_bezt(&beztr, position, settings, eFCurve_Flags(fcu->flag));
+  initialize_bezt(&beztr, remapped_position, settings, eFCurve_Flags(fcu->flag));
 
   uint oldTot = fcu->totvert;
   int a;
@@ -614,6 +671,30 @@ void bake_fcurve_segments(FCurve *fcu)
   }
 
   BKE_fcurve_handles_recalc(fcu);
+}
+
+bool fcurve_frame_has_keyframe(const FCurve *fcu, const float frame)
+{
+  if (ELEM(nullptr, fcu, fcu->bezt)) {
+    return false;
+  }
+
+  if ((fcu->flag & FCURVE_MUTED) == 0) {
+    bool replace;
+    const int i = BKE_fcurve_bezt_binarysearch_index(fcu->bezt, frame, fcu->totvert, &replace);
+
+    /* #BKE_fcurve_bezt_binarysearch_index will set replace to be 0 or 1
+     * - obviously, 1 represents a match
+     */
+    if (replace) {
+      /* `i` may in rare cases exceed array bounds. */
+      if ((i >= 0) && (i < fcu->totvert)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 }  // namespace blender::animrig

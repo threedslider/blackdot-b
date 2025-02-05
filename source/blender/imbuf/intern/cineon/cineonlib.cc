@@ -20,7 +20,6 @@
 
 #include "BLI_fileops.h"
 #include "BLI_string.h"
-#include "BLI_utildefines.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -41,7 +40,7 @@ static void fillCineonMainHeader(LogImageFile *cineon,
                                  const char *creator)
 {
   time_t fileClock;
-  tm *fileTime;
+  const tm *fileTime;
   int i;
 
   memset(header, 0, sizeof(CineonMainHeader));

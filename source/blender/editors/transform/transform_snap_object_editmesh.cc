@@ -7,14 +7,12 @@
  */
 
 #include "BKE_attribute.hh"
-#include "BKE_bvhutils.hh"
 #include "BKE_editmesh.hh"
 #include "BKE_global.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.hh"
 #include "BKE_object.hh"
-
-#include "DEG_depsgraph_query.hh"
+#include "BKE_object_types.hh"
 
 #include "ED_transform_snap_object_context.hh"
 
@@ -71,9 +69,7 @@ struct SnapCache_EditMesh : public SnapObjectContext::SnapCache {
     this->clear();
   }
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("SnapCache_EditMesh")
-#endif
 };
 
 static Mesh *create_mesh(SnapObjectContext *sctx,

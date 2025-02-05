@@ -22,7 +22,6 @@
 #include "DNA_ID.h"
 
 #include "BLI_function_ref.hh"
-#include "BLI_sys_types.h"
 
 #include <array>
 
@@ -31,7 +30,7 @@ struct LibraryForeachIDData;
 struct Main;
 
 /* Tips for the callback for cases it's gonna to modify the pointer. */
-enum {
+enum LibraryForeachIDCallbackFlag {
   IDWALK_CB_NOP = 0,
   IDWALK_CB_NEVER_NULL = (1 << 0),
   IDWALK_CB_NEVER_SELF = (1 << 1),
@@ -49,7 +48,7 @@ enum {
    * Also used for most Editors ID usages (active node tree in the Node editor, shown image in the
    * Image editor, and so on).
    *
-   * See also #LIB_INDIRECT_WEAK_LINK in DNA_ID.h
+   * See also #ID_FLAG_INDIRECT_WEAK_LINK in DNA_ID.h
    */
   IDWALK_CB_DIRECT_WEAK_LINK = (1 << 3),
 
@@ -114,6 +113,7 @@ enum {
   IDWALK_CB_OVERRIDE_LIBRARY_HIERARCHY_DEFAULT = (1 << 18),
 
 };
+ENUM_OPERATORS(LibraryForeachIDCallbackFlag, IDWALK_CB_OVERRIDE_LIBRARY_HIERARCHY_DEFAULT);
 
 enum {
   IDWALK_RET_NOP = 0,
@@ -146,7 +146,7 @@ struct LibraryIDLinkCallbackData {
    */
   ID *self_id;
   ID **id_pointer;
-  int cb_flag;
+  LibraryForeachIDCallbackFlag cb_flag;
 };
 
 /**
@@ -157,7 +157,7 @@ struct LibraryIDLinkCallbackData {
 using LibraryIDLinkCallback = int(LibraryIDLinkCallbackData *cb_data);
 
 /* Flags for the foreach function itself. */
-enum {
+enum LibraryForeachIDFlag {
   IDWALK_NOP = 0,
   /**
    * The callback will never modify the ID pointers it processes.
@@ -229,17 +229,20 @@ enum {
    * proper lib_linking and expanding of older files). */
   IDWALK_DO_DEPRECATED_POINTERS = (1 << 11),
 };
+ENUM_OPERATORS(LibraryForeachIDFlag, IDWALK_DO_DEPRECATED_POINTERS);
 
 /**
  * Check whether current iteration over ID usages should be stopped or not.
  * \return true if the iteration should be stopped, false otherwise.
  */
 bool BKE_lib_query_foreachid_iter_stop(const LibraryForeachIDData *data);
-void BKE_lib_query_foreachid_process(LibraryForeachIDData *data, ID **id_pp, int cb_flag);
-int BKE_lib_query_foreachid_process_flags_get(const LibraryForeachIDData *data);
+void BKE_lib_query_foreachid_process(LibraryForeachIDData *data,
+                                     ID **id_pp,
+                                     LibraryForeachIDCallbackFlag cb_flag);
+LibraryForeachIDFlag BKE_lib_query_foreachid_process_flags_get(const LibraryForeachIDData *data);
 Main *BKE_lib_query_foreachid_process_main_get(const LibraryForeachIDData *data);
 int BKE_lib_query_foreachid_process_callback_flag_override(LibraryForeachIDData *data,
-                                                           int cb_flag,
+                                                           LibraryForeachIDCallbackFlag cb_flag,
                                                            bool do_replace);
 
 /** Should typically only be used when processing deprecated ID types (like IPO ones). */
@@ -307,7 +310,7 @@ void BKE_library_foreach_ID_link(Main *bmain,
                                  ID *id,
                                  blender::FunctionRef<LibraryIDLinkCallback> callback,
                                  void *user_data,
-                                 int flag);
+                                 LibraryForeachIDFlag flag);
 
 /**
  * Apply `callback` to all ID usages of the data as defined by `subdata_foreach_id`. Useful to e.g.
@@ -345,7 +348,7 @@ void BKE_library_foreach_subdata_id(
     blender::FunctionRef<void(LibraryForeachIDData *data)> subdata_foreach_id,
     blender::FunctionRef<LibraryIDLinkCallback> callback,
     void *user_data,
-    const int flag);
+    const LibraryForeachIDFlag flag);
 
 /**
  * Re-usable function, use when replacing ID's.
@@ -488,7 +491,7 @@ void BKE_lib_query_unused_ids_tag(Main *bmain, int tag, LibQueryUnusedIDsData &p
  * which prevents their deletion by 'basic' usage checks.
  *
  * \param do_init_tag: if \a true, all linked data are checked, if \a false,
- * only linked data-blocks already tagged with #LIB_TAG_DOIT are checked.
+ * only linked data-blocks already tagged with #ID_TAG_DOIT are checked.
  */
 void BKE_library_unused_linked_data_set_tag(Main *bmain, bool do_init_tag);
 /**

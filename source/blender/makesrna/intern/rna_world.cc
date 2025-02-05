@@ -15,16 +15,11 @@
 
 #include "rna_internal.hh"
 
-#include "DNA_lightprobe_types.h"
-#include "DNA_material_types.h"
-#include "DNA_texture_types.h"
 #include "DNA_world_types.h"
 
 #include "WM_types.hh"
 
 #ifdef RNA_RUNTIME
-
-#  include "MEM_guardedalloc.h"
 
 #  include "BKE_context.hh"
 #  include "BKE_layer.hh"
@@ -40,12 +35,12 @@
 
 static PointerRNA rna_World_lighting_get(PointerRNA *ptr)
 {
-  return rna_pointer_inherit_refine(ptr, &RNA_WorldLighting, ptr->owner_id);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_WorldLighting, ptr->owner_id);
 }
 
 static PointerRNA rna_World_mist_get(PointerRNA *ptr)
 {
-  return rna_pointer_inherit_refine(ptr, &RNA_WorldMistSettings, ptr->owner_id);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_WorldMistSettings, ptr->owner_id);
 }
 
 static void rna_World_update(Main * /*bmain*/, Scene * /*scene*/, PointerRNA *ptr)
@@ -230,7 +225,7 @@ void RNA_def_world(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Finite Volume",
                            "The world's volume used to be rendered by EEVEE Legacy. Conversion is "
-                           "needed for it to render properly");
+                           "needed for it to render properly.");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
 
   /* colors */
@@ -290,7 +285,7 @@ void RNA_def_world(BlenderRNA *brna)
                            "If non-zero, the maximum value for world contribution that will be "
                            "recorded inside the world light probe. The excess contribution is "
                            "converted to a sun light. This reduces the light bleeding caused by "
-                           "very bright light sources");
+                           "very bright light sources.");
   RNA_def_property_range(prop, 0.0f, FLT_MAX);
   RNA_def_property_update(prop, 0, "rna_World_draw_update");
 
@@ -311,7 +306,7 @@ void RNA_def_world(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Shadows Resolution Limit",
                            "Maximum size of a shadow map pixel. Higher values use less memory at "
-                           "the cost of shadow quality");
+                           "the cost of shadow quality.");
   RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
   RNA_def_property_update(prop, 0, "rna_World_draw_update");
 
@@ -329,7 +324,7 @@ void RNA_def_world(BlenderRNA *brna)
       prop,
       "Shadow Jitter",
       "Enable jittered soft shadows to increase shadow precision (disabled in viewport unless "
-      "enabled in the render settings). Has a high performance impact");
+      "enabled in the render settings). Has a high performance impact.");
   RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
   RNA_def_property_update(prop, 0, "rna_World_draw_update");
 

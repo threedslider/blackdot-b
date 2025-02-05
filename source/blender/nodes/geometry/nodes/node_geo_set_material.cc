@@ -4,16 +4,14 @@
 
 #include "node_geometry_util.hh"
 
-#include "UI_resources.hh"
-
 #include "DNA_curves_types.h"
+#include "DNA_mesh_types.h"
 #include "DNA_pointcloud_types.h"
 #include "DNA_volume_types.h"
 
 #include "BKE_curves.hh"
 #include "BKE_grease_pencil.hh"
-#include "BKE_material.h"
-#include "BKE_mesh.hh"
+#include "BKE_material.hh"
 
 namespace blender::nodes::node_geo_set_material_cc {
 
@@ -114,14 +112,13 @@ static void node_geo_exec(GeoNodeExecParams params)
     }
     if (GreasePencil *grease_pencil = geometry_set.get_grease_pencil_for_write()) {
       using namespace blender::bke::greasepencil;
-      Vector<Mesh *> mesh_by_layer(grease_pencil->layers().size(), nullptr);
       for (const int layer_index : grease_pencil->layers().index_range()) {
-        Drawing *drawing = grease_pencil->get_eval_drawing(*grease_pencil->layer(layer_index));
+        Drawing *drawing = grease_pencil->get_eval_drawing(grease_pencil->layer(layer_index));
         if (drawing == nullptr) {
           continue;
         }
         bke::CurvesGeometry &curves = drawing->strokes_for_write();
-        if (curves.curves_num() == 0) {
+        if (curves.is_empty()) {
           continue;
         }
 
@@ -165,10 +162,14 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_SET_MATERIAL, "Set Material", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeSetMaterial", GEO_NODE_SET_MATERIAL);
+  ntype.ui_name = "Set Material";
+  ntype.ui_description = "Assign a material to geometry elements";
+  ntype.enum_name_legacy = "SET_MATERIAL";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

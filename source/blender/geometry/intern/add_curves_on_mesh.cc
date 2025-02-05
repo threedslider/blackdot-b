@@ -47,12 +47,12 @@ float3 compute_surface_point_normal(const int3 &corner_tri,
   return math::normalize(value);
 }
 
-template<typename T>
-static inline void linear_interpolation(const T &a, const T &b, MutableSpan<T> dst)
+static void calc_straight_curve_positions(const float3 &a,
+                                          const float3 &b,
+                                          MutableSpan<float3> dst)
 {
-  dst.first() = a;
-  const float step = 1.0f / dst.size();
-  for (const int i : dst.index_range().drop_front(1)) {
+  const float step = math::rcp(float(dst.size() - 1));
+  for (const int i : dst.index_range()) {
     dst[i] = bke::attribute_math::mix2(i * step, a, b);
   }
 }
@@ -129,7 +129,7 @@ static void calc_position_without_interpolation(CurvesGeometry &curves,
           math::transform_direction(surface_to_curves_normal_mat, normal_su));
       const float3 tip_cu = root_cu + length * normal_cu;
 
-      linear_interpolation(root_cu, tip_cu, positions_cu.slice(points));
+      calc_straight_curve_positions(root_cu, tip_cu, positions_cu.slice(points));
     }
   });
 }
@@ -167,7 +167,7 @@ static void calc_position_with_interpolation(CurvesGeometry &curves,
       if (neighbors.is_empty()) {
         /* If there are no neighbors, just make a straight line. */
         const float3 tip_cu = root_cu + length_cu * normal_cu;
-        linear_interpolation(root_cu, tip_cu, positions_cu.slice(points));
+        calc_straight_curve_positions(root_cu, tip_cu, positions_cu.slice(points));
         continue;
       }
 
@@ -485,12 +485,15 @@ AddCurvesOnMeshOutputs add_curves_on_mesh(CurvesGeometry &curves,
   }
 
   /* Explicitly set all other attributes besides those processed above to default values. */
-  bke::fill_attribute_range_default(
-      attributes, bke::AttrDomain::Point, {"position", "radius"}, outputs.new_points_range);
   bke::fill_attribute_range_default(attributes,
-                                    bke::AttrDomain::Curve,
-                                    {"curve_type", "surface_uv_coordinate", "resolution"},
-                                    outputs.new_curves_range);
+                                    bke::AttrDomain::Point,
+                                    bke::attribute_filter_from_skip_ref({"position", "radius"}),
+                                    outputs.new_points_range);
+  bke::fill_attribute_range_default(
+      attributes,
+      bke::AttrDomain::Curve,
+      bke::attribute_filter_from_skip_ref({"curve_type", "surface_uv_coordinate", "resolution"}),
+      outputs.new_curves_range);
 
   return outputs;
 }

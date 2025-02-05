@@ -76,7 +76,7 @@ static void node_shader_buts_tex_noise(uiLayout *layout, bContext * /*C*/, Point
   uiItemR(layout, ptr, "noise_dimensions", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
   uiItemR(layout, ptr, "noise_type", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
   if (ELEM(RNA_enum_get(ptr, "noise_type"), SHD_NOISE_FBM)) {
-    uiItemR(layout, ptr, "normalize", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
+    uiItemR(layout, ptr, "normalize", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
   }
 }
 
@@ -145,22 +145,23 @@ static int node_shader_gpu_tex_noise(GPUMaterial *mat,
 
 static void node_shader_update_tex_noise(bNodeTree *ntree, bNode *node)
 {
-  bNodeSocket *sockVector = bke::nodeFindSocket(node, SOCK_IN, "Vector");
-  bNodeSocket *sockW = bke::nodeFindSocket(node, SOCK_IN, "W");
-  bNodeSocket *inOffsetSock = bke::nodeFindSocket(node, SOCK_IN, "Offset");
-  bNodeSocket *inGainSock = bke::nodeFindSocket(node, SOCK_IN, "Gain");
+  bNodeSocket *sockVector = bke::node_find_socket(node, SOCK_IN, "Vector");
+  bNodeSocket *sockW = bke::node_find_socket(node, SOCK_IN, "W");
+  bNodeSocket *inOffsetSock = bke::node_find_socket(node, SOCK_IN, "Offset");
+  bNodeSocket *inGainSock = bke::node_find_socket(node, SOCK_IN, "Gain");
 
   const NodeTexNoise &storage = node_storage(*node);
-  bke::nodeSetSocketAvailability(ntree, sockVector, storage.dimensions != 1);
-  bke::nodeSetSocketAvailability(ntree, sockW, storage.dimensions == 1 || storage.dimensions == 4);
-  bke::nodeSetSocketAvailability(ntree,
-                                 inOffsetSock,
-                                 storage.type != SHD_NOISE_MULTIFRACTAL &&
-                                     storage.type != SHD_NOISE_FBM);
-  bke::nodeSetSocketAvailability(ntree,
-                                 inGainSock,
-                                 storage.type == SHD_NOISE_HYBRID_MULTIFRACTAL ||
-                                     storage.type == SHD_NOISE_RIDGED_MULTIFRACTAL);
+  bke::node_set_socket_availability(ntree, sockVector, storage.dimensions != 1);
+  bke::node_set_socket_availability(
+      ntree, sockW, storage.dimensions == 1 || storage.dimensions == 4);
+  bke::node_set_socket_availability(ntree,
+                                    inOffsetSock,
+                                    storage.type != SHD_NOISE_MULTIFRACTAL &&
+                                        storage.type != SHD_NOISE_FBM);
+  bke::node_set_socket_availability(ntree,
+                                    inGainSock,
+                                    storage.type == SHD_NOISE_HYBRID_MULTIFRACTAL ||
+                                        storage.type == SHD_NOISE_RIDGED_MULTIFRACTAL);
 }
 
 class NoiseFunction : public mf::MultiFunction {
@@ -460,7 +461,11 @@ void register_node_type_sh_tex_noise()
 
   static blender::bke::bNodeType ntype;
 
-  sh_fn_node_type_base(&ntype, SH_NODE_TEX_NOISE, "Noise Texture", NODE_CLASS_TEXTURE);
+  sh_fn_node_type_base(&ntype, "ShaderNodeTexNoise", SH_NODE_TEX_NOISE);
+  ntype.ui_name = "Noise Texture";
+  ntype.ui_description = "Generate fractal Perlin noise";
+  ntype.enum_name_legacy = "TEX_NOISE";
+  ntype.nclass = NODE_CLASS_TEXTURE;
   ntype.declare = file_ns::sh_node_tex_noise_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_tex_noise;
   ntype.initfunc = file_ns::node_shader_init_tex_noise;
@@ -471,5 +476,5 @@ void register_node_type_sh_tex_noise()
   ntype.build_multi_function = file_ns::sh_node_noise_build_multi_function;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

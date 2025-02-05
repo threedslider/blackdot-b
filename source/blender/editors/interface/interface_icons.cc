@@ -9,10 +9,11 @@
 #include "MEM_guardedalloc.h"
 
 #include "GPU_immediate.hh"
+#include "GPU_state.hh"
 
 #include "BLF_api.hh"
 
-#include "BLI_blenlib.h"
+#include "BLI_string.h"
 
 #include "DNA_collection_types.h"
 #include "DNA_dynamicpaint_types.h"
@@ -37,7 +38,6 @@
 
 #include "BIF_glutil.hh"
 
-#include "ED_datafiles.h"
 #include "ED_keyframes_draw.hh"
 #include "ED_keyframes_keylist.hh"
 #include "ED_render.hh"
@@ -48,6 +48,8 @@
 #include "WM_api.hh"
 
 #include "interface_intern.hh"
+
+#include <fmt/format.h>
 
 struct IconImage {
   int w;
@@ -434,15 +436,15 @@ static void vicon_strip_color_draw(
       vicon_strip_color_draw(color, x, y, w, h, alpha); \
     }
 
-DEF_ICON_STRIP_COLOR_DRAW(01, SEQUENCE_COLOR_01);
-DEF_ICON_STRIP_COLOR_DRAW(02, SEQUENCE_COLOR_02);
-DEF_ICON_STRIP_COLOR_DRAW(03, SEQUENCE_COLOR_03);
-DEF_ICON_STRIP_COLOR_DRAW(04, SEQUENCE_COLOR_04);
-DEF_ICON_STRIP_COLOR_DRAW(05, SEQUENCE_COLOR_05);
-DEF_ICON_STRIP_COLOR_DRAW(06, SEQUENCE_COLOR_06);
-DEF_ICON_STRIP_COLOR_DRAW(07, SEQUENCE_COLOR_07);
-DEF_ICON_STRIP_COLOR_DRAW(08, SEQUENCE_COLOR_08);
-DEF_ICON_STRIP_COLOR_DRAW(09, SEQUENCE_COLOR_09);
+DEF_ICON_STRIP_COLOR_DRAW(01, STRIP_COLOR_01);
+DEF_ICON_STRIP_COLOR_DRAW(02, STRIP_COLOR_02);
+DEF_ICON_STRIP_COLOR_DRAW(03, STRIP_COLOR_03);
+DEF_ICON_STRIP_COLOR_DRAW(04, STRIP_COLOR_04);
+DEF_ICON_STRIP_COLOR_DRAW(05, STRIP_COLOR_05);
+DEF_ICON_STRIP_COLOR_DRAW(06, STRIP_COLOR_06);
+DEF_ICON_STRIP_COLOR_DRAW(07, STRIP_COLOR_07);
+DEF_ICON_STRIP_COLOR_DRAW(08, STRIP_COLOR_08);
+DEF_ICON_STRIP_COLOR_DRAW(09, STRIP_COLOR_09);
 
 #  undef DEF_ICON_STRIP_COLOR_DRAW
 
@@ -490,7 +492,7 @@ static void vicon_layergroup_color_draw(
 
   UI_icon_draw_ex(x,
                   y,
-                  ICON_FILE_FOLDER,
+                  ICON_GREASEPENCIL_LAYER_GROUP,
                   aspect,
                   1.0f,
                   0.0f,
@@ -559,6 +561,9 @@ int UI_icon_from_event_type(short event_type, short event_value)
   } while ((di = di->data.input.next));
 
   if (event_type == LEFTMOUSE) {
+    if (event_value == KM_DBL_CLICK) {
+      return ICON_MOUSE_LMB_2X;
+    }
     return (event_value == KM_CLICK_DRAG) ? ICON_MOUSE_LMB_DRAG : ICON_MOUSE_LMB;
   }
   if (event_type == MIDDLEMOUSE) {
@@ -740,6 +745,9 @@ static void init_event_icons()
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_V1, NDOF_BUTTON_V1, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_V2, NDOF_BUTTON_V2, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_V3, NDOF_BUTTON_V3, KM_ANY);
+  INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_SAVE_V1, NDOF_BUTTON_SAVE_V1, KM_ANY);
+  INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_SAVE_V2, NDOF_BUTTON_SAVE_V2, KM_ANY);
+  INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_SAVE_V3, NDOF_BUTTON_SAVE_V3, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_1, NDOF_BUTTON_1, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_2, NDOF_BUTTON_2, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_3, NDOF_BUTTON_3, KM_ANY);
@@ -750,9 +758,8 @@ static void init_event_icons()
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_8, NDOF_BUTTON_8, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_9, NDOF_BUTTON_9, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_10, NDOF_BUTTON_10, KM_ANY);
-  INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_A, NDOF_BUTTON_A, KM_ANY);
-  INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_B, NDOF_BUTTON_B, KM_ANY);
-  INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_C, NDOF_BUTTON_C, KM_ANY);
+  INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_11, NDOF_BUTTON_11, KM_ANY);
+  INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_12, NDOF_BUTTON_12, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_MENU, NDOF_BUTTON_MENU, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_FIT, NDOF_BUTTON_FIT, KM_ANY);
   INIT_EVENT_ICON(ICON_EVENT_NDOF_BUTTON_TOP, NDOF_BUTTON_TOP, KM_ANY);
@@ -792,7 +799,7 @@ static void icon_verify_datatoc(IconImage *iimg)
         iimg->datatoc_rect, iimg->datatoc_size, IB_rect, nullptr, "<matcap icon>");
     /* w and h were set on initialize */
     if (bbuf->x != iimg->h && bbuf->y != iimg->w) {
-      IMB_scaleImBuf(bbuf, iimg->w, iimg->h);
+      IMB_scale(bbuf, iimg->w, iimg->h, IMBScaleFilter::Box, false);
     }
 
     iimg->rect = IMB_steal_byte_buffer(bbuf);
@@ -854,15 +861,15 @@ static void init_internal_icons()
   def_internal_vicon(ICON_COLLECTION_COLOR_07, vicon_collection_color_draw_07);
   def_internal_vicon(ICON_COLLECTION_COLOR_08, vicon_collection_color_draw_08);
 
-  def_internal_vicon(ICON_SEQUENCE_COLOR_01, vicon_strip_color_draw_01);
-  def_internal_vicon(ICON_SEQUENCE_COLOR_02, vicon_strip_color_draw_02);
-  def_internal_vicon(ICON_SEQUENCE_COLOR_03, vicon_strip_color_draw_03);
-  def_internal_vicon(ICON_SEQUENCE_COLOR_04, vicon_strip_color_draw_04);
-  def_internal_vicon(ICON_SEQUENCE_COLOR_05, vicon_strip_color_draw_05);
-  def_internal_vicon(ICON_SEQUENCE_COLOR_06, vicon_strip_color_draw_06);
-  def_internal_vicon(ICON_SEQUENCE_COLOR_07, vicon_strip_color_draw_07);
-  def_internal_vicon(ICON_SEQUENCE_COLOR_08, vicon_strip_color_draw_08);
-  def_internal_vicon(ICON_SEQUENCE_COLOR_09, vicon_strip_color_draw_09);
+  def_internal_vicon(ICON_STRIP_COLOR_01, vicon_strip_color_draw_01);
+  def_internal_vicon(ICON_STRIP_COLOR_02, vicon_strip_color_draw_02);
+  def_internal_vicon(ICON_STRIP_COLOR_03, vicon_strip_color_draw_03);
+  def_internal_vicon(ICON_STRIP_COLOR_04, vicon_strip_color_draw_04);
+  def_internal_vicon(ICON_STRIP_COLOR_05, vicon_strip_color_draw_05);
+  def_internal_vicon(ICON_STRIP_COLOR_06, vicon_strip_color_draw_06);
+  def_internal_vicon(ICON_STRIP_COLOR_07, vicon_strip_color_draw_07);
+  def_internal_vicon(ICON_STRIP_COLOR_08, vicon_strip_color_draw_08);
+  def_internal_vicon(ICON_STRIP_COLOR_09, vicon_strip_color_draw_09);
 
   def_internal_vicon(ICON_LIBRARY_DATA_INDIRECT, vicon_strip_color_draw_library_data_indirect);
   def_internal_vicon(ICON_LIBRARY_DATA_OVERRIDE_NONEDITABLE,
@@ -998,12 +1005,14 @@ static void icon_create_rect(PreviewImage *prv_img, enum eIconSizes size)
     }
   }
   else if (!prv_img->rect[size]) {
-    prv_img->w[size] = render_size;
-    prv_img->h[size] = render_size;
     prv_img->flag[size] |= PRV_CHANGED;
     prv_img->changed_timestamp[size] = 0;
-    prv_img->rect[size] = static_cast<uint *>(
-        MEM_callocN(render_size * render_size * sizeof(uint), "prv_rect"));
+    if (!ED_preview_use_image_size(prv_img, size)) {
+      prv_img->w[size] = render_size;
+      prv_img->h[size] = render_size;
+      prv_img->rect[size] = static_cast<uint *>(
+          MEM_callocN(render_size * render_size * sizeof(uint), "prv_rect"));
+    }
   }
 }
 
@@ -1124,6 +1133,32 @@ void ui_icon_ensure_deferred(const bContext *C, const int icon_id, const bool bi
       break;
     }
   }
+}
+
+bool ui_icon_is_preview_deferred_loading(const int icon_id, const bool big)
+{
+  const Icon *icon = BKE_icon_get(icon_id);
+  if (icon == nullptr) {
+    return false;
+  }
+
+  const DrawInfo *di = static_cast<DrawInfo *>(icon->drawinfo);
+  if (icon->drawinfo == nullptr) {
+    return false;
+  }
+
+  if (di->type == ICON_TYPE_PREVIEW) {
+    const ID *id = (icon->id_type != 0) ? static_cast<ID *>(icon->obj) : nullptr;
+    const PreviewImage *prv = id ? BKE_previewimg_id_get(id) :
+                                   static_cast<PreviewImage *>(icon->obj);
+
+    if (prv) {
+      const int size = big ? ICON_SIZE_PREVIEW : ICON_SIZE_ICON;
+      return (prv->flag[size] & PRV_RENDERING) != 0;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -1290,6 +1325,156 @@ static int get_draw_size(enum eIconSizes size)
   }
 }
 
+static void svg_replace_color_attributes(std::string &svg,
+                                         const std::string &name,
+                                         const size_t start,
+                                         const size_t end)
+{
+  bTheme *btheme = UI_GetTheme();
+
+  uchar white[] = {255, 255, 255, 255};
+  uchar black[] = {0, 0, 0, 255};
+  uchar logo_orange[] = {232, 125, 13, 255};
+  uchar logo_blue[] = {38, 87, 135, 255};
+
+  /* Tool colors hardcoded for now. */
+  uchar tool_add[] = {117, 255, 175, 255};
+  uchar tool_remove[] = {245, 107, 91, 255};
+  uchar tool_select[] = {255, 176, 43, 255};
+  uchar tool_transform[] = {217, 175, 245, 255};
+  uchar tool_white[] = {255, 255, 255, 255};
+  uchar tool_red[] = {214, 45, 48, 255};
+
+  const struct ColorItem {
+    const char *name;
+    uchar *col = nullptr;
+    int colorid = TH_UNDEFINED;
+    int spacetype = SPACE_TYPE_ANY;
+  } items[] = {
+      {"blender_white", white},
+      {"blender_black", black},
+      {"blender_logo_orange", logo_orange},
+      {"blender_logo_blue", logo_blue},
+      {"blender_selected", btheme->tui.wcol_regular.inner},
+      {"blender_mesh_selected", btheme->space_view3d.vertex_select},
+      {"blender_back", nullptr, TH_BACK},
+      {"blender_text", nullptr, TH_TEXT},
+      {"blender_text_hi", nullptr, TH_TEXT_HI},
+      {"blender_red_alert", nullptr, TH_REDALERT},
+      {"blender_error", nullptr, TH_INFO_ERROR, SPACE_INFO},
+      {"blender_warning", nullptr, TH_INFO_WARNING, SPACE_INFO},
+      {"blender_info", nullptr, TH_INFO_INFO, SPACE_INFO},
+      {"blender_scene", nullptr, TH_ICON_SCENE},
+      {"blender_collection", nullptr, TH_ICON_COLLECTION},
+      {"blender_object", nullptr, TH_ICON_OBJECT},
+      {"blender_object_data", nullptr, TH_ICON_OBJECT_DATA},
+      {"blender_modifier", nullptr, TH_ICON_MODIFIER},
+      {"blender_shading", nullptr, TH_ICON_SHADING},
+      {"blender_folder", nullptr, TH_ICON_FOLDER},
+      {"blender_fund", nullptr, TH_ICON_FUND},
+      {"blender_autokey", nullptr, TH_ICON_AUTOKEY},
+      {"blender_tool_add", tool_add},
+      {"blender_tool_remove", tool_remove},
+      {"blender_tool_select", tool_select},
+      {"blender_tool_transform", tool_transform},
+      {"blender_tool_white", tool_white},
+      {"blender_tool_red", tool_red},
+  };
+
+  for (const ColorItem &item : items) {
+    if (name != item.name) {
+      continue;
+    }
+
+    uchar color[4];
+    if (item.col) {
+      memcpy(color, item.col, sizeof(color));
+    }
+    else if (item.colorid != TH_UNDEFINED) {
+      if (item.spacetype != SPACE_TYPE_ANY) {
+        UI_GetThemeColorType4ubv(item.colorid, item.spacetype, color);
+      }
+      else {
+        UI_GetThemeColor4ubv(item.colorid, color);
+      }
+    }
+    else {
+      continue;
+    }
+
+    std::string hexcolor = fmt::format(
+        "{:02x}{:02x}{:02x}{:02x}", color[0], color[1], color[2], color[3]);
+
+    size_t att_start = start;
+    while (true) {
+      constexpr static blender::StringRef key = "fill=\"";
+      att_start = svg.find(key, att_start);
+      if (att_start == std::string::npos || att_start > end) {
+        break;
+      }
+      const size_t att_end = svg.find("\"", att_start + key.size());
+      if (att_end != std::string::npos && att_end < end) {
+        svg.replace(att_start, att_end - att_start, key + "#" + hexcolor);
+      }
+      att_start += blender::StringRef(key + "#rrggbbaa\"").size();
+    }
+
+    att_start = start;
+    while (true) {
+      constexpr static blender::StringRef key = "fill:";
+      att_start = svg.find(key, att_start);
+      if (att_start == std::string::npos || att_start > end) {
+        break;
+      }
+      const size_t att_end = svg.find(";", att_start + key.size());
+      if (att_end != std::string::npos && att_end - att_start < end) {
+        svg.replace(att_start, att_end - att_start, key + "#" + hexcolor);
+      }
+      att_start += blender::StringRef(key + "#rrggbbaa").size();
+    }
+  }
+}
+
+static void icon_source_edit_cb(std::string &svg)
+{
+  size_t g_start = 0;
+
+  /* Scan string, processing only groups with our keyword ids. */
+
+  while (true) {
+    /* Look for a blender id, quick exit if not found. */
+    constexpr static blender::StringRef key = "id=\"";
+    const size_t id_start = svg.find(key + "blender_", g_start);
+    if (id_start == std::string::npos) {
+      return;
+    }
+
+    /* Scan back to beginning of this group element. */
+    g_start = svg.rfind("<g", id_start);
+    if (g_start == std::string::npos) {
+      /* Malformed. */
+      return;
+    }
+
+    /* Scan forward to end of the group. */
+    const size_t g_end = svg.find("</g>", id_start);
+    if (g_end == std::string::npos) {
+      /* Malformed. */
+      return;
+    }
+
+    /* Get group id name. */
+    const size_t id_end = svg.find("\"", id_start + key.size());
+    if (id_end != std::string::npos) {
+      std::string id_name = svg.substr(id_start + key.size(), id_end - id_start - key.size());
+      /* Replace this group's colors. */
+      svg_replace_color_attributes(svg, id_name, g_start, g_end);
+    }
+
+    g_start = g_end;
+  }
+}
+
 static void icon_draw_size(float x,
                            float y,
                            int icon_id,
@@ -1311,13 +1496,17 @@ static void icon_draw_size(float x,
   const float fdraw_size = float(draw_size);
 
   Icon *icon = BKE_icon_get(icon_id);
-  alpha *= btheme->tui.icon_alpha;
 
   if (icon == nullptr) {
     if (G.debug & G_DEBUG) {
       printf("%s: Internal error, no icon for icon ID: %d\n", __func__, icon_id);
     }
     return;
+  }
+
+  if (icon->obj_type != ICON_DATA_STUDIOLIGHT) {
+    /* Icon alpha should not apply to MatCap/Studio lighting. #80356. */
+    alpha *= btheme->tui.icon_alpha;
   }
 
   /* scale width and height according to aspect */
@@ -1354,7 +1543,7 @@ static void icon_draw_size(float x,
 #endif
 
     /* If the theme is light, we will adjust the icon colors. */
-    const bool invert = (rgb_to_grayscale_byte(btheme->tui.wcol_toolbar_item.inner) > 128);
+    const bool invert = (srgb_to_grayscale_byte(btheme->tui.wcol_toolbar_item.inner) > 128);
     const bool geom_inverted = di->data.geom.inverted;
 
     /* This could re-generate often if rendered at different sizes in the one interface.
@@ -1377,30 +1566,42 @@ static void icon_draw_size(float x,
     GPU_blend(GPU_BLEND_ALPHA);
   }
   else if (di->type == ICON_TYPE_EVENT) {
-    const short event_type = di->data.input.event_type;
-    const short event_value = di->data.input.event_value;
-    icon_draw_rect_input(x, y, w, h, alpha, event_type, event_value, inverted);
+    icon_draw_rect_input(x, y, w, h, icon_id, aspect, alpha, inverted);
   }
   else if (ELEM(di->type, ICON_TYPE_SVG_MONO, ICON_TYPE_SVG_COLOR)) {
-    /* Monochrome icon that uses text or theme color. */
     float outline_intensity = mono_border ? (btheme->tui.icon_border_intensity > 0.0f ?
                                                  btheme->tui.icon_border_intensity :
-                                                 0.5f) :
+                                                 0.3f) :
                                             0.0f;
-    if (di->type == ICON_TYPE_SVG_COLOR) {
-      BLF_draw_svg_icon(
-          uint(icon_id), x, y, float(draw_size) / aspect, nullptr, outline_intensity);
+    float color[4];
+    if (mono_rgba) {
+      rgba_uchar_to_float(color, mono_rgba);
     }
     else {
-      float color[4];
-      if (mono_rgba) {
-        rgba_uchar_to_float(color, (const uchar *)mono_rgba);
-      }
-      else {
-        UI_GetThemeColor4fv(TH_TEXT, color);
-      }
-      color[3] = alpha;
-      BLF_draw_svg_icon(uint(icon_id), x, y, float(draw_size) / aspect, color, outline_intensity);
+      UI_GetThemeColor4fv(TH_TEXT, color);
+    }
+
+    color[3] *= alpha;
+
+    if (di->type == ICON_TYPE_SVG_COLOR) {
+      BLF_draw_svg_icon(uint(icon_id),
+                        x,
+                        y,
+                        float(draw_size) / aspect,
+                        color,
+                        outline_intensity,
+                        true,
+                        icon_source_edit_cb);
+    }
+    else {
+      BLF_draw_svg_icon(uint(icon_id),
+                        x,
+                        y,
+                        float(draw_size) / aspect,
+                        color,
+                        outline_intensity,
+                        false,
+                        nullptr);
     }
 
     if (text_overlay && text_overlay->text[0] != '\0') {
@@ -1412,10 +1613,11 @@ static void icon_draw_size(float x,
       else {
         UI_GetThemeColor4ubv(TH_TEXT, text_color);
       }
+      const bool is_light = srgb_to_grayscale_byte(text_color) > 96;
       const float zoom_factor = w / UI_ICON_SIZE;
       uiFontStyle fstyle_small = *UI_FSTYLE_WIDGET;
       fstyle_small.points *= zoom_factor * 0.8f;
-      fstyle_small.shadow = short(FontShadowType::Outline);
+      fstyle_small.shadow = short(is_light ? FontShadowType::Outline : FontShadowType::None);
       fstyle_small.shadx = 0;
       fstyle_small.shady = 0;
       rcti text_rect = {int(x), int(x + UI_UNIT_X * zoom_factor), int(y), int(y)};
@@ -1481,7 +1683,7 @@ static void ui_id_preview_image_render_size(
     const bContext *C, Scene *scene, ID *id, PreviewImage *pi, int size, const bool use_job)
 {
   /* changed only ever set by dynamic icons */
-  if ((pi->flag[size] & PRV_CHANGED) || !pi->rect[size]) {
+  if ((pi->flag[size] & PRV_CHANGED) || (!pi->rect[size] && !BKE_previewimg_is_invalid(pi))) {
     /* create the rect if necessary */
     icon_set_image(C, scene, id, pi, eIconSizes(size), use_job);
 
@@ -1577,10 +1779,10 @@ int ui_id_icon_get(const bContext *C, ID *id, const bool big)
 int UI_icon_from_library(const ID *id)
 {
   if (ID_IS_LINKED(id)) {
-    if (id->tag & LIB_TAG_MISSING) {
+    if (id->tag & ID_TAG_MISSING) {
       return ICON_LIBRARY_DATA_BROKEN;
     }
-    if (id->tag & LIB_TAG_INDIRECT) {
+    if (id->tag & ID_TAG_INDIRECT) {
       return ICON_LIBRARY_DATA_INDIRECT;
     }
     return ICON_LIBRARY_DATA_DIRECT;
@@ -1751,14 +1953,14 @@ int UI_icon_from_object_mode(const int mode)
     case OB_MODE_EDIT_GPENCIL_LEGACY:
       return ICON_EDITMODE_HLT;
     case OB_MODE_SCULPT:
-    case OB_MODE_SCULPT_GPENCIL_LEGACY:
+    case OB_MODE_SCULPT_GREASE_PENCIL:
     case OB_MODE_SCULPT_CURVES:
       return ICON_SCULPTMODE_HLT;
     case OB_MODE_VERTEX_PAINT:
-    case OB_MODE_VERTEX_GPENCIL_LEGACY:
+    case OB_MODE_VERTEX_GREASE_PENCIL:
       return ICON_VPAINT_HLT;
     case OB_MODE_WEIGHT_PAINT:
-    case OB_MODE_WEIGHT_GPENCIL_LEGACY:
+    case OB_MODE_WEIGHT_GREASE_PENCIL:
       return ICON_WPAINT_HLT;
     case OB_MODE_TEXTURE_PAINT:
       return ICON_TPAINT_HLT;
@@ -1766,7 +1968,7 @@ int UI_icon_from_object_mode(const int mode)
       return ICON_PARTICLEMODE;
     case OB_MODE_POSE:
       return ICON_POSE_HLT;
-    case OB_MODE_PAINT_GPENCIL_LEGACY:
+    case OB_MODE_PAINT_GREASE_PENCIL:
       return ICON_GREASEPENCIL;
   }
   return ICON_NONE;
@@ -1836,6 +2038,38 @@ void UI_icon_draw_ex(float x,
                  inverted);
 }
 
+ImBuf *UI_svg_icon_bitmap(uint icon_id, float size, bool multicolor)
+{
+  if (icon_id >= ICON_BLANK_LAST_SVG_ITEM) {
+    return nullptr;
+  }
+
+  ImBuf *ibuf = nullptr;
+  int width;
+  int height;
+  blender::Array<uchar> bitmap;
+
+  if (multicolor) {
+    bitmap = BLF_svg_icon_bitmap(icon_id, size, &width, &height, true, icon_source_edit_cb);
+  }
+  else {
+    bitmap = BLF_svg_icon_bitmap(icon_id, size, &width, &height, false, nullptr);
+  }
+
+  if (!bitmap.is_empty()) {
+    ibuf = IMB_allocFromBuffer(bitmap.data(), nullptr, width, height, 4);
+  }
+
+  if (ibuf) {
+    IMB_flipy(ibuf);
+    if (multicolor) {
+      IMB_premultiply_alpha(ibuf);
+    }
+  }
+
+  return ibuf;
+}
+
 void UI_icon_text_overlay_init_from_count(IconTextOverlay *text_overlay,
                                           const int icon_indicator_number)
 {
@@ -1878,15 +2112,6 @@ ImBuf *UI_icon_alert_imbuf_get(eAlertIcon icon, float size)
     return nullptr;
   }
 
-  int width;
-  int height;
-  blender::Array<uchar> bitmap = BLF_svg_icon_bitmap(icon_id, size, &width, &height);
-  if (bitmap.is_empty()) {
-    return nullptr;
-  }
-  ImBuf *ibuf = IMB_allocFromBuffer(bitmap.data(), nullptr, width, height, 4);
-  IMB_flipy(ibuf);
-  IMB_premultiply_alpha(ibuf);
-  return ibuf;
+  return UI_svg_icon_bitmap(icon_id, size, false);
 #endif
 }

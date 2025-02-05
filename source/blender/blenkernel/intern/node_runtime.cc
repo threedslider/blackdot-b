@@ -12,6 +12,8 @@
 #include "BLI_task.hh"
 
 #include "NOD_geometry_nodes_lazy_function.hh"
+#include "NOD_node_declaration.hh"
+#include "NOD_socket_usage_inference.hh"
 
 namespace blender::bke::node_tree_runtime {
 
@@ -177,7 +179,7 @@ static void find_logical_origins_for_socket_recursive(
       /* Non available sockets are ignored. */
       continue;
     }
-    if (origin_node.type == NODE_REROUTE) {
+    if (origin_node.is_reroute()) {
       bNodeSocket &reroute_input = *origin_node.runtime->inputs[0];
       bNodeSocket &reroute_output = *origin_node.runtime->outputs[0];
       r_skipped_origins.append(&reroute_input);
@@ -284,12 +286,12 @@ struct ToposortNodeState {
 static Vector<const bNode *> get_implicit_origin_nodes(const bNodeTree &ntree, bNode &node)
 {
   Vector<const bNode *> origin_nodes;
-  if (all_zone_output_node_types().contains(node.type)) {
-    const bNodeZoneType &zone_type = *zone_type_by_node_type(node.type);
+  if (all_zone_output_node_types().contains(node.type_legacy)) {
+    const bNodeZoneType &zone_type = *zone_type_by_node_type(node.type_legacy);
     /* Can't use #zone_type.get_corresponding_input because that expects the topology cache to be
      * build already, but we are still building it here. */
     for (const bNode *input_node :
-         ntree.runtime->nodes_by_type.lookup(bke::nodeTypeFind(zone_type.input_idname.c_str())))
+         ntree.runtime->nodes_by_type.lookup(bke::node_type_find(zone_type.input_idname.c_str())))
     {
       if (zone_type.get_corresponding_output_id(*input_node) == node.identifier) {
         origin_nodes.append(input_node);
@@ -302,8 +304,8 @@ static Vector<const bNode *> get_implicit_origin_nodes(const bNodeTree &ntree, b
 static Vector<const bNode *> get_implicit_target_nodes(const bNodeTree &ntree, bNode &node)
 {
   Vector<const bNode *> target_nodes;
-  if (all_zone_input_node_types().contains(node.type)) {
-    const bNodeZoneType &zone_type = *zone_type_by_node_type(node.type);
+  if (all_zone_input_node_types().contains(node.type_legacy)) {
+    const bNodeZoneType &zone_type = *zone_type_by_node_type(node.type_legacy);
     if (const bNode *output_node = zone_type.get_corresponding_output(ntree, node)) {
       target_nodes.append(output_node);
     }
@@ -491,7 +493,7 @@ static void update_direct_frames_childrens(const bNodeTree &ntree)
 static void update_group_output_node(const bNodeTree &ntree)
 {
   bNodeTreeRuntime &tree_runtime = *ntree.runtime;
-  const bke::bNodeType *node_type = bke::nodeTypeFind("NodeGroupOutput");
+  const bke::bNodeType *node_type = bke::node_type_find("NodeGroupOutput");
   const Span<bNode *> group_output_nodes = tree_runtime.nodes_by_type.lookup(node_type);
   if (group_output_nodes.is_empty()) {
     tree_runtime.group_output_node = nullptr;
@@ -650,4 +652,28 @@ const bNode *bNodeTree::find_nested_node(const int32_t nested_node_id,
     return nullptr;
   }
   return group->find_nested_node(ref->path.id_in_node, r_tree);
+}
+
+const bNodeSocket &bNode::socket_by_decl(const blender::nodes::SocketDeclaration &decl) const
+{
+  return decl.in_out == SOCK_IN ? this->input_socket(decl.index) : this->output_socket(decl.index);
+}
+
+bNodeSocket &bNode::socket_by_decl(const blender::nodes::SocketDeclaration &decl)
+{
+  return decl.in_out == SOCK_IN ? this->input_socket(decl.index) : this->output_socket(decl.index);
+}
+
+bool bNodeSocket::affects_node_output() const
+{
+  BLI_assert(this->is_input());
+  BLI_assert(blender::bke::node_tree_runtime::topology_cache_is_available(*this));
+  const bNodeTree &tree = this->owner_tree();
+
+  tree.runtime->inferenced_input_socket_usage_mutex.ensure([&]() {
+    tree.runtime->inferenced_input_socket_usage =
+        blender::nodes::socket_usage_inference::infer_all_input_sockets_usage(tree);
+  });
+
+  return tree.runtime->inferenced_input_socket_usage[this->index_in_all_inputs()];
 }

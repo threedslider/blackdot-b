@@ -11,7 +11,6 @@
 #include <cctype>
 #include <cfloat>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -22,26 +21,21 @@
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
 #include "BLI_task.h"
-#include "BLI_utildefines.h"
 
 #include "DNA_armature_types.h"
-#include "DNA_gpencil_legacy_types.h"
 #include "DNA_lattice_types.h"
 #include "DNA_listBase.h"
 #include "DNA_mesh_types.h"
 #include "DNA_meshdata_types.h"
 #include "DNA_object_types.h"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_armature.hh"
-#include "BKE_curves.hh"
 #include "BKE_customdata.hh"
 #include "BKE_deform.hh"
 #include "BKE_editmesh.hh"
 #include "BKE_lattice.hh"
 #include "BKE_mesh.hh"
-
-#include "DEG_depsgraph_build.hh"
 
 #include "CLG_log.h"
 
@@ -344,19 +338,25 @@ static void armature_vert_task_with_dvert(const ArmatureUserdata *data,
     uint j;
     for (j = dvert->totweight; j != 0; j--, dw++) {
       const uint index = dw->def_nr;
-      if (index < data->defbase_len && (pchan = data->pchan_from_defbase[index])) {
-        float weight = dw->weight;
-        const Bone *bone = pchan->bone;
-
-        deformed = 1;
-
-        if (bone && bone->flag & BONE_MULT_VG_ENV) {
-          weight *= distfactor_to_bone(
-              co, bone->arm_head, bone->arm_tail, bone->rad_head, bone->rad_tail, bone->dist);
-        }
-
-        pchan_bone_deform(pchan, weight, vec, dq, smat, co, full_deform, &contrib);
+      if (index >= data->defbase_len) {
+        continue;
       }
+      pchan = data->pchan_from_defbase[index];
+      if (pchan == nullptr) {
+        continue;
+      }
+
+      float weight = dw->weight;
+      const Bone *bone = pchan->bone;
+
+      deformed = 1;
+
+      if (bone && bone->flag & BONE_MULT_VG_ENV) {
+        weight *= distfactor_to_bone(
+            co, bone->arm_head, bone->arm_tail, bone->rad_head, bone->rad_tail, bone->dist);
+      }
+
+      pchan_bone_deform(pchan, weight, vec, dq, smat, co, full_deform, &contrib);
     }
     /* If there are vertex-groups but not groups with bones (like for soft-body groups). */
     if (deformed == 0 && use_envelope) {
@@ -481,6 +481,7 @@ static void armature_vert_task_editmesh_no_dvert(void *__restrict userdata,
 
 static void armature_deform_coords_impl(const Object *ob_arm,
                                         const Object *ob_target,
+                                        const ListBase *defbase,
                                         float (*vert_coords)[3],
                                         float (*vert_deform_mats)[3][3],
                                         const int vert_coords_len,
@@ -489,15 +490,14 @@ static void armature_deform_coords_impl(const Object *ob_arm,
                                         const char *defgrp_name,
                                         blender::Span<MDeformVert> dverts,
                                         const Mesh *me_target,
-                                        const BMEditMesh *em_target,
-                                        bGPDstroke *gps_target)
+                                        const BMEditMesh *em_target)
 {
   const bArmature *arm = static_cast<const bArmature *>(ob_arm->data);
   bPoseChannel **pchan_from_defbase = nullptr;
   const bool use_envelope = (deformflag & ARM_DEF_ENVELOPE) != 0;
   const bool use_quaternion = (deformflag & ARM_DEF_QUATERNION) != 0;
   const bool invert_vgroup = (deformflag & ARM_DEF_INVERT_VGROUP) != 0;
-  int defbase_len = 0; /* safety for vertexgroup index overflow */
+  int defbase_len = 0; /* Safety for vertex-group index overflow. */
   bool use_dverts = false;
   int armature_def_nr = -1;
   int cd_dvert_offset = -1;
@@ -515,34 +515,11 @@ static void armature_deform_coords_impl(const Object *ob_arm,
   }
 
   if (BKE_object_supports_vertex_groups(ob_target)) {
-    const ID *target_data_id = nullptr;
-    if (ob_target->type == OB_MESH) {
-      target_data_id = me_target == nullptr ? (const ID *)ob_target->data : &me_target->id;
-      if (em_target == nullptr) {
-        const Mesh *mesh = (const Mesh *)target_data_id;
-        dverts = mesh->deform_verts();
-      }
-    }
-    else if (ob_target->type == OB_LATTICE) {
-      const Lattice *lt = static_cast<const Lattice *>(ob_target->data);
-      target_data_id = (const ID *)ob_target->data;
-      dverts = blender::Span<MDeformVert>(lt->dvert, lt->pntsu * lt->pntsv * lt->pntsw);
-    }
-    else if (ob_target->type == OB_GPENCIL_LEGACY) {
-      target_data_id = (const ID *)ob_target->data;
-      dverts = blender::Span<MDeformVert>(gps_target->dvert, gps_target->totpoints);
-    }
-    else if (ob_target->type == OB_GREASE_PENCIL) {
-      target_data_id = (const ID *)ob_target->data;
-      BLI_assert(dverts.size() == vert_coords_len);
-    }
-
     /* Collect the vertex group names from the evaluated data. */
-    armature_def_nr = BKE_id_defgroup_name_index(target_data_id, defgrp_name);
-    const ListBase *defbase = BKE_id_defgroup_list_get(target_data_id);
+    armature_def_nr = BKE_defgroup_name_index(defbase, defgrp_name);
     defbase_len = BLI_listbase_count(defbase);
 
-    /* get a vertex-deform-index to posechannel array */
+    /* Get a vertex-deform-index to pose-channel array. */
     if (deformflag & ARM_DEF_VGROUP) {
       /* if we have a Mesh, only use dverts if it has them */
       if (em_target) {
@@ -629,51 +606,38 @@ static void armature_deform_coords_impl(const Object *ob_arm,
   }
 }
 
-void BKE_armature_deform_coords_with_gpencil_stroke(const Object *ob_arm,
-                                                    const Object *ob_target,
-                                                    float (*vert_coords)[3],
-                                                    float (*vert_deform_mats)[3][3],
-                                                    int vert_coords_len,
-                                                    int deformflag,
-                                                    float (*vert_coords_prev)[3],
-                                                    const char *defgrp_name,
-                                                    bGPDstroke *gps_target)
-{
-  armature_deform_coords_impl(ob_arm,
-                              ob_target,
-                              vert_coords,
-                              vert_deform_mats,
-                              vert_coords_len,
-                              deformflag,
-                              vert_coords_prev,
-                              defgrp_name,
-                              {},
-                              nullptr,
-                              nullptr,
-                              gps_target);
-}
-
 void BKE_armature_deform_coords_with_curves(
     const Object &ob_arm,
     const Object &ob_target,
+    const ListBase *defbase,
     blender::MutableSpan<blender::float3> vert_coords,
-    std::optional<blender::MutableSpan<blender::float3>> vert_coords_prev,
+    std::optional<blender::Span<blender::float3>> vert_coords_prev,
     std::optional<blender::MutableSpan<blender::float3x3>> vert_deform_mats,
     blender::Span<MDeformVert> dverts,
     int deformflag,
     blender::StringRefNull defgrp_name)
 {
+  /* Vertex groups must be provided explicitly, cannot rely on object vertex groups since this is
+   * used for Grease Pencil layers as well. */
+  BLI_assert(dverts.size() == vert_coords.size());
+
+  blender::float3 *vert_coords_prev_data = nullptr;
+  if (vert_coords_prev.has_value()) {
+    /* const_cast for old positions for the C API, these are not actually written. */
+    vert_coords_prev_data = const_cast<blender::float3 *>(vert_coords_prev->data());
+  }
+
   armature_deform_coords_impl(
       &ob_arm,
       &ob_target,
+      defbase,
       reinterpret_cast<float(*)[3]>(vert_coords.data()),
       vert_deform_mats ? reinterpret_cast<float(*)[3][3]>(vert_deform_mats->data()) : nullptr,
       vert_coords.size(),
       deformflag,
-      vert_coords_prev ? reinterpret_cast<float(*)[3]>(vert_coords_prev->data()) : nullptr,
+      reinterpret_cast<float(*)[3]>(vert_coords_prev_data),
       defgrp_name.c_str(),
       dverts,
-      nullptr,
       nullptr,
       nullptr);
 }
@@ -688,17 +652,35 @@ void BKE_armature_deform_coords_with_mesh(const Object *ob_arm,
                                           const char *defgrp_name,
                                           const Mesh *me_target)
 {
+  /* Note armature modifier on legacy curves calls this, so vertex groups are not guaranteed to
+   * exist. */
+  const ID *id_target = static_cast<const ID *>(ob_target->data);
+  const ListBase *defbase = BKE_id_supports_vertex_groups(id_target) ?
+                                BKE_id_defgroup_list_get(id_target) :
+                                nullptr;
+  blender::Span<MDeformVert> dverts;
+  if (ob_target->type == OB_MESH) {
+    if (me_target == nullptr) {
+      me_target = static_cast<const Mesh *>(ob_target->data);
+    }
+    dverts = me_target->deform_verts();
+  }
+  else if (ob_target->type == OB_LATTICE) {
+    const Lattice *lt = static_cast<const Lattice *>(ob_target->data);
+    dverts = blender::Span<MDeformVert>(lt->dvert, lt->pntsu * lt->pntsv * lt->pntsw);
+  }
+
   armature_deform_coords_impl(ob_arm,
                               ob_target,
+                              defbase,
                               vert_coords,
                               vert_deform_mats,
                               vert_coords_len,
                               deformflag,
                               vert_coords_prev,
                               defgrp_name,
-                              {},
+                              dverts,
                               me_target,
-                              nullptr,
                               nullptr);
 }
 
@@ -712,8 +694,10 @@ void BKE_armature_deform_coords_with_editmesh(const Object *ob_arm,
                                               const char *defgrp_name,
                                               const BMEditMesh *em_target)
 {
+  const ListBase *defbase = BKE_id_defgroup_list_get(static_cast<const ID *>(ob_target->data));
   armature_deform_coords_impl(ob_arm,
                               ob_target,
+                              defbase,
                               vert_coords,
                               vert_deform_mats,
                               vert_coords_len,
@@ -722,8 +706,7 @@ void BKE_armature_deform_coords_with_editmesh(const Object *ob_arm,
                               defgrp_name,
                               {},
                               nullptr,
-                              em_target,
-                              nullptr);
+                              em_target);
 }
 
 /** \} */

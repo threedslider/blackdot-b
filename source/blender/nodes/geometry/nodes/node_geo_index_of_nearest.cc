@@ -16,8 +16,9 @@ static void node_declare(NodeDeclarationBuilder &b)
   b.add_input<decl::Vector>("Position").implicit_field(implicit_field_inputs::position);
   b.add_input<decl::Int>("Group ID").supports_field().hide_value();
 
-  b.add_output<decl::Int>("Index").field_source().description("Index of nearest element");
-  b.add_output<decl::Bool>("Has Neighbor").field_source();
+  b.add_output<decl::Int>("Index").field_source_reference_all().description(
+      "Index of nearest element");
+  b.add_output<decl::Bool>("Has Neighbor").field_source_reference_all();
 }
 
 static KDTree_3d *build_kdtree(const Span<float3> positions, const IndexMask &mask)
@@ -128,8 +129,7 @@ class IndexOfNearestFieldInput final : public bke::GeometryFieldInput {
     return VArray<int>::ForContainer(std::move(result));
   }
 
- public:
-  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const
+  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const override
   {
     positions_field_.node().for_each_field_input_recursive(fn);
     group_field_.node().for_each_field_input_recursive(fn);
@@ -190,15 +190,14 @@ class HasNeighborFieldInput final : public bke::GeometryFieldInput {
     const VArraySpan<int> group_span(group);
     mask.foreach_index([&](const int i) {
       counts.add_or_modify(
-          group_span[i], [](int *count) { *count = 0; }, [](int *count) { (*count)++; });
+          group_span[i], [](int *count) { *count = 1; }, [](int *count) { (*count)++; });
     });
     Array<bool> result(mask.min_array_size());
     mask.foreach_index([&](const int i) { result[i] = counts.lookup(group_span[i]) > 1; });
     return VArray<bool>::ForContainer(std::move(result));
   }
 
- public:
-  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const
+  void for_each_field_input_recursive(FunctionRef<void(const FieldInput &)> fn) const override
   {
     group_field_.node().for_each_field_input_recursive(fn);
   }
@@ -244,10 +243,15 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_INDEX_OF_NEAREST, "Index of Nearest", NODE_CLASS_CONVERTER);
+  geo_node_type_base(&ntype, "GeometryNodeIndexOfNearest", GEO_NODE_INDEX_OF_NEAREST);
+  ntype.ui_name = "Index of Nearest";
+  ntype.ui_description =
+      "Find the nearest element in a group. Similar to the \"Sample Nearest\" node";
+  ntype.enum_name_legacy = "INDEX_OF_NEAREST";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

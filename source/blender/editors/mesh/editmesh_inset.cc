@@ -20,6 +20,7 @@
 #include "BKE_editmesh.hh"
 #include "BKE_global.hh"
 #include "BKE_layer.hh"
+#include "BKE_screen.hh"
 #include "BKE_unit.hh"
 
 #include "RNA_access.hh"
@@ -79,7 +80,7 @@ static void edbm_inset_update_header(wmOperator *op, bContext *C)
     char msg[UI_MAX_DRAW_STR];
     char flts_str[NUM_STR_REP_LEN * 2];
     if (hasNumInput(&opdata->num_input)) {
-      outputNumInput(&opdata->num_input, flts_str, &sce->unit);
+      outputNumInput(&opdata->num_input, flts_str, sce->unit);
     }
     else {
       BKE_unit_value_as_string(flts_str,
@@ -87,14 +88,14 @@ static void edbm_inset_update_header(wmOperator *op, bContext *C)
                                RNA_float_get(op->ptr, "thickness"),
                                4,
                                B_UNIT_LENGTH,
-                               &sce->unit,
+                               sce->unit,
                                true);
       BKE_unit_value_as_string(flts_str + NUM_STR_REP_LEN,
                                NUM_STR_REP_LEN,
                                RNA_float_get(op->ptr, "depth"),
                                4,
                                B_UNIT_LENGTH,
-                               &sce->unit,
+                               sce->unit,
                                true);
     }
     SNPRINTF(msg, IFACE_("Thickness: %s, Depth: %s"), flts_str, flts_str + NUM_STR_REP_LEN);
@@ -104,7 +105,7 @@ static void edbm_inset_update_header(wmOperator *op, bContext *C)
   WorkspaceStatus status(C);
   status.item(IFACE_("Confirm"), ICON_EVENT_RETURN, ICON_MOUSE_LMB);
   status.item(IFACE_("Cancel"), ICON_EVENT_ESC, ICON_MOUSE_RMB);
-  status.item_bool(IFACE_("Tweak"), opdata->modify_depth, ICON_EVENT_CTRL);
+  status.item_bool(IFACE_("Depth"), opdata->modify_depth, ICON_EVENT_CTRL);
   status.item_bool(IFACE_("Outset"), RNA_boolean_get(op->ptr, "use_outset"), ICON_EVENT_O);
   status.item_bool(IFACE_("Boundary"), RNA_boolean_get(op->ptr, "use_boundary"), ICON_EVENT_B);
   status.item_bool(IFACE_("Individual"), RNA_boolean_get(op->ptr, "use_individual"), ICON_EVENT_I);
@@ -168,8 +169,10 @@ static bool edbm_inset_init(bContext *C, wmOperator *op, const bool is_modal)
       opdata->ob_store[ob_index].mesh_backup = EDBM_redo_state_store(em);
     }
 
-    opdata->draw_handle_pixel = ED_region_draw_cb_activate(
-        region->type, ED_region_draw_mouse_line_cb, opdata->mcenter, REGION_DRAW_POST_PIXEL);
+    opdata->draw_handle_pixel = ED_region_draw_cb_activate(region->runtime->type,
+                                                           ED_region_draw_mouse_line_cb,
+                                                           opdata->mcenter,
+                                                           REGION_DRAW_POST_PIXEL);
     G.moving = G_TRANSFORM_EDIT;
   }
 
@@ -188,7 +191,7 @@ static void edbm_inset_exit(bContext *C, wmOperator *op)
     for (uint ob_index = 0; ob_index < opdata->ob_store_len; ob_index++) {
       EDBM_redo_state_free(&opdata->ob_store[ob_index].mesh_backup);
     }
-    ED_region_draw_cb_exit(region->type, opdata->draw_handle_pixel);
+    ED_region_draw_cb_exit(region->runtime->type, opdata->draw_handle_pixel);
     G.moving = 0;
   }
 

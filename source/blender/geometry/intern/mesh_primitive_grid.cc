@@ -14,7 +14,7 @@ static void calculate_uvs(Mesh *mesh,
                           const Span<int> corner_verts,
                           const float size_x,
                           const float size_y,
-                          const bke::AttributeIDRef &uv_map_id)
+                          const StringRef uv_map_id)
 {
   bke::MutableAttributeAccessor attributes = mesh->attributes_for_write();
   bke::SpanAttributeWriter uv_attribute = attributes.lookup_or_add_for_write_only_span<float2>(
@@ -41,7 +41,7 @@ Mesh *create_grid_mesh(const int verts_x,
                        const int verts_y,
                        const float size_x,
                        const float size_y,
-                       const bke::AttributeIDRef &uv_map_id)
+                       const std::optional<StringRef> &uv_map_id)
 {
   BLI_assert(verts_x > 0 && verts_y > 0);
   const int edges_x = verts_x - 1;
@@ -143,11 +143,15 @@ Mesh *create_grid_mesh(const int verts_x,
       });
 
   if (uv_map_id && mesh->faces_num != 0) {
-    calculate_uvs(mesh, positions, corner_verts, size_x, size_y, uv_map_id);
+    calculate_uvs(mesh, positions, corner_verts, size_x, size_y, *uv_map_id);
   }
 
-  mesh->tag_loose_verts_none();
-  mesh->tag_loose_edges_none();
+  if (verts_x > 1 || verts_y > 1) {
+    mesh->tag_loose_verts_none();
+  }
+  if (verts_x > 1 && verts_y > 1) {
+    mesh->tag_loose_edges_none();
+  }
   mesh->tag_overlapping_none();
 
   const float3 bounds = float3(size_x * 0.5f, size_y * 0.5f, 0.0f);

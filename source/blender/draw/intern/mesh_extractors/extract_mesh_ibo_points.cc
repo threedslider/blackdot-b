@@ -6,8 +6,6 @@
  * \ingroup draw
  */
 
-#include "BLI_array_utils.hh"
-
 #include "GPU_index_buffer.hh"
 
 #include "draw_subdivision.hh"
@@ -187,7 +185,7 @@ static void extract_points_bm(const MeshRenderData &mr, gpu::IndexBuf &points)
 
 void extract_points(const MeshRenderData &mr, gpu::IndexBuf &points)
 {
-  if (mr.extract_type == MR_EXTRACT_MESH) {
+  if (mr.extract_type == MeshExtractType::Mesh) {
     extract_points_mesh(mr, points);
   }
   else {
@@ -334,7 +332,7 @@ void extract_points_subdiv(const MeshRenderData &mr,
                            const DRWSubdivCache &subdiv_cache,
                            gpu::IndexBuf &points)
 {
-  if (mr.extract_type == MR_EXTRACT_MESH) {
+  if (mr.extract_type == MeshExtractType::Mesh) {
     extract_points_subdiv_mesh(mr, subdiv_cache, points);
   }
   else {

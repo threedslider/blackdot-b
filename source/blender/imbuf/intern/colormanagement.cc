@@ -28,9 +28,9 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_math_color.h"
 #include "BLI_math_color.hh"
+#include "BLI_path_utils.hh"
 #include "BLI_rect.h"
 #include "BLI_string.h"
 #include "BLI_task.h"
@@ -41,7 +41,7 @@
 #include "BKE_colortools.hh"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
-#include "BKE_image_format.h"
+#include "BKE_image_format.hh"
 #include "BKE_main.hh"
 
 #include "GPU_capabilities.hh"
@@ -947,8 +947,7 @@ static OCIO_ConstCPUProcessorRcPtr *colorspace_to_scene_linear_cpu_processor(
           colorspace->name, global_role_scene_linear);
 
       if (processor != nullptr) {
-        colorspace->to_scene_linear = (OCIO_ConstCPUProcessorRcPtr *)OCIO_processorGetCPUProcessor(
-            processor);
+        colorspace->to_scene_linear = OCIO_processorGetCPUProcessor(processor);
         OCIO_processorRelease(processor);
       }
     }
@@ -970,8 +969,7 @@ static OCIO_ConstCPUProcessorRcPtr *colorspace_from_scene_linear_cpu_processor(
           global_role_scene_linear, colorspace->name);
 
       if (processor != nullptr) {
-        colorspace->from_scene_linear = (OCIO_ConstCPUProcessorRcPtr *)
-            OCIO_processorGetCPUProcessor(processor);
+        colorspace->from_scene_linear = OCIO_processorGetCPUProcessor(processor);
         OCIO_processorRelease(processor);
       }
     }
@@ -1010,8 +1008,7 @@ static OCIO_ConstCPUProcessorRcPtr *display_from_scene_linear_processor(
       }
 
       if (processor != nullptr) {
-        display->from_scene_linear = (OCIO_ConstCPUProcessorRcPtr *)OCIO_processorGetCPUProcessor(
-            processor);
+        display->from_scene_linear = OCIO_processorGetCPUProcessor(processor);
         OCIO_processorRelease(processor);
       }
     }
@@ -1049,8 +1046,7 @@ static OCIO_ConstCPUProcessorRcPtr *display_to_scene_linear_processor(ColorManag
       }
 
       if (processor != nullptr) {
-        display->to_scene_linear = (OCIO_ConstCPUProcessorRcPtr *)OCIO_processorGetCPUProcessor(
-            processor);
+        display->to_scene_linear = OCIO_processorGetCPUProcessor(processor);
         OCIO_processorRelease(processor);
       }
     }
@@ -1148,6 +1144,7 @@ void colormanage_imbuf_make_linear(ImBuf *ibuf, const char *from_colorspace)
                                   from_colorspace,
                                   to_colorspace,
                                   predivide);
+    ibuf->float_buffer.colorspace = nullptr;
   }
 }
 
@@ -1284,10 +1281,10 @@ static void colormanage_check_colorspace_settings(
   (void)what;
 }
 
-static bool seq_callback(Sequence *seq, void * /*user_data*/)
+static bool strip_callback(Strip *strip, void * /*user_data*/)
 {
-  if (seq->strip) {
-    colormanage_check_colorspace_settings(&seq->strip->colorspace_settings, "sequencer strip");
+  if (strip->data) {
+    colormanage_check_colorspace_settings(&strip->data->colorspace_settings, "sequencer strip");
   }
   return true;
 }
@@ -1317,7 +1314,7 @@ void IMB_colormanagement_check_file_config(Main *bmain)
 
     /* check sequencer strip input color space settings */
     if (scene->ed != nullptr) {
-      SEQ_for_each_callback(&scene->ed->seqbase, seq_callback, nullptr);
+      SEQ_for_each_callback(&scene->ed->seqbase, strip_callback, nullptr);
     }
   }
 
@@ -1714,21 +1711,13 @@ static void display_buffer_apply_get_linear_buffer(DisplayBufferThread *handle,
   }
 }
 
-static void *do_display_buffer_apply_thread(void *handle_v)
+static void do_display_buffer_apply_no_processor(DisplayBufferThread *handle)
 {
-  DisplayBufferThread *handle = (DisplayBufferThread *)handle_v;
-  ColormanageProcessor *cm_processor = handle->cm_processor;
-  float *display_buffer = handle->display_buffer;
-  uchar *display_buffer_byte = handle->display_buffer_byte;
-  int channels = handle->channels;
-  int width = handle->width;
-  int height = handle->tot_line;
-  float dither = handle->dither;
-  bool is_data = handle->is_data;
-
-  if (cm_processor == nullptr) {
-    if (display_buffer_byte && display_buffer_byte != handle->byte_buffer) {
-      IMB_buffer_byte_from_byte(display_buffer_byte,
+  const int width = handle->width;
+  const int height = handle->tot_line;
+  if (handle->display_buffer_byte && handle->display_buffer_byte != handle->byte_buffer) {
+    if (handle->byte_buffer) {
+      IMB_buffer_byte_from_byte(handle->display_buffer_byte,
                                 handle->byte_buffer,
                                 IB_PROFILE_SRGB,
                                 IB_PROFILE_SRGB,
@@ -1738,9 +1727,24 @@ static void *do_display_buffer_apply_thread(void *handle_v)
                                 width,
                                 width);
     }
+    else if (handle->buffer) {
+      IMB_buffer_byte_from_float(handle->display_buffer_byte,
+                                 handle->buffer,
+                                 handle->channels,
+                                 handle->dither,
+                                 IB_PROFILE_SRGB,
+                                 IB_PROFILE_SRGB,
+                                 handle->predivide,
+                                 width,
+                                 height,
+                                 width,
+                                 width);
+    }
+  }
 
-    if (display_buffer) {
-      IMB_buffer_float_from_byte(display_buffer,
+  if (handle->display_buffer) {
+    if (handle->byte_buffer) {
+      IMB_buffer_float_from_byte(handle->display_buffer,
                                  handle->byte_buffer,
                                  IB_PROFILE_SRGB,
                                  IB_PROFILE_SRGB,
@@ -1750,61 +1754,80 @@ static void *do_display_buffer_apply_thread(void *handle_v)
                                  width,
                                  width);
     }
+    else if (handle->buffer) {
+      IMB_buffer_float_from_float(handle->display_buffer,
+                                  handle->buffer,
+                                  handle->channels,
+                                  IB_PROFILE_SRGB,
+                                  IB_PROFILE_SRGB,
+                                  handle->predivide,
+                                  width,
+                                  height,
+                                  width,
+                                  width);
+    }
   }
-  else {
-    bool is_straight_alpha;
-    float *linear_buffer = static_cast<float *>(MEM_mallocN(
-        size_t(channels) * width * height * sizeof(float), "color conversion linear buffer"));
+}
 
-    display_buffer_apply_get_linear_buffer(handle, height, linear_buffer, &is_straight_alpha);
+static void do_display_buffer_apply_thread(void *handle_v)
+{
+  DisplayBufferThread *handle = (DisplayBufferThread *)handle_v;
+  ColormanageProcessor *cm_processor = handle->cm_processor;
+  if (cm_processor == nullptr) {
+    do_display_buffer_apply_no_processor(handle);
+    return;
+  }
 
-    bool predivide = handle->predivide && (is_straight_alpha == false);
+  float *display_buffer = handle->display_buffer;
+  uchar *display_buffer_byte = handle->display_buffer_byte;
+  int channels = handle->channels;
+  int width = handle->width;
+  int height = handle->tot_line;
+  float *linear_buffer = static_cast<float *>(MEM_mallocN(
+      size_t(channels) * width * height * sizeof(float), "color conversion linear buffer"));
 
-    if (is_data) {
-      /* special case for data buffers - no color space conversions,
-       * only generate byte buffers
-       */
-    }
-    else {
-      /* apply processor */
-      IMB_colormanagement_processor_apply(
-          cm_processor, linear_buffer, width, height, channels, predivide);
-    }
+  bool is_straight_alpha;
+  display_buffer_apply_get_linear_buffer(handle, height, linear_buffer, &is_straight_alpha);
 
-    /* copy result to output buffers */
-    if (display_buffer_byte) {
-      /* do conversion */
-      IMB_buffer_byte_from_float(display_buffer_byte,
-                                 linear_buffer,
-                                 channels,
-                                 dither,
-                                 IB_PROFILE_SRGB,
-                                 IB_PROFILE_SRGB,
-                                 predivide,
-                                 width,
-                                 height,
-                                 width,
-                                 width);
-    }
+  bool predivide = handle->predivide && (is_straight_alpha == false);
 
-    if (display_buffer) {
-      memcpy(display_buffer, linear_buffer, size_t(width) * height * channels * sizeof(float));
+  /* Apply processor (note: data buffers never get color space conversions). */
+  if (!handle->is_data) {
+    IMB_colormanagement_processor_apply(
+        cm_processor, linear_buffer, width, height, channels, predivide);
+  }
 
-      if (is_straight_alpha && channels == 4) {
-        const size_t i_last = size_t(width) * height;
-        size_t i;
-        float *fp;
+  /* copy result to output buffers */
+  if (display_buffer_byte) {
+    /* do conversion */
+    IMB_buffer_byte_from_float(display_buffer_byte,
+                               linear_buffer,
+                               channels,
+                               handle->dither,
+                               IB_PROFILE_SRGB,
+                               IB_PROFILE_SRGB,
+                               predivide,
+                               width,
+                               height,
+                               width,
+                               width);
+  }
 
-        for (i = 0, fp = display_buffer; i != i_last; i++, fp += channels) {
-          straight_to_premul_v4(fp);
-        }
+  if (display_buffer) {
+    memcpy(display_buffer, linear_buffer, size_t(width) * height * channels * sizeof(float));
+
+    if (is_straight_alpha && channels == 4) {
+      const size_t i_last = size_t(width) * height;
+      size_t i;
+      float *fp;
+
+      for (i = 0, fp = display_buffer; i != i_last; i++, fp += channels) {
+        straight_to_premul_v4(fp);
       }
     }
-
-    MEM_freeN(linear_buffer);
   }
 
-  return nullptr;
+  MEM_freeN(linear_buffer);
 }
 
 static void display_buffer_apply_threaded(ImBuf *ibuf,
@@ -1848,23 +1871,28 @@ static void display_buffer_apply_threaded(ImBuf *ibuf,
                                do_display_buffer_apply_thread);
 }
 
-static bool is_ibuf_rect_in_display_space(ImBuf *ibuf,
+/* Checks if given colorspace can be used for display as-is:
+ * - View settings do not have extra curves, exposure, gamma or look applied, and
+ * - Display colorspace is the same as given colorspace. */
+static bool is_colorspace_same_as_display(const ColorSpace *colorspace,
                                           const ColorManagedViewSettings *view_settings,
                                           const ColorManagedDisplaySettings *display_settings)
 {
-  if ((view_settings->flag & COLORMANAGE_VIEW_USE_CURVES) == 0 &&
-      view_settings->exposure == 0.0f && view_settings->gamma == 1.0f)
+  if ((view_settings->flag & COLORMANAGE_VIEW_USE_CURVES) != 0 ||
+      view_settings->exposure != 0.0f || view_settings->gamma != 1.0f)
   {
-    const char *from_colorspace = ibuf->byte_buffer.colorspace->name;
-    const char *to_colorspace = get_display_colorspace_name(view_settings, display_settings);
-    ColorManagedLook *look_descr = colormanage_look_get_named(view_settings->look);
-    if (look_descr != nullptr && !STREQ(look_descr->process_space, "")) {
-      return false;
-    }
+    return false;
+  }
 
-    if (to_colorspace && STREQ(from_colorspace, to_colorspace)) {
-      return true;
-    }
+  ColorManagedLook *look_descr = colormanage_look_get_named(view_settings->look);
+  if (look_descr != nullptr && !STREQ(look_descr->process_space, "")) {
+    return false;
+  }
+
+  const char *from_colorspace = colorspace->name;
+  const char *to_colorspace = get_display_colorspace_name(view_settings, display_settings);
+  if (to_colorspace && STREQ(from_colorspace, to_colorspace)) {
+    return true;
   }
 
   return false;
@@ -1878,15 +1906,15 @@ static void colormanage_display_buffer_process_ex(
     const ColorManagedDisplaySettings *display_settings)
 {
   ColormanageProcessor *cm_processor = nullptr;
+  /* Check if we can skip colorspace transforms. */
   bool skip_transform = false;
-
-  /* if we're going to transform byte buffer, check whether transformation would
-   * happen to the same color space as byte buffer itself is
-   * this would save byte -> float -> byte conversions making display buffer
-   * computation noticeable faster
-   */
   if (ibuf->float_buffer.data == nullptr && ibuf->byte_buffer.colorspace) {
-    skip_transform = is_ibuf_rect_in_display_space(ibuf, view_settings, display_settings);
+    skip_transform = is_colorspace_same_as_display(
+        ibuf->byte_buffer.colorspace, view_settings, display_settings);
+  }
+  if (ibuf->byte_buffer.data == nullptr && ibuf->float_buffer.colorspace) {
+    skip_transform = is_colorspace_same_as_display(
+        ibuf->float_buffer.colorspace, view_settings, display_settings);
   }
 
   if (skip_transform == false) {
@@ -1980,7 +2008,7 @@ static void processor_transform_init_handle(void *handle_v,
   handle->float_from_byte = float_from_byte;
 }
 
-static void *do_processor_transform_thread(void *handle_v)
+static void do_processor_transform_thread(void *handle_v)
 {
   ProcessorTransformThread *handle = (ProcessorTransformThread *)handle_v;
   uchar *byte_buffer = handle->byte_buffer;
@@ -2015,8 +2043,6 @@ static void *do_processor_transform_thread(void *handle_v)
           handle->cm_processor, float_buffer, width, height, channels, predivide);
     }
   }
-
-  return nullptr;
 }
 
 static void processor_transform_apply_threaded(uchar *byte_buffer,
@@ -2231,95 +2257,101 @@ void IMB_colormanagement_transform_v4(float pixel[4],
 
 void IMB_colormanagement_colorspace_to_scene_linear_v3(float pixel[3], ColorSpace *colorspace)
 {
-  OCIO_ConstCPUProcessorRcPtr *processor;
-
-  if (!colorspace) {
-    /* should never happen */
+  if (colorspace == nullptr) { /* should never happen */
     printf("%s: perform conversion from unknown color space\n", __func__);
     return;
   }
-
-  processor = colorspace_to_scene_linear_cpu_processor(colorspace);
-
-  if (processor != nullptr) {
-    OCIO_cpuProcessorApplyRGB(processor, pixel);
+  OCIO_ConstCPUProcessorRcPtr *processor = colorspace_to_scene_linear_cpu_processor(colorspace);
+  if (processor == nullptr) {
+    return;
   }
+  OCIO_cpuProcessorApplyRGB(processor, pixel);
 }
 
 void IMB_colormanagement_scene_linear_to_colorspace_v3(float pixel[3], ColorSpace *colorspace)
 {
-  OCIO_ConstCPUProcessorRcPtr *processor;
-
-  if (!colorspace) {
-    /* should never happen */
+  if (colorspace == nullptr) { /* should never happen */
     printf("%s: perform conversion from unknown color space\n", __func__);
     return;
   }
-
-  processor = colorspace_from_scene_linear_cpu_processor(colorspace);
-
-  if (processor != nullptr) {
-    OCIO_cpuProcessorApplyRGB(processor, pixel);
+  OCIO_ConstCPUProcessorRcPtr *processor = colorspace_from_scene_linear_cpu_processor(colorspace);
+  if (processor == nullptr) {
+    return;
   }
+  OCIO_cpuProcessorApplyRGB(processor, pixel);
 }
 
 void IMB_colormanagement_colorspace_to_scene_linear_v4(float pixel[4],
                                                        bool predivide,
                                                        ColorSpace *colorspace)
 {
-  OCIO_ConstCPUProcessorRcPtr *processor;
-
-  if (!colorspace) {
-    /* should never happen */
+  if (colorspace == nullptr) { /* should never happen */
     printf("%s: perform conversion from unknown color space\n", __func__);
     return;
   }
-
-  processor = colorspace_to_scene_linear_cpu_processor(colorspace);
-
-  if (processor != nullptr) {
-    if (predivide) {
-      OCIO_cpuProcessorApplyRGBA_predivide(processor, pixel);
-    }
-    else {
-      OCIO_cpuProcessorApplyRGBA(processor, pixel);
-    }
+  OCIO_ConstCPUProcessorRcPtr *processor = colorspace_to_scene_linear_cpu_processor(colorspace);
+  if (processor == nullptr) {
+    return;
+  }
+  if (predivide) {
+    OCIO_cpuProcessorApplyRGBA_predivide(processor, pixel);
+  }
+  else {
+    OCIO_cpuProcessorApplyRGBA(processor, pixel);
   }
 }
 
 void IMB_colormanagement_colorspace_to_scene_linear(
     float *buffer, int width, int height, int channels, ColorSpace *colorspace, bool predivide)
 {
-  OCIO_ConstCPUProcessorRcPtr *processor;
-
-  if (!colorspace) {
-    /* should never happen */
+  if (colorspace == nullptr) { /* should never happen */
     printf("%s: perform conversion from unknown color space\n", __func__);
     return;
   }
-
-  processor = colorspace_to_scene_linear_cpu_processor(colorspace);
-
-  if (processor != nullptr) {
-    OCIO_PackedImageDesc *img;
-
-    img = OCIO_createOCIO_PackedImageDesc(buffer,
-                                          width,
-                                          height,
-                                          channels,
-                                          sizeof(float),
-                                          size_t(channels) * sizeof(float),
-                                          size_t(channels) * sizeof(float) * width);
-
-    if (predivide) {
-      OCIO_cpuProcessorApply_predivide(processor, img);
-    }
-    else {
-      OCIO_cpuProcessorApply(processor, img);
-    }
-
-    OCIO_PackedImageDescRelease(img);
+  OCIO_ConstCPUProcessorRcPtr *processor = colorspace_to_scene_linear_cpu_processor(colorspace);
+  if (processor == nullptr) {
+    return;
   }
+  OCIO_PackedImageDesc *img = OCIO_createOCIO_PackedImageDesc(buffer,
+                                                              width,
+                                                              height,
+                                                              channels,
+                                                              sizeof(float),
+                                                              size_t(channels) * sizeof(float),
+                                                              size_t(channels) * sizeof(float) *
+                                                                  width);
+
+  if (predivide) {
+    OCIO_cpuProcessorApply_predivide(processor, img);
+  }
+  else {
+    OCIO_cpuProcessorApply(processor, img);
+  }
+
+  OCIO_PackedImageDescRelease(img);
+}
+
+void IMB_colormanagement_scene_linear_to_colorspace(
+    float *buffer, int width, int height, int channels, ColorSpace *colorspace)
+{
+  if (colorspace == nullptr) { /* should never happen */
+    printf("%s: perform conversion from unknown color space\n", __func__);
+    return;
+  }
+  OCIO_ConstCPUProcessorRcPtr *processor = colorspace_from_scene_linear_cpu_processor(colorspace);
+  if (processor == nullptr) {
+    return;
+  }
+  OCIO_PackedImageDesc *img = OCIO_createOCIO_PackedImageDesc(buffer,
+                                                              width,
+                                                              height,
+                                                              channels,
+                                                              sizeof(float),
+                                                              size_t(channels) * sizeof(float),
+                                                              size_t(channels) * sizeof(float) *
+                                                                  width);
+  OCIO_cpuProcessorApply(processor, img);
+  OCIO_PackedImageDescRelease(img);
 }
 
 void IMB_colormanagement_imbuf_to_byte_texture(uchar *out_buffer,
@@ -2818,11 +2850,11 @@ uchar *IMB_display_buffer_acquire(ImBuf *ibuf,
     applied_view_settings = &default_view_settings;
   }
 
-  /* early out: no float buffer and byte buffer is already in display space,
-   * let's just use if
-   */
+  /* No float buffer and byte buffer is already in display space, let's just use it. */
   if (ibuf->float_buffer.data == nullptr && ibuf->byte_buffer.colorspace && ibuf->channels == 4) {
-    if (is_ibuf_rect_in_display_space(ibuf, applied_view_settings, display_settings)) {
+    if (is_colorspace_same_as_display(
+            ibuf->byte_buffer.colorspace, applied_view_settings, display_settings))
+    {
       return ibuf->byte_buffer.data;
     }
   }
@@ -3835,15 +3867,18 @@ static void imb_partial_display_buffer_update_ex(
     ColormanageProcessor *cm_processor = nullptr;
     bool skip_transform = false;
 
-    /* Byte buffer is assumed to be in imbuf's rect space, so if byte buffer
-     * is known we could skip display->linear->display conversion in case
-     * display color space matches imbuf's rect space.
-     *
-     * But if there's a float buffer it's likely operation was performed on
-     * it first and byte buffer is likely to be out of date here.
-     */
+    /* If we only have a byte or a float buffer, and color space already
+     * matches display, there's no need to do color transforms.
+     * However if both float and byte buffers exist, it is likely that
+     * some operation was performed on float buffer first, and the byte
+     * buffer is out of date. */
     if (linear_buffer == nullptr && byte_buffer != nullptr) {
-      skip_transform = is_ibuf_rect_in_display_space(ibuf, view_settings, display_settings);
+      skip_transform = is_colorspace_same_as_display(
+          ibuf->byte_buffer.colorspace, view_settings, display_settings);
+    }
+    if (byte_buffer == nullptr && linear_buffer != nullptr) {
+      skip_transform = is_colorspace_same_as_display(
+          ibuf->float_buffer.colorspace, view_settings, display_settings);
     }
 
     if (!skip_transform) {
@@ -4017,12 +4052,9 @@ ColormanageProcessor *IMB_colormanagement_colorspace_processor_new(const char *f
                                                                    const char *to_colorspace)
 {
   ColormanageProcessor *cm_processor;
-  ColorSpace *color_space;
 
   cm_processor = MEM_cnew<ColormanageProcessor>("colormanagement processor");
-
-  color_space = colormanage_colorspace_get_named(to_colorspace);
-  cm_processor->is_data_result = color_space->is_data;
+  cm_processor->is_data_result = IMB_colormanagement_space_name_is_data(to_colorspace);
 
   OCIO_ConstProcessorRcPtr *processor = create_colorspace_transform_processor(from_colorspace,
                                                                               to_colorspace);

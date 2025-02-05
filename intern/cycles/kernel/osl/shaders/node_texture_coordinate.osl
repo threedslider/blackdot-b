@@ -23,7 +23,12 @@ shader node_texture_coordinate(
   if (is_background) {
     Generated = P;
     UV = point(0.0, 0.0, 0.0);
-    Object = P;
+    if (use_transform) {
+      Object = transform(object_itfm, P);
+    }
+    else {
+      Object = P;
+    }
     point Pcam = transform("camera", "world", point(0, 0, 0));
     Camera = transform("camera", P + Pcam);
     getattribute("NDC", Window);
@@ -48,7 +53,9 @@ shader node_texture_coordinate(
       if (!getattribute("geom:generated", Generated)) {
         Generated = transform("object", P);
       }
-      if (!getattribute("geom:uv", UV)) {
+      float is_light;
+      getattribute("object:is_light", is_light);
+      if (!getattribute("geom:uv", UV) && is_light) {
         UV = point(1.0 - u - v, u, 0.0);
       }
     }
@@ -61,27 +68,27 @@ shader node_texture_coordinate(
     }
     Camera = transform("camera", P);
     Window = transform("NDC", P);
-    Normal = transform("world", "object", N);
+    Normal = normalize(transform("world", "object", N));
     Reflection = -reflect(I, N);
   }
 
   if (bump_offset == "dx") {
     if (!from_dupli) {
-      Generated += Dx(Generated);
-      UV += Dx(UV);
+      Generated += Dx(Generated) * BUMP_DX;
+      UV += Dx(UV) * BUMP_DX;
     }
-    Object += Dx(Object);
-    Camera += Dx(Camera);
-    Window += Dx(Window);
+    Object += Dx(Object) * BUMP_DX;
+    Camera += Dx(Camera) * BUMP_DX;
+    Window += Dx(Window) * BUMP_DX;
   }
   else if (bump_offset == "dy") {
     if (!from_dupli) {
-      Generated += Dy(Generated);
-      UV += Dy(UV);
+      Generated += Dy(Generated) * BUMP_DY;
+      UV += Dy(UV) * BUMP_DY;
     }
-    Object += Dy(Object);
-    Camera += Dy(Camera);
-    Window += Dy(Window);
+    Object += Dy(Object) * BUMP_DY;
+    Camera += Dy(Camera) * BUMP_DY;
+    Window += Dy(Window) * BUMP_DY;
   }
 
   Window[2] = 0.0;

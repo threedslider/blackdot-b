@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "BKE_bake_items.hh"
-#include "BKE_bake_items_serialize.hh"
 #include "BKE_curves.hh"
 #include "BKE_grease_pencil.hh"
 #include "BKE_instances.hh"
@@ -12,7 +11,8 @@
 #include "BKE_volume.hh"
 #include "BKE_volume_grid.hh"
 
-#include "BLI_math_matrix_types.hh"
+#include "BLI_memory_counter.hh"
+#include "BLI_serialize.hh"
 
 #include "DNA_material_types.h"
 #include "DNA_volume_types.h"
@@ -23,6 +23,11 @@ using namespace io::serialize;
 using DictionaryValuePtr = std::shared_ptr<DictionaryValue>;
 
 GeometryBakeItem::GeometryBakeItem(GeometrySet geometry) : geometry(std::move(geometry)) {}
+
+void GeometryBakeItem::count_memory(MemoryCounter &memory) const
+{
+  this->geometry.count_memory(memory);
+}
 
 static std::unique_ptr<BakeMaterialsList> materials_to_weak_references(
     Material ***materials, short *materials_num, BakeDataBlockMap *data_block_map)
@@ -161,6 +166,14 @@ VolumeGridBakeItem::VolumeGridBakeItem(std::unique_ptr<GVolumeGrid> grid) : grid
 }
 
 VolumeGridBakeItem::~VolumeGridBakeItem() = default;
+
+void VolumeGridBakeItem::count_memory(MemoryCounter &memory) const
+{
+  if (grid && *grid) {
+    grid->get().count_memory(memory);
+  }
+}
+
 #endif
 
 PrimitiveBakeItem::PrimitiveBakeItem(const CPPType &type, const void *value) : type_(type)
@@ -177,6 +190,11 @@ PrimitiveBakeItem::~PrimitiveBakeItem()
 
 StringBakeItem::StringBakeItem(std::string value) : value_(std::move(value)) {}
 
+void StringBakeItem::count_memory(MemoryCounter &memory) const
+{
+  memory.add(value_.size());
+}
+
 BakeStateRef::BakeStateRef(const BakeState &bake_state)
 {
   this->items_by_id.reserve(bake_state.items_by_id.size());
@@ -184,5 +202,16 @@ BakeStateRef::BakeStateRef(const BakeState &bake_state)
     this->items_by_id.add_new(item.key, item.value.get());
   }
 }
+
+void BakeState::count_memory(MemoryCounter &memory) const
+{
+  for (const std::unique_ptr<BakeItem> &item : items_by_id.values()) {
+    if (item) {
+      item->count_memory(memory);
+    }
+  }
+}
+
+void BakeItem::count_memory(MemoryCounter & /*memory*/) const {}
 
 }  // namespace blender::bke::bake

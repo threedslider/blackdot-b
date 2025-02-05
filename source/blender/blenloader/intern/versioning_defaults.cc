@@ -38,7 +38,6 @@
 #include "DNA_screen_types.h"
 #include "DNA_sequence_types.h"
 #include "DNA_space_types.h"
-#include "DNA_userdef_types.h"
 #include "DNA_windowmanager_types.h"
 #include "DNA_workspace_types.h"
 #include "DNA_world_types.h"
@@ -55,8 +54,9 @@
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
 #include "BKE_main_namemap.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_mesh.hh"
+#include "BKE_node_legacy_types.hh"
 #include "BKE_node_runtime.hh"
 #include "BKE_node_tree_update.hh"
 #include "BKE_paint.hh"
@@ -171,7 +171,8 @@ static void blo_update_defaults_screen(bScreen *screen,
       seq->timeline_overlay.flag |= SEQ_TIMELINE_SHOW_STRIP_SOURCE | SEQ_TIMELINE_SHOW_STRIP_NAME |
                                     SEQ_TIMELINE_SHOW_STRIP_DURATION | SEQ_TIMELINE_SHOW_GRID |
                                     SEQ_TIMELINE_SHOW_STRIP_COLOR_TAG |
-                                    SEQ_TIMELINE_SHOW_STRIP_RETIMING | SEQ_TIMELINE_WAVEFORMS_HALF;
+                                    SEQ_TIMELINE_SHOW_STRIP_RETIMING |
+                                    SEQ_TIMELINE_WAVEFORMS_HALF | SEQ_TIMELINE_SHOW_THUMBNAILS;
       seq->preview_overlay.flag |= SEQ_PREVIEW_SHOW_OUTLINE_SELECTED;
       seq->cache_overlay.flag = SEQ_CACHE_SHOW | SEQ_CACHE_SHOW_FINAL_OUT;
       seq->draw_flag |= SEQ_DRAW_TRANSFORM_PREVIEW;
@@ -181,6 +182,7 @@ static void blo_update_defaults_screen(bScreen *screen,
       SpaceText *stext = static_cast<SpaceText *>(area->spacedata.first);
       stext->showsyntax = true;
       stext->showlinenrs = true;
+      stext->flags |= ST_FIND_WRAP;
     }
     else if (area->spacetype == SPACE_VIEW3D) {
       View3D *v3d = static_cast<View3D *>(area->spacedata.first);
@@ -310,7 +312,7 @@ void BLO_update_defaults_workspace(WorkSpace *workspace, const char *app_templat
 
     /* For 2D animation template. */
     if (STREQ(workspace->id.name + 2, "Drawing")) {
-      workspace->object_mode = OB_MODE_PAINT_GPENCIL_LEGACY;
+      workspace->object_mode = OB_MODE_PAINT_GREASE_PENCIL;
     }
 
     /* For Sculpting template. */
@@ -342,7 +344,7 @@ static void blo_update_defaults_scene(Main *bmain, Scene *scene)
 
   /* Don't enable compositing nodes. */
   if (scene->nodetree) {
-    blender::bke::ntreeFreeEmbeddedTree(scene->nodetree);
+    blender::bke::node_tree_free_embedded_tree(scene->nodetree);
     MEM_freeN(scene->nodetree);
     scene->nodetree = nullptr;
     scene->use_nodes = false;
@@ -363,19 +365,11 @@ static void blo_update_defaults_scene(Main *bmain, Scene *scene)
   }
 
   /* New EEVEE defaults. */
-  scene->eevee.bloom_intensity = 0.05f;
-  scene->eevee.bloom_clamp = 0.0f;
   scene->eevee.motion_blur_shutter_deprecated = 0.5f;
 
   copy_v3_v3(scene->display.light_direction, blender::float3(M_SQRT1_3));
   copy_v2_fl2(scene->safe_areas.title, 0.1f, 0.05f);
   copy_v2_fl2(scene->safe_areas.action, 0.035f, 0.035f);
-
-  /* Change default cube-map quality. */
-  scene->eevee.gi_filter_quality = 3.0f;
-
-  /* Enable Soft Shadows by default. */
-  scene->eevee.flag |= SCE_EEVEE_SHADOW_SOFT;
 
   /* Default Rotate Increment. */
   const float default_snap_angle_increment = DEG2RADF(5.0f);
@@ -407,7 +401,7 @@ static void blo_update_defaults_scene(Main *bmain, Scene *scene)
   }
 
   if (ts->sculpt) {
-    ts->sculpt->flags = static_cast<const Sculpt *>(DNA_struct_default_get(Sculpt))->flags;
+    ts->sculpt->flags = (DNA_struct_default_get(Sculpt))->flags;
   }
 
   /* Correct default startup UVs. */
@@ -445,6 +439,11 @@ static void blo_update_defaults_scene(Main *bmain, Scene *scene)
   if (ts->unified_paint_settings.input_samples == 0) {
     ts->unified_paint_settings.input_samples = 1;
   }
+
+  const UnifiedPaintSettings &default_ups = *DNA_struct_default_get(UnifiedPaintSettings);
+  ts->unified_paint_settings.flag = default_ups.flag;
+  copy_v3_v3(ts->unified_paint_settings.rgb, default_ups.rgb);
+  copy_v3_v3(ts->unified_paint_settings.secondary_rgb, default_ups.secondary_rgb);
 }
 
 void BLO_update_defaults_startup_blend(Main *bmain, const char *app_template)
@@ -511,9 +510,9 @@ void BLO_update_defaults_startup_blend(Main *bmain, const char *app_template)
       ToolSettings *ts = scene->toolsettings;
 
       /* Ensure new Paint modes. */
-      BKE_paint_ensure_from_paintmode(bmain, scene, PaintMode::VertexGPencil);
-      BKE_paint_ensure_from_paintmode(bmain, scene, PaintMode::SculptGPencil);
-      BKE_paint_ensure_from_paintmode(bmain, scene, PaintMode::WeightGPencil);
+      BKE_paint_ensure_from_paintmode(scene, PaintMode::VertexGPencil);
+      BKE_paint_ensure_from_paintmode(scene, PaintMode::SculptGPencil);
+      BKE_paint_ensure_from_paintmode(scene, PaintMode::WeightGPencil);
 
       /* Enable cursor. */
       if (ts->gp_paint) {
@@ -543,7 +542,7 @@ void BLO_update_defaults_startup_blend(Main *bmain, const char *app_template)
         if (layout->screen) {
           bScreen *screen = layout->screen;
           if (!STREQ(screen->id.name + 2, workspace->id.name + 2)) {
-            BKE_libblock_rename(bmain, &screen->id, workspace->id.name + 2);
+            BKE_libblock_rename(*bmain, screen->id, workspace->id.name + 2);
           }
         }
 
@@ -598,7 +597,7 @@ void BLO_update_defaults_startup_blend(Main *bmain, const char *app_template)
       if (object->type == OB_GPENCIL_LEGACY) {
         /* Set grease pencil object in drawing mode */
         bGPdata *gpd = (bGPdata *)object->data;
-        object->mode = OB_MODE_PAINT_GPENCIL_LEGACY;
+        object->mode = OB_MODE_PAINT_GREASE_PENCIL;
         gpd->flag |= GP_DATA_STROKE_PAINTMODE;
         break;
       }
@@ -640,15 +639,18 @@ void BLO_update_defaults_startup_blend(Main *bmain, const char *app_template)
   LISTBASE_FOREACH (Material *, ma, &bmain->materials) {
     /* Update default material to be a bit more rough. */
     ma->roughness = 0.5f;
+    /* Enable transparent shadows. */
+    ma->blend_flag |= MA_BL_TRANSPARENT_SHADOW;
 
     if (ma->nodetree) {
       for (bNode *node : ma->nodetree->all_nodes()) {
-        if (node->type == SH_NODE_BSDF_PRINCIPLED) {
-          bNodeSocket *roughness_socket = blender::bke::nodeFindSocket(node, SOCK_IN, "Roughness");
+        if (node->type_legacy == SH_NODE_BSDF_PRINCIPLED) {
+          bNodeSocket *roughness_socket = blender::bke::node_find_socket(
+              node, SOCK_IN, "Roughness");
           *version_cycles_node_socket_float_value(roughness_socket) = 0.5f;
-          bNodeSocket *emission = blender::bke::nodeFindSocket(node, SOCK_IN, "Emission Color");
+          bNodeSocket *emission = blender::bke::node_find_socket(node, SOCK_IN, "Emission Color");
           copy_v4_fl(version_cycles_node_socket_rgba_value(emission), 1.0f);
-          bNodeSocket *emission_strength = blender::bke::nodeFindSocket(
+          bNodeSocket *emission_strength = blender::bke::node_find_socket(
               node, SOCK_IN, "Emission Strength");
           *version_cycles_node_socket_float_value(emission_strength) = 0.0f;
 
@@ -656,7 +658,7 @@ void BLO_update_defaults_startup_blend(Main *bmain, const char *app_template)
           node->custom2 = SHD_SUBSURFACE_RANDOM_WALK;
           BKE_ntree_update_tag_node_property(ma->nodetree, node);
         }
-        else if (node->type == SH_NODE_SUBSURFACE_SCATTERING) {
+        else if (node->type_legacy == SH_NODE_SUBSURFACE_SCATTERING) {
           node->custom1 = SHD_SUBSURFACE_RANDOM_WALK;
           BKE_ntree_update_tag_node_property(ma->nodetree, node);
         }

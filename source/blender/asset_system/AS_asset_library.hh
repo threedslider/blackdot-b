@@ -8,9 +8,9 @@
 
 #pragma once
 
-#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 #include "AS_asset_catalog.hh"
 
@@ -30,9 +30,7 @@ class IDRemapper;
 
 namespace blender::asset_system {
 
-class AssetIdentifier;
 class AssetRepresentation;
-class AssetStorage;
 
 /**
  * AssetLibrary provides access to an asset library's data.
@@ -54,9 +52,9 @@ class AssetLibrary {
   std::shared_ptr<std::string> root_path_;
 
   /**
-   * Storage for assets (better said their representations) that are considered to be part of this
-   * library. Assets are not automatically loaded into this when loading an asset library. Assets
-   * have to be loaded externally and added to this storage via #add_external_asset() or
+   * AssetStorage for assets (better said their representations) that are considered to be part of
+   * this library. Assets are not automatically loaded into this when loading an asset library.
+   * Assets have to be loaded externally and added to this storage via #add_external_asset() or
    * #add_local_id_asset(). So this really is arbitrary storage as far as #AssetLibrary is
    * concerned (allowing the API user to manage partial library storage and partial loading, so
    * only relevant parts of a library are kept in memory).
@@ -67,7 +65,17 @@ class AssetLibrary {
    * already in memory and which not. Neither do we keep track of how many parts of Blender are
    * using an asset or an asset library, which is needed to know when assets can be freed.
    */
-  std::unique_ptr<AssetStorage> asset_storage_;
+  struct AssetStorage {
+    /* Uses shared pointers so the UI can acquire weak pointers. It can then ensure pointers are
+     * not dangling before accessing. */
+
+    Set<std::shared_ptr<AssetRepresentation>> external_assets;
+    /* Store local ID assets separately for efficient lookups.
+     * TODO(Julian): A [ID *, asset] or even [ID.session_uid, asset] map would be preferable for
+     * faster lookups. Not possible until each asset is only represented once in the storage. */
+    Set<std::shared_ptr<AssetRepresentation>> local_id_assets;
+  };
+  AssetStorage asset_storage_;
 
  protected:
   /* Changing this pointer should be protected using #catalog_service_mutex_. Note that changes
@@ -93,7 +101,6 @@ class AssetLibrary {
   friend class AssetLibraryService;
   friend class AssetRepresentation;
 
- public:
   /**
    * \param name: The name this asset library will be displayed in the UI as. Will also be used as
    *              a weak way to identify an asset library (e.g. by #AssetWeakReference). Make sure
@@ -114,6 +121,13 @@ class AssetLibrary {
    */
   static void foreach_loaded(FunctionRef<void(AssetLibrary &)> fn, bool include_all_library);
 
+  /**
+   * Get the #AssetLibraryReference referencing this library. This can fail for custom libraries,
+   * which have too look up their #bUserAssetLibrary. It will not return a value for values that
+   * were loaded directly through a path.
+   */
+  virtual std::optional<AssetLibraryReference> library_reference() const = 0;
+
   void load_catalogs();
 
   AssetCatalogService &catalog_service() const;
@@ -127,13 +141,16 @@ class AssetLibrary {
    * \param relative_asset_path: The path of the asset relative to the asset library root. With
    *                             this the asset must be uniquely identifiable within the asset
    *                             library.
+   * \return A weak pointer to the new asset representation. The caller needs to keep some
+   *         reference stored to be able to call #remove_asset(). This would be dangling once the
+   *         asset library is destructed, so a weak pointer should be used to reference it.
    */
-  AssetRepresentation &add_external_asset(StringRef relative_asset_path,
-                                          StringRef name,
-                                          int id_type,
-                                          std::unique_ptr<AssetMetaData> metadata);
+  std::weak_ptr<AssetRepresentation> add_external_asset(StringRef relative_asset_path,
+                                                        StringRef name,
+                                                        int id_type,
+                                                        std::unique_ptr<AssetMetaData> metadata);
   /** See #AssetLibrary::add_external_asset(). */
-  AssetRepresentation &add_local_id_asset(StringRef relative_asset_path, ID &id);
+  std::weak_ptr<AssetRepresentation> add_local_id_asset(StringRef relative_asset_path, ID &id);
   /**
    * Remove an asset from the library that was added using #add_external_asset() or
    * #add_local_id_asset(). Can usually be expected to be constant time complexity (worst case may
@@ -166,12 +183,6 @@ class AssetLibrary {
 
   void on_blend_save_post(Main *bmain, PointerRNA **pointers, int num_pointers);
 
-  /**
-   * Create an asset identifier from the root path of this asset library and the given relative
-   * asset path (relative to the asset library root directory).
-   */
-  AssetIdentifier asset_identifier_from_library(StringRef relative_asset_path);
-
   std::string resolve_asset_weak_reference_to_full_path(const AssetWeakReference &asset_reference);
 
   eAssetLibraryType library_type() const;
@@ -186,6 +197,7 @@ class AssetLibrary {
 Vector<AssetLibraryReference> all_valid_asset_library_refs();
 
 AssetLibraryReference all_library_reference();
+AssetLibraryReference current_file_library_reference();
 void all_library_reload_catalogs_if_dirty();
 
 }  // namespace blender::asset_system
@@ -240,14 +252,6 @@ std::string AS_asset_library_find_suitable_root_path_from_path(blender::StringRe
  *         false.
  */
 std::string AS_asset_library_find_suitable_root_path_from_main(const Main *bmain);
-
-/**
- * Checks if the asset library service is in a usable state, i.e. after initializing and before
- * calling #AS_asset_libraries_exit(). Only needed in rare cases, e.g. when it's known that asset
- * library data may be accessed via dangling pointers on file exit, see #120466. Would be nicer to
- * clear the pointers instead, but not worth the extra logic for such a corner case.
- */
-bool AS_asset_libraries_available();
 
 /**
  * Force clearing of all asset library data. After calling this, new asset libraries can be loaded

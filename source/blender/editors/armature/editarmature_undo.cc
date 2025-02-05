@@ -22,7 +22,6 @@
 
 #include "BKE_armature.hh"
 #include "BKE_context.hh"
-#include "BKE_idprop.hh"
 #include "BKE_layer.hh"
 #include "BKE_main.hh"
 #include "BKE_object.hh"
@@ -55,7 +54,7 @@ static CLG_LogRef LOG = {"ed.undo.armature"};
  * bones and collections together.
  */
 static void remap_ebone_bone_collection_references(
-    ListBase /* EditBone */ *edit_bones,
+    ListBase /*EditBone*/ *edit_bones,
     const blender::Map<BoneCollection *, BoneCollection *> &bcoll_map)
 {
   LISTBASE_FOREACH (EditBone *, ebone, edit_bones) {
@@ -72,7 +71,7 @@ static void remap_ebone_bone_collection_references(
 struct UndoArmature {
   EditBone *act_edbone;
   char active_collection_name[MAX_NAME];
-  ListBase /* EditBone */ ebones;
+  ListBase /*EditBone*/ ebones;
   BoneCollection **collection_array;
   int collection_array_num;
   int collection_root_count;

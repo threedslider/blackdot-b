@@ -16,7 +16,6 @@
 #include "BLI_heap.h"
 #include "BLI_linklist.h"
 #include "BLI_memarena.h"
-#include "BLI_utildefines.h"
 
 /* only for defines */
 #include "BLI_polyfill_2d.h"
@@ -90,8 +89,6 @@ void BM_mesh_triangulate(BMesh *bm,
   MemArena *pf_arena;
   Heap *pf_heap;
 
-  BM_custom_loop_normals_to_vector_layer(bm);
-
   pf_arena = BLI_memarena_new(BLI_POLYFILL_ARENA_SIZE, __func__);
 
   if (ngon_method == MOD_TRIANGULATE_NGON_BEAUTY) {
@@ -151,8 +148,6 @@ void BM_mesh_triangulate(BMesh *bm,
   }
 
   BLI_memarena_free(pf_arena);
-
-  BM_custom_loop_normals_from_vector_layer(bm, false);
 
   if (ngon_method == MOD_TRIANGULATE_NGON_BEAUTY) {
     BLI_heap_free(pf_heap, nullptr);

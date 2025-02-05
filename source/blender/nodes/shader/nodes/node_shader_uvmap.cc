@@ -25,7 +25,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_uvmap(uiLayout *layout, bContext *C, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "from_instancer", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "from_instancer", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 
   if (!RNA_boolean_get(ptr, "from_instancer")) {
     PointerRNA obptr = CTX_data_pointer_get(C, "active_object");
@@ -43,7 +43,7 @@ static void node_shader_buts_uvmap(uiLayout *layout, bContext *C, PointerRNA *pt
       }
     }
 
-    uiItemR(layout, ptr, "uv_map", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_GROUP_UVS);
+    uiItemR(layout, ptr, "uv_map", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_GROUP_UVS);
   }
 }
 
@@ -93,7 +93,12 @@ void register_node_type_sh_uvmap()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(&ntype, SH_NODE_UVMAP, "UV Map", NODE_CLASS_INPUT);
+  sh_node_type_base(&ntype, "ShaderNodeUVMap", SH_NODE_UVMAP);
+  ntype.ui_name = "UV Map";
+  ntype.ui_description =
+      "Retrieve a UV map from the geometry, or the default fallback if none is specified";
+  ntype.enum_name_legacy = "UVMAP";
+  ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = file_ns::node_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_uvmap;
   blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
@@ -103,5 +108,5 @@ void register_node_type_sh_uvmap()
   ntype.gpu_fn = file_ns::node_shader_gpu_uvmap;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

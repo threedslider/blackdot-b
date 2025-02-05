@@ -15,7 +15,6 @@
 #include "BLI_ghash.h"
 #include "BLI_listbase.h"
 #include "BLI_string.h"
-#include "BLI_utildefines.h"
 
 #include "DNA_listBase.h"
 #include "DNA_userdef_types.h"
@@ -126,7 +125,7 @@ static void keymap_item_free(wmKeyMapItem *kmi)
 {
   IDP_FreeProperty(kmi->properties);
   if (kmi->ptr) {
-    MEM_freeN(kmi->ptr);
+    MEM_delete(kmi->ptr);
   }
   MEM_freeN(kmi);
 }

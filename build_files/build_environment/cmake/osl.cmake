@@ -4,10 +4,14 @@
 
 if(WIN32)
   set(OSL_CMAKE_CXX_STANDARD_LIBRARIES "kernel32${LIBEXT} user32${LIBEXT} gdi32${LIBEXT} winspool${LIBEXT} shell32${LIBEXT} ole32${LIBEXT} oleaut32${LIBEXT} uuid${LIBEXT} comdlg32${LIBEXT} advapi32${LIBEXT} psapi${LIBEXT}")
+  set(OSL_CMAKE_LINKER_FLAGS)
   set(OSL_FLEX_BISON -DFLEX_EXECUTABLE=${LIBDIR}/flexbison/win_flex.exe -DBISON_EXECUTABLE=${LIBDIR}/flexbison/win_bison.exe)
 else()
   set(OSL_CMAKE_CXX_STANDARD_LIBRARIES)
-  set(OSL_OPENIMAGEIO_LIBRARY "${LIBDIR}/openimageio/lib/OpenImageIO${SHAREDLIBEXT};${LIBDIR}/png/lib/${LIBPREFIX}png16${LIBEXT};${LIBDIR}/jpeg/lib/${LIBPREFIX}jpeg${LIBEXT};${LIBDIR}/tiff/lib/${LIBPREFIX}tiff${LIBEXT};${LIBDIR}/openexr/lib/IlmImf${OPENEXR_VERSION_POSTFIX}${SHAREDLIBEXT}")
+  # llvm-config will add -lmxl2. Make sure it can be found and that no system
+  # library is used instead.
+  set(OSL_CMAKE_LINKER_FLAGS "-L${LIBDIR}/xml2/lib")
+  set(OSL_OPENIMAGEIO_LIBRARY "${LIBDIR}/openimageio/lib/OpenImageIO${SHAREDLIBEXT};${LIBDIR}/openexr/lib/IlmImf${OPENEXR_VERSION_POSTFIX}${SHAREDLIBEXT}")
 
   if(APPLE)
     # Explicitly specify Homebrew path, so we don't use the old system one.
@@ -26,26 +30,23 @@ set(OSL_EXTRA_ARGS
   -DOpenEXR_ROOT=${LIBDIR}/openexr/
   -DOpenImageIO_ROOT=${LIBDIR}/openimageio/
   -DOSL_BUILD_TESTS=OFF
-  -DOSL_BUILD_MATERIALX=OFF
-  -DPNG_ROOT=${LIBDIR}/png
   -DZLIB_LIBRARY=${LIBDIR}/zlib/lib/${ZLIB_LIBRARY}
   -DZLIB_INCLUDE_DIR=${LIBDIR}/zlib/include/
   ${OSL_FLEX_BISON}
   -DCMAKE_CXX_STANDARD_LIBRARIES=${OSL_CMAKE_CXX_STANDARD_LIBRARIES}
+  -DCMAKE_EXE_LINKER_FLAGS=${OSL_CMAKE_LINKER_FLAGS}
+  -DCMAKE_SHARED_LINKER_FLAGS=${OSL_CMAKE_LINKER_FLAGS}
   -DBUILD_SHARED_LIBS=ON
   -DLINKSTATIC=OFF
   -DOSL_BUILD_PLUGINS=OFF
   -DSTOP_ON_WARNING=OFF
   -DUSE_LLVM_BITCODE=OFF
   -DLLVM_ROOT=${LIBDIR}/llvm/
-  -DLLVM_DIRECTORY=${LIBDIR}/llvm/
+  -DLLVM_STATIC=ON
   -DUSE_PARTIO=OFF
   -DUSE_QT=OFF
-  -DUSE_Qt5=OFF
   -DINSTALL_DOCS=OFF
   -Dpugixml_ROOT=${LIBDIR}/pugixml
-  -DTIFF_ROOT=${LIBDIR}/tiff
-  -DJPEG_ROOT=${LIBDIR}/jpeg
   -DUSE_PYTHON=OFF
   -DImath_ROOT=${LIBDIR}/imath
   -DCMAKE_DEBUG_POSTFIX=_d
@@ -55,7 +56,7 @@ set(OSL_EXTRA_ARGS
 )
 
 if(NOT APPLE)
-  list(APPEND OSL_EXTRA_ARGS -DOSL_USE_OPTIX=ON)
+  list(APPEND OSL_EXTRA_ARGS -DOSL_USE_OPTIX=ON -DCUDA_TARGET_ARCH=sm_50)
 endif()
 
 ExternalProject_Add(external_osl

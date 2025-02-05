@@ -10,6 +10,8 @@
 
 #include "DNA_sequence_types.h"
 
+#include "BLI_listbase.h"
+
 namespace blender::deg {
 
 SequenceBackup::SequenceBackup(const Depsgraph * /*depsgraph*/)
@@ -23,7 +25,7 @@ void SequenceBackup::reset()
   BLI_listbase_clear(&anims);
 }
 
-void SequenceBackup::init_from_sequence(Sequence *sequence)
+void SequenceBackup::init_from_sequence(Strip *sequence)
 {
   scene_sound = sequence->scene_sound;
   anims = sequence->anims;
@@ -32,7 +34,7 @@ void SequenceBackup::init_from_sequence(Sequence *sequence)
   BLI_listbase_clear(&sequence->anims);
 }
 
-void SequenceBackup::restore_to_sequence(Sequence *sequence)
+void SequenceBackup::restore_to_sequence(Strip *sequence)
 {
   sequence->scene_sound = scene_sound;
   sequence->anims = anims;

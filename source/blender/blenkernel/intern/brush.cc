@@ -10,6 +10,7 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "DNA_ID.h"
 #include "DNA_brush_types.h"
 #include "DNA_defaults.h"
 #include "DNA_material_types.h"
@@ -17,7 +18,6 @@
 
 #include "BLI_listbase.h"
 #include "BLI_math_base.hh"
-#include "BLI_math_rotation.h"
 #include "BLI_rand.h"
 
 #include "BLT_translation.hh"
@@ -34,7 +34,7 @@
 #include "BKE_lib_query.hh"
 #include "BKE_lib_remap.hh"
 #include "BKE_main.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_paint.hh"
 #include "BKE_preview_image.hh"
 #include "BKE_texture.h"
@@ -364,6 +364,7 @@ static void brush_blend_read_data(BlendDataReader *reader, ID *id)
   BKE_previewimg_blend_read(reader, brush->preview);
 
   brush->icon_imbuf = nullptr;
+  brush->has_unsaved_changes = false;
 }
 
 static void brush_blend_read_after_liblink(BlendLibReader * /*reader*/, ID *id)
@@ -393,27 +394,37 @@ static void brush_asset_metadata_ensure(void *asset_ptr, AssetMetaData *asset_da
 
   /* Most names copied from brush RNA (not all are available there though). */
   constexpr std::array mode_map{
-      std::pair{"use_paint_sculpt", OB_MODE_SCULPT},
-      std::pair{"use_paint_vertex", OB_MODE_VERTEX_PAINT},
-      std::pair{"use_paint_weight", OB_MODE_WEIGHT_PAINT},
-      std::pair{"use_paint_image", OB_MODE_TEXTURE_PAINT},
+      std::tuple{"use_paint_sculpt", OB_MODE_SCULPT, "sculpt_brush_type"},
+      std::tuple{"use_paint_vertex", OB_MODE_VERTEX_PAINT, "vertex_brush_type"},
+      std::tuple{"use_paint_weight", OB_MODE_WEIGHT_PAINT, "weight_brush_type"},
+      std::tuple{"use_paint_image", OB_MODE_TEXTURE_PAINT, "image_brush_type"},
       /* Sculpt UVs in the image editor while in edit mode. */
-      std::pair{"use_paint_uv_sculpt", OB_MODE_EDIT},
-      std::pair{"use_paint_grease_pencil", OB_MODE_PAINT_GPENCIL_LEGACY},
+      std::tuple{"use_paint_uv_sculpt", OB_MODE_EDIT, "image_brush_type"},
+      std::tuple{"use_paint_grease_pencil", OB_MODE_PAINT_GREASE_PENCIL, "gpencil_brush_type"},
       /* Note: Not defined in brush RNA, own name. */
-      std::pair{"use_sculpt_grease_pencil", OB_MODE_SCULPT_GPENCIL_LEGACY},
-      std::pair{"use_vertex_grease_pencil", OB_MODE_VERTEX_GPENCIL_LEGACY},
-      std::pair{"use_weight_grease_pencil", OB_MODE_WEIGHT_GPENCIL_LEGACY},
-      std::pair{"use_paint_sculpt_curves", OB_MODE_SCULPT_CURVES},
+      std::tuple{
+          "use_sculpt_grease_pencil", OB_MODE_SCULPT_GREASE_PENCIL, "gpencil_sculpt_brush_type"},
+      std::tuple{
+          "use_vertex_grease_pencil", OB_MODE_VERTEX_GREASE_PENCIL, "gpencil_vertex_brush_type"},
+      std::tuple{"use_weight_gpencil", OB_MODE_WEIGHT_GREASE_PENCIL, "gpencil_weight_brush_type"},
+      std::tuple{"use_paint_sculpt_curves", OB_MODE_SCULPT_CURVES, "curves_sculpt_brush_type"},
   };
 
-  for (const auto &mode_mapping : mode_map) {
-    /* Only add bools for supported modes. */
-    if (!(brush->ob_mode & mode_mapping.second)) {
+  for (const auto &[prop_name, mode, tool_prop_name] : mode_map) {
+    /* Only add booleans for supported modes. */
+    if (!(brush->ob_mode & mode)) {
       continue;
     }
-    auto mode_property = idprop::create_bool(mode_mapping.first, true);
+    auto mode_property = idprop::create_bool(prop_name, true);
     BKE_asset_metadata_idprop_ensure(asset_data, mode_property.release());
+
+    if (std::optional<int> brush_tool = BKE_paint_get_brush_type_from_obmode(brush, mode)) {
+      auto type_property = idprop::create(tool_prop_name, *brush_tool);
+      BKE_asset_metadata_idprop_ensure(asset_data, type_property.release());
+    }
+    else {
+      BLI_assert_unreachable();
+    }
   }
 }
 
@@ -537,10 +548,10 @@ Brush *BKE_brush_add(Main *bmain, const char *name, const eObjectMode ob_mode)
     BKE_brush_init_curves_sculpt_settings(brush);
   }
   else if (ELEM(ob_mode,
-                OB_MODE_PAINT_GPENCIL_LEGACY,
-                OB_MODE_SCULPT_GPENCIL_LEGACY,
-                OB_MODE_WEIGHT_GPENCIL_LEGACY,
-                OB_MODE_VERTEX_GPENCIL_LEGACY))
+                OB_MODE_PAINT_GREASE_PENCIL,
+                OB_MODE_SCULPT_GREASE_PENCIL,
+                OB_MODE_WEIGHT_GREASE_PENCIL,
+                OB_MODE_VERTEX_GREASE_PENCIL))
   {
     BKE_brush_init_gpencil_settings(brush);
   }
@@ -576,7 +587,7 @@ void BKE_brush_init_gpencil_settings(Brush *brush)
 
 bool BKE_brush_delete(Main *bmain, Brush *brush)
 {
-  if (brush->id.tag & LIB_TAG_INDIRECT) {
+  if (brush->id.tag & ID_TAG_INDIRECT) {
     return false;
   }
   if (ID_REAL_USERS(brush) <= 1 && ID_EXTRA_USERS(brush) == 0 &&
@@ -604,6 +615,13 @@ void BKE_brush_init_curves_sculpt_settings(Brush *brush)
   settings->curve_radius = 0.01f;
   settings->density_add_attempts = 100;
   settings->curve_parameter_falloff = BKE_curvemapping_add(1, 0.0f, 0.0f, 1.0f, 1.0f);
+}
+
+void BKE_brush_tag_unsaved_changes(Brush *brush)
+{
+  if (brush && ID_IS_LINKED(brush)) {
+    brush->has_unsaved_changes = true;
+  }
 }
 
 Brush *BKE_brush_first_search(Main *bmain, const eObjectMode ob_mode)
@@ -722,263 +740,6 @@ void BKE_brush_debug_print_state(Brush *br)
 #undef BR_TEST_FLAG
 }
 
-void BKE_brush_sculpt_reset(Brush *br)
-{
-  /* enable this to see any non-default
-   * settings used by a brush: */
-  // BKE_brush_debug_print_state(br);
-
-  brush_defaults(br);
-  BKE_brush_curve_preset(br, CURVE_PRESET_SMOOTH);
-
-  /* Use the curve presets by default */
-  br->curve_preset = BRUSH_CURVE_SMOOTH;
-
-  /* Note that sculpt defaults where set when 0.5 was the default (now it's 1.0)
-   * assign this so logic below can remain the same. */
-  br->alpha = 0.5f;
-
-  /* Brush settings */
-  switch (br->sculpt_tool) {
-    case SCULPT_TOOL_DRAW_SHARP:
-      br->flag |= BRUSH_DIR_IN;
-      br->curve_preset = BRUSH_CURVE_POW4;
-      br->spacing = 5;
-      break;
-    case SCULPT_TOOL_DISPLACEMENT_ERASER:
-      br->curve_preset = BRUSH_CURVE_SMOOTHER;
-      br->spacing = 10;
-      br->alpha = 1.0f;
-      break;
-    case SCULPT_TOOL_SLIDE_RELAX:
-      br->spacing = 10;
-      br->alpha = 1.0f;
-      br->slide_deform_type = BRUSH_SLIDE_DEFORM_DRAG;
-      break;
-    case SCULPT_TOOL_CLAY:
-      br->flag |= BRUSH_SIZE_PRESSURE;
-      br->spacing = 3;
-      br->autosmooth_factor = 0.25f;
-      br->normal_radius_factor = 0.75f;
-      br->hardness = 0.65f;
-      break;
-    case SCULPT_TOOL_CLAY_THUMB:
-      br->alpha = 0.5f;
-      br->normal_radius_factor = 1.0f;
-      br->spacing = 6;
-      br->hardness = 0.5f;
-      br->flag |= BRUSH_SIZE_PRESSURE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      break;
-    case SCULPT_TOOL_CLAY_STRIPS:
-      br->flag |= BRUSH_ACCUMULATE | BRUSH_SIZE_PRESSURE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      br->alpha = 0.6f;
-      br->spacing = 5;
-      br->normal_radius_factor = 1.55f;
-      br->tip_roundness = 0.18f;
-      br->curve_preset = BRUSH_CURVE_SMOOTHER;
-      break;
-    case SCULPT_TOOL_MULTIPLANE_SCRAPE:
-      br->flag2 |= BRUSH_MULTIPLANE_SCRAPE_DYNAMIC | BRUSH_MULTIPLANE_SCRAPE_PLANES_PREVIEW;
-      br->alpha = 0.7f;
-      br->normal_radius_factor = 0.70f;
-      br->multiplane_scrape_angle = 60;
-      br->curve_preset = BRUSH_CURVE_SMOOTH;
-      br->spacing = 5;
-      break;
-    case SCULPT_TOOL_CREASE:
-      br->flag |= BRUSH_DIR_IN;
-      br->alpha = 0.25;
-      break;
-    case SCULPT_TOOL_SCRAPE:
-    case SCULPT_TOOL_FILL:
-      br->alpha = 0.7f;
-      br->area_radius_factor = 0.5f;
-      br->spacing = 7;
-      br->flag |= BRUSH_ACCUMULATE;
-      br->flag |= BRUSH_INVERT_TO_SCRAPE_FILL;
-      break;
-    case SCULPT_TOOL_ROTATE:
-      br->alpha = 1.0;
-      break;
-    case SCULPT_TOOL_SMOOTH:
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      br->spacing = 5;
-      br->alpha = 0.7f;
-      br->surface_smooth_shape_preservation = 0.5f;
-      br->surface_smooth_current_vertex = 0.5f;
-      br->surface_smooth_iterations = 4;
-      break;
-    case SCULPT_TOOL_SNAKE_HOOK:
-      br->alpha = 1.0f;
-      br->rake_factor = 1.0f;
-      break;
-    case SCULPT_TOOL_THUMB:
-      br->size = 75;
-      br->flag &= ~BRUSH_ALPHA_PRESSURE;
-      br->flag &= ~BRUSH_SPACE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      break;
-    case SCULPT_TOOL_ELASTIC_DEFORM:
-      br->elastic_deform_volume_preservation = 0.4f;
-      br->elastic_deform_type = BRUSH_ELASTIC_DEFORM_GRAB_TRISCALE;
-      br->flag &= ~BRUSH_ALPHA_PRESSURE;
-      br->flag &= ~BRUSH_SPACE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      break;
-    case SCULPT_TOOL_POSE:
-      br->pose_smooth_iterations = 4;
-      br->pose_ik_segments = 1;
-      br->flag2 |= BRUSH_POSE_IK_ANCHORED | BRUSH_USE_CONNECTED_ONLY;
-      br->flag &= ~BRUSH_ALPHA_PRESSURE;
-      br->flag &= ~BRUSH_SPACE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      break;
-    case SCULPT_TOOL_BOUNDARY:
-      br->flag &= ~BRUSH_ALPHA_PRESSURE;
-      br->flag &= ~BRUSH_SPACE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      br->curve_preset = BRUSH_CURVE_CONSTANT;
-      break;
-    case SCULPT_TOOL_DRAW_FACE_SETS:
-      br->alpha = 0.5f;
-      br->flag &= ~BRUSH_ALPHA_PRESSURE;
-      br->flag &= ~BRUSH_SPACE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      break;
-    case SCULPT_TOOL_GRAB:
-      br->alpha = 0.4f;
-      br->size = 75;
-      br->flag &= ~BRUSH_ALPHA_PRESSURE;
-      br->flag &= ~BRUSH_SPACE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      break;
-    case SCULPT_TOOL_CLOTH:
-      br->cloth_mass = 1.0f;
-      br->cloth_damping = 0.01f;
-      br->cloth_sim_limit = 2.5f;
-      br->cloth_sim_falloff = 0.75f;
-      br->cloth_deform_type = BRUSH_CLOTH_DEFORM_DRAG;
-      br->flag &= ~(BRUSH_ALPHA_PRESSURE | BRUSH_SIZE_PRESSURE);
-      break;
-    case SCULPT_TOOL_LAYER:
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      br->hardness = 0.35f;
-      br->alpha = 1.0f;
-      br->height = 0.05f;
-      break;
-    case SCULPT_TOOL_PAINT:
-      br->hardness = 0.4f;
-      br->spacing = 10;
-      br->alpha = 1.0f;
-      br->flow = 1.0f;
-      br->density = 1.0f;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      zero_v3(br->rgb);
-      copy_v3_fl(br->secondary_rgb, 1.0f);
-      break;
-    case SCULPT_TOOL_SMEAR:
-      br->alpha = 0.6f;
-      br->spacing = 5;
-      br->flag &= ~BRUSH_ALPHA_PRESSURE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      br->curve_preset = BRUSH_CURVE_SPHERE;
-      break;
-    case SCULPT_TOOL_DISPLACEMENT_SMEAR:
-      br->alpha = 1.0f;
-      br->spacing = 5;
-      br->hardness = 0.7f;
-      br->flag &= ~BRUSH_ALPHA_PRESSURE;
-      br->flag &= ~BRUSH_SPACE_ATTEN;
-      br->curve_preset = BRUSH_CURVE_SMOOTHER;
-      break;
-    default:
-      break;
-  }
-
-  /* Cursor colors */
-
-  /* Default Alpha */
-  br->add_col[3] = 0.90f;
-  br->sub_col[3] = 0.90f;
-
-  switch (br->sculpt_tool) {
-    case SCULPT_TOOL_DRAW:
-    case SCULPT_TOOL_DRAW_SHARP:
-    case SCULPT_TOOL_CLAY:
-    case SCULPT_TOOL_CLAY_STRIPS:
-    case SCULPT_TOOL_CLAY_THUMB:
-    case SCULPT_TOOL_LAYER:
-    case SCULPT_TOOL_INFLATE:
-    case SCULPT_TOOL_BLOB:
-    case SCULPT_TOOL_CREASE:
-      br->add_col[0] = 0.0f;
-      br->add_col[1] = 0.5f;
-      br->add_col[2] = 1.0f;
-      br->sub_col[0] = 0.0f;
-      br->sub_col[1] = 0.5f;
-      br->sub_col[2] = 1.0f;
-      break;
-
-    case SCULPT_TOOL_SMOOTH:
-    case SCULPT_TOOL_FLATTEN:
-    case SCULPT_TOOL_FILL:
-    case SCULPT_TOOL_SCRAPE:
-    case SCULPT_TOOL_MULTIPLANE_SCRAPE:
-      br->add_col[0] = 0.877f;
-      br->add_col[1] = 0.142f;
-      br->add_col[2] = 0.117f;
-      br->sub_col[0] = 0.877f;
-      br->sub_col[1] = 0.142f;
-      br->sub_col[2] = 0.117f;
-      break;
-
-    case SCULPT_TOOL_PINCH:
-    case SCULPT_TOOL_GRAB:
-    case SCULPT_TOOL_SNAKE_HOOK:
-    case SCULPT_TOOL_THUMB:
-    case SCULPT_TOOL_NUDGE:
-    case SCULPT_TOOL_ROTATE:
-    case SCULPT_TOOL_ELASTIC_DEFORM:
-    case SCULPT_TOOL_POSE:
-    case SCULPT_TOOL_BOUNDARY:
-    case SCULPT_TOOL_SLIDE_RELAX:
-      br->add_col[0] = 1.0f;
-      br->add_col[1] = 0.95f;
-      br->add_col[2] = 0.005f;
-      br->sub_col[0] = 1.0f;
-      br->sub_col[1] = 0.95f;
-      br->sub_col[2] = 0.005f;
-      break;
-
-    case SCULPT_TOOL_SIMPLIFY:
-    case SCULPT_TOOL_PAINT:
-    case SCULPT_TOOL_MASK:
-    case SCULPT_TOOL_DRAW_FACE_SETS:
-    case SCULPT_TOOL_DISPLACEMENT_ERASER:
-    case SCULPT_TOOL_DISPLACEMENT_SMEAR:
-      br->add_col[0] = 0.75f;
-      br->add_col[1] = 0.75f;
-      br->add_col[2] = 0.75f;
-      br->sub_col[0] = 0.75f;
-      br->sub_col[1] = 0.75f;
-      br->sub_col[2] = 0.75f;
-      break;
-
-    case SCULPT_TOOL_CLOTH:
-      br->add_col[0] = 1.0f;
-      br->add_col[1] = 0.5f;
-      br->add_col[2] = 0.1f;
-      br->sub_col[0] = 1.0f;
-      br->sub_col[1] = 0.5f;
-      br->sub_col[2] = 0.1f;
-      break;
-    default:
-      break;
-  }
-}
-
 void BKE_brush_curve_preset(Brush *b, eCurveMappingPreset preset)
 {
   CurveMapping *cumap = nullptr;
@@ -994,6 +755,7 @@ void BKE_brush_curve_preset(Brush *b, eCurveMappingPreset preset)
   cuma = b->curve->cm;
   BKE_curvemap_reset(cuma, &cumap->clipr, cumap->preset, CURVEMAP_SLOPE_NEGATIVE);
   BKE_curvemapping_changed(cumap, false);
+  BKE_brush_tag_unsaved_changes(b);
 }
 
 const MTex *BKE_brush_mask_texture_get(const Brush *brush, const eObjectMode object_mode)
@@ -1263,27 +1025,33 @@ float BKE_brush_sample_masktex(
  * In any case, a better solution is needed to prevent
  * inconsistency. */
 
-const float *BKE_brush_color_get(const Scene *scene, const Brush *brush)
+const float *BKE_brush_color_get(const Scene *scene, const Paint *paint, const Brush *brush)
 {
-  UnifiedPaintSettings *ups = &scene->toolsettings->unified_paint_settings;
-  return (ups->flag & UNIFIED_PAINT_COLOR) ? ups->rgb : brush->rgb;
+  if (BKE_paint_use_unified_color(scene->toolsettings, paint)) {
+    return scene->toolsettings->unified_paint_settings.rgb;
+  }
+  return brush->rgb;
 }
 
-const float *BKE_brush_secondary_color_get(const Scene *scene, const Brush *brush)
+const float *BKE_brush_secondary_color_get(const Scene *scene,
+                                           const Paint *paint,
+                                           const Brush *brush)
 {
-  UnifiedPaintSettings *ups = &scene->toolsettings->unified_paint_settings;
-  return (ups->flag & UNIFIED_PAINT_COLOR) ? ups->secondary_rgb : brush->secondary_rgb;
+  if (BKE_paint_use_unified_color(scene->toolsettings, paint)) {
+    return scene->toolsettings->unified_paint_settings.secondary_rgb;
+  }
+  return brush->secondary_rgb;
 }
 
-void BKE_brush_color_set(Scene *scene, Brush *brush, const float color[3])
+void BKE_brush_color_set(Scene *scene, const Paint *paint, Brush *brush, const float color[3])
 {
-  UnifiedPaintSettings *ups = &scene->toolsettings->unified_paint_settings;
-
-  if (ups->flag & UNIFIED_PAINT_COLOR) {
+  if (BKE_paint_use_unified_color(scene->toolsettings, paint)) {
+    UnifiedPaintSettings *ups = &scene->toolsettings->unified_paint_settings;
     copy_v3_v3(ups->rgb, color);
   }
   else {
     copy_v3_v3(brush->rgb, color);
+    BKE_brush_tag_unsaved_changes(brush);
   }
 }
 
@@ -1299,6 +1067,7 @@ void BKE_brush_size_set(Scene *scene, Brush *brush, int size)
   }
   else {
     brush->size = size;
+    BKE_brush_tag_unsaved_changes(brush);
   }
 }
 
@@ -1330,21 +1099,21 @@ bool BKE_brush_use_alpha_pressure(const Brush *brush)
 
 bool BKE_brush_sculpt_has_secondary_color(const Brush *brush)
 {
-  return ELEM(brush->sculpt_tool,
-              SCULPT_TOOL_BLOB,
-              SCULPT_TOOL_DRAW,
-              SCULPT_TOOL_DRAW_SHARP,
-              SCULPT_TOOL_INFLATE,
-              SCULPT_TOOL_CLAY,
-              SCULPT_TOOL_CLAY_STRIPS,
-              SCULPT_TOOL_CLAY_THUMB,
-              SCULPT_TOOL_PINCH,
-              SCULPT_TOOL_CREASE,
-              SCULPT_TOOL_LAYER,
-              SCULPT_TOOL_FLATTEN,
-              SCULPT_TOOL_FILL,
-              SCULPT_TOOL_SCRAPE,
-              SCULPT_TOOL_MASK);
+  return ELEM(brush->sculpt_brush_type,
+              SCULPT_BRUSH_TYPE_BLOB,
+              SCULPT_BRUSH_TYPE_DRAW,
+              SCULPT_BRUSH_TYPE_DRAW_SHARP,
+              SCULPT_BRUSH_TYPE_INFLATE,
+              SCULPT_BRUSH_TYPE_CLAY,
+              SCULPT_BRUSH_TYPE_CLAY_STRIPS,
+              SCULPT_BRUSH_TYPE_CLAY_THUMB,
+              SCULPT_BRUSH_TYPE_PINCH,
+              SCULPT_BRUSH_TYPE_CREASE,
+              SCULPT_BRUSH_TYPE_LAYER,
+              SCULPT_BRUSH_TYPE_FLATTEN,
+              SCULPT_BRUSH_TYPE_FILL,
+              SCULPT_BRUSH_TYPE_SCRAPE,
+              SCULPT_BRUSH_TYPE_MASK);
 }
 
 void BKE_brush_unprojected_radius_set(Scene *scene, Brush *brush, float unprojected_radius)
@@ -1356,6 +1125,7 @@ void BKE_brush_unprojected_radius_set(Scene *scene, Brush *brush, float unprojec
   }
   else {
     brush->unprojected_radius = unprojected_radius;
+    BKE_brush_tag_unsaved_changes(brush);
   }
 }
 
@@ -1375,6 +1145,7 @@ void BKE_brush_alpha_set(Scene *scene, Brush *brush, float alpha)
   }
   else {
     brush->alpha = alpha;
+    BKE_brush_tag_unsaved_changes(brush);
   }
 }
 
@@ -1401,6 +1172,7 @@ void BKE_brush_weight_set(const Scene *scene, Brush *brush, float value)
   }
   else {
     brush->weight = value;
+    BKE_brush_tag_unsaved_changes(brush);
   }
 }
 
@@ -1420,6 +1192,7 @@ void BKE_brush_input_samples_set(const Scene *scene, Brush *brush, int value)
   }
   else {
     brush->input_samples = value;
+    BKE_brush_tag_unsaved_changes(brush);
   }
 }
 
@@ -1741,11 +1514,11 @@ bool BKE_brush_has_cube_tip(const Brush *brush, PaintMode paint_mode)
 {
   switch (paint_mode) {
     case PaintMode::Sculpt: {
-      if (brush->sculpt_tool == SCULPT_TOOL_MULTIPLANE_SCRAPE) {
+      if (brush->sculpt_brush_type == SCULPT_BRUSH_TYPE_MULTIPLANE_SCRAPE) {
         return true;
       }
 
-      if (ELEM(brush->sculpt_tool, SCULPT_TOOL_CLAY_STRIPS, SCULPT_TOOL_PAINT) &&
+      if (ELEM(brush->sculpt_brush_type, SCULPT_BRUSH_TYPE_CLAY_STRIPS, SCULPT_BRUSH_TYPE_PAINT) &&
           (brush->tip_roundness < 1.0f || brush->tip_scale_x != 1.0f))
       {
         return true;

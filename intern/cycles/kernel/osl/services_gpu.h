@@ -6,7 +6,25 @@
  * Adapted code from Open Shading Language. */
 
 #include "kernel/tables.h"
+
+#include "kernel/camera/camera.h"
+
+#include "kernel/geom/attribute.h"
+#include "kernel/geom/curve.h"
+#include "kernel/geom/object.h"
+#include "kernel/geom/point.h"
+#include "kernel/geom/primitive.h"
+#include "kernel/geom/triangle.h"
+
+#include "kernel/svm/math_util.h"
+#include "kernel/svm/noise.h"
+
+#include "kernel/util/colorspace.h"
 #include "kernel/util/differential.h"
+#include "kernel/util/ies.h"
+
+#include "util/hash.h"
+#include "util/transform.h"
 
 #include "kernel/osl/osl.h"
 
@@ -48,6 +66,8 @@ ccl_device_constant DeviceString u_object_color = 12695623857059169556ull;
 ccl_device_constant DeviceString u_object_alpha = 11165053919428293151ull;
 /* "object:index" */
 ccl_device_constant DeviceString u_object_index = 6588325838217472556ull;
+/* "object:is_light" */
+ccl_device_constant DeviceString u_object_is_light = 13979755312845091842ull;
 /* "geom:dupli_generated" */
 ccl_device_constant DeviceString u_geom_dupli_generated = 6715607178003388908ull;
 /* "geom:dupli_uv" */
@@ -125,7 +145,7 @@ ccl_device_constant DeviceString u_path_transmission_depth = 1511340889232391762
 
 ccl_device_extern ccl_private OSLClosure *osl_mul_closure_color(ccl_private ShaderGlobals *sg,
                                                                 ccl_private OSLClosure *a,
-                                                                ccl_private const float3 *weight)
+                                                                const ccl_private float3 *weight)
 {
   if (*weight == zero_float3() || !a) {
     return nullptr;
@@ -134,14 +154,12 @@ ccl_device_extern ccl_private OSLClosure *osl_mul_closure_color(ccl_private Shad
     return a;
   }
 
-  ccl_private ShaderData *const sd = static_cast<ccl_private ShaderData *>(sg->renderstate);
-
-  ccl_private uint8_t *closure_pool = sd->osl_closure_pool;
+  ccl_private uint8_t *closure_pool = sg->closure_pool;
   /* Align pointer to closure struct requirement */
   closure_pool = reinterpret_cast<uint8_t *>(
       (reinterpret_cast<size_t>(closure_pool) + alignof(OSLClosureMul) - 1) &
       (-alignof(OSLClosureMul)));
-  sd->osl_closure_pool = closure_pool + sizeof(OSLClosureMul);
+  sg->closure_pool = closure_pool + sizeof(OSLClosureMul);
 
   ccl_private OSLClosureMul *const closure = reinterpret_cast<ccl_private OSLClosureMul *>(
       closure_pool);
@@ -154,7 +172,7 @@ ccl_device_extern ccl_private OSLClosure *osl_mul_closure_color(ccl_private Shad
 
 ccl_device_extern ccl_private OSLClosure *osl_mul_closure_float(ccl_private ShaderGlobals *sg,
                                                                 ccl_private OSLClosure *a,
-                                                                float weight)
+                                                                const float weight)
 {
   if (weight == 0.0f || !a) {
     return nullptr;
@@ -163,14 +181,12 @@ ccl_device_extern ccl_private OSLClosure *osl_mul_closure_float(ccl_private Shad
     return a;
   }
 
-  ccl_private ShaderData *const sd = static_cast<ccl_private ShaderData *>(sg->renderstate);
-
-  uint8_t *closure_pool = sd->osl_closure_pool;
+  ccl_private uint8_t *closure_pool = sg->closure_pool;
   /* Align pointer to closure struct requirement */
   closure_pool = reinterpret_cast<uint8_t *>(
       (reinterpret_cast<size_t>(closure_pool) + alignof(OSLClosureMul) - 1) &
       (-alignof(OSLClosureMul)));
-  sd->osl_closure_pool = closure_pool + sizeof(OSLClosureMul);
+  sg->closure_pool = closure_pool + sizeof(OSLClosureMul);
 
   ccl_private OSLClosureMul *const closure = reinterpret_cast<ccl_private OSLClosureMul *>(
       closure_pool);
@@ -192,14 +208,12 @@ ccl_device_extern ccl_private OSLClosure *osl_add_closure_closure(ccl_private Sh
     return a;
   }
 
-  ccl_private ShaderData *const sd = static_cast<ccl_private ShaderData *>(sg->renderstate);
-
-  ccl_private uint8_t *closure_pool = sd->osl_closure_pool;
+  ccl_private uint8_t *closure_pool = sg->closure_pool;
   /* Align pointer to closure struct requirement */
   closure_pool = reinterpret_cast<uint8_t *>(
       (reinterpret_cast<size_t>(closure_pool) + alignof(OSLClosureAdd) - 1) &
       (-alignof(OSLClosureAdd)));
-  sd->osl_closure_pool = closure_pool + sizeof(OSLClosureAdd);
+  sg->closure_pool = closure_pool + sizeof(OSLClosureAdd);
 
   ccl_private OSLClosureAdd *const closure = reinterpret_cast<ccl_private OSLClosureAdd *>(
       closure_pool);
@@ -211,16 +225,14 @@ ccl_device_extern ccl_private OSLClosure *osl_add_closure_closure(ccl_private Sh
 }
 
 ccl_device_extern ccl_private OSLClosure *osl_allocate_closure_component(
-    ccl_private ShaderGlobals *sg, int id, int size)
+    ccl_private ShaderGlobals *sg, const int id, const int size)
 {
-  ccl_private ShaderData *const sd = static_cast<ccl_private ShaderData *>(sg->renderstate);
-
-  ccl_private uint8_t *closure_pool = sd->osl_closure_pool;
+  ccl_private uint8_t *closure_pool = sg->closure_pool;
   /* Align pointer to closure struct requirement */
   closure_pool = reinterpret_cast<uint8_t *>(
       (reinterpret_cast<size_t>(closure_pool) + alignof(OSLClosureComponent) - 1) &
       (-alignof(OSLClosureComponent)));
-  sd->osl_closure_pool = closure_pool + sizeof(OSLClosureComponent) + size;
+  sg->closure_pool = closure_pool + sizeof(OSLClosureComponent) + size;
 
   ccl_private OSLClosureComponent *const closure =
       reinterpret_cast<ccl_private OSLClosureComponent *>(closure_pool);
@@ -231,16 +243,14 @@ ccl_device_extern ccl_private OSLClosure *osl_allocate_closure_component(
 }
 
 ccl_device_extern ccl_private OSLClosure *osl_allocate_weighted_closure_component(
-    ccl_private ShaderGlobals *sg, int id, int size, ccl_private const float3 *weight)
+    ccl_private ShaderGlobals *sg, const int id, const int size, const ccl_private float3 *weight)
 {
-  ccl_private ShaderData *const sd = static_cast<ccl_private ShaderData *>(sg->renderstate);
-
-  ccl_private uint8_t *closure_pool = sd->osl_closure_pool;
+  ccl_private uint8_t *closure_pool = sg->closure_pool;
   /* Align pointer to closure struct requirement */
   closure_pool = reinterpret_cast<uint8_t *>(
       (reinterpret_cast<size_t>(closure_pool) + alignof(OSLClosureComponent) - 1) &
       (-alignof(OSLClosureComponent)));
-  sd->osl_closure_pool = closure_pool + sizeof(OSLClosureComponent) + size;
+  sg->closure_pool = closure_pool + sizeof(OSLClosureComponent) + size;
 
   ccl_private OSLClosureComponent *const closure =
       reinterpret_cast<ccl_private OSLClosureComponent *>(closure_pool);
@@ -252,9 +262,6 @@ ccl_device_extern ccl_private OSLClosure *osl_allocate_weighted_closure_componen
 
 /* Utilities */
 
-#include "kernel/svm/math_util.h"
-#include "kernel/util/color.h"
-
 ccl_device_extern void osl_error(ccl_private ShaderGlobals *sg, const char *format, void *args) {}
 
 ccl_device_extern void osl_printf(ccl_private ShaderGlobals *sg, const char *format, void *args) {}
@@ -263,14 +270,14 @@ ccl_device_extern void osl_warning(ccl_private ShaderGlobals *sg, const char *fo
 {
 }
 
-ccl_device_extern uint osl_range_check(int indexvalue,
-                                       int length,
+ccl_device_extern uint osl_range_check(const int indexvalue,
+                                       const int length,
                                        DeviceString symname,
                                        ccl_private ShaderGlobals *sg,
                                        DeviceString sourcefile,
-                                       int sourceline,
+                                       const int sourceline,
                                        DeviceString groupname,
-                                       int layer,
+                                       const int layer,
                                        DeviceString layername,
                                        DeviceString shadername)
 {
@@ -283,14 +290,14 @@ ccl_device_extern uint osl_range_check(int indexvalue,
   return result;
 }
 
-ccl_device_extern uint osl_range_check_err(int indexvalue,
-                                           int length,
+ccl_device_extern uint osl_range_check_err(const int indexvalue,
+                                           const int length,
                                            DeviceString symname,
                                            ccl_private ShaderGlobals *sg,
                                            DeviceString sourcefile,
-                                           int sourceline,
+                                           const int sourceline,
                                            DeviceString groupname,
-                                           int layer,
+                                           const int layer,
                                            DeviceString layername,
                                            DeviceString shadername)
 {
@@ -310,20 +317,23 @@ ccl_device_extern uint osl_range_check_err(int indexvalue,
 
 ccl_device_extern void osl_blackbody_vf(ccl_private ShaderGlobals *sg,
                                         ccl_private float3 *result,
-                                        float temperature)
+                                        const float temperature)
 {
   float3 color_rgb = rec709_to_rgb(nullptr, svm_math_blackbody_color_rec709(temperature));
   color_rgb = max(color_rgb, zero_float3());
   *result = color_rgb;
 }
 
-#if 0
 ccl_device_extern void osl_wavelength_color_vf(ccl_private ShaderGlobals *sg,
-                                                   ccl_private float3 *result,
-                                                   float wavelength)
+                                               ccl_private float3 *result,
+                                               const float lambda_nm)
 {
+  float3 color = xyz_to_rgb(nullptr, svm_math_wavelength_color_xyz(lambda_nm));
+  color *= 1.0f / 2.52f;  // Empirical scale from lg to make all comps <= 1
+
+  /* Clamp to zero if values are smaller */
+  *result = max(color, make_float3(0.0f, 0.0f, 0.0f));
 }
-#endif
 
 ccl_device_extern void osl_luminance_fv(ccl_private ShaderGlobals *sg,
                                         ccl_private float *result,
@@ -363,7 +373,7 @@ ccl_device_extern bool osl_transformc(ccl_private ShaderGlobals *sg,
                                       ccl_private float3 *c_in,
                                       int c_in_derivs,
                                       ccl_private float3 *c_out,
-                                      int c_out_derivs,
+                                      const int c_out_derivs,
                                       DeviceString from,
                                       DeviceString to)
 {
@@ -424,9 +434,6 @@ ccl_device_extern bool osl_transformc(ccl_private ShaderGlobals *sg,
 
 /* Matrix Utilities */
 
-#include "kernel/geom/object.h"
-#include "util/transform.h"
-
 ccl_device_forceinline void copy_matrix(ccl_private float *res, const Transform &tfm)
 {
   res[0] = tfm.x.x;
@@ -465,41 +472,43 @@ ccl_device_forceinline void copy_matrix(ccl_private float *res, const Projection
   res[14] = tfm.z.w;
   res[15] = tfm.w.w;
 }
-ccl_device_forceinline void copy_identity_matrix(ccl_private float *res, float value = 1.0f)
-{
-  res[0] = value;
-  res[1] = 0.0f;
-  res[2] = 0.0f;
-  res[3] = 0.0f;
-  res[4] = 0.0f;
-  res[5] = value;
-  res[6] = 0.0f;
-  res[7] = 0.0f;
-  res[8] = 0.0f;
-  res[9] = 0.0f;
-  res[10] = value;
-  res[11] = 0.0f;
-  res[12] = 0.0f;
-  res[13] = 0.0f;
-  res[14] = 0.0f;
-  res[15] = value;
-}
-ccl_device_forceinline Transform convert_transform(ccl_private const float *m)
+ccl_device_forceinline Transform make_transform(const ccl_private float *m)
 {
   return make_transform(
       m[0], m[4], m[8], m[12], m[1], m[5], m[9], m[13], m[2], m[6], m[10], m[14]);
 }
+ccl_device_forceinline ProjectionTransform make_projection(const ccl_private float *m)
+{
+  return make_projection(m[0],
+                         m[4],
+                         m[8],
+                         m[12],
+                         m[1],
+                         m[5],
+                         m[9],
+                         m[13],
+                         m[2],
+                         m[6],
+                         m[10],
+                         m[14],
+                         m[3],
+                         m[7],
+                         m[11],
+                         m[15]);
+}
 
 ccl_device_extern void osl_mul_mmm(ccl_private float *res,
-                                   ccl_private const float *a,
-                                   ccl_private const float *b)
+                                   const ccl_private float *a,
+                                   const ccl_private float *b)
 {
-  const Transform tfm_a = convert_transform(a);
-  const Transform tfm_b = convert_transform(b);
+  const ProjectionTransform tfm_a = make_projection(a);
+  const ProjectionTransform tfm_b = make_projection(b);
   copy_matrix(res, tfm_a * tfm_b);
 }
 
-ccl_device_extern void osl_mul_mmf(ccl_private float *res, ccl_private const float *a, float b)
+ccl_device_extern void osl_mul_mmf(ccl_private float *res,
+                                   const ccl_private float *a,
+                                   const float b)
 {
   for (int i = 0; i < 16; ++i) {
     res[i] = a[i] * b;
@@ -507,87 +516,91 @@ ccl_device_extern void osl_mul_mmf(ccl_private float *res, ccl_private const flo
 }
 
 ccl_device_extern void osl_div_mmm(ccl_private float *res,
-                                   ccl_private const float *a,
-                                   ccl_private const float *b)
+                                   const ccl_private float *a,
+                                   const ccl_private float *b)
 {
-  const Transform tfm_a = convert_transform(a);
-  const Transform tfm_b = convert_transform(b);
-  copy_matrix(res, tfm_a * transform_inverse(tfm_b));
+  const ProjectionTransform tfm_a = make_projection(a);
+  const ProjectionTransform tfm_b = make_projection(b);
+  copy_matrix(res, tfm_a * projection_inverse(tfm_b));
 }
 
-ccl_device_extern void osl_div_mmf(ccl_private float *res, ccl_private const float *a, float b)
+ccl_device_extern void osl_div_mmf(ccl_private float *res,
+                                   const ccl_private float *a,
+                                   const float b)
 {
   for (int i = 0; i < 16; ++i) {
     res[i] = a[i] / b;
   }
 }
 
-ccl_device_extern void osl_div_mfm(ccl_private float *res, float a, ccl_private const float *b)
+ccl_device_extern void osl_div_mfm(ccl_private float *res,
+                                   const float a,
+                                   const ccl_private float *b)
 {
-  const Transform tfm_b = convert_transform(b);
-  copy_matrix(res, transform_inverse(tfm_b));
+  const ProjectionTransform tfm_b = make_projection(b);
+  copy_matrix(res, projection_inverse(tfm_b));
   for (int i = 0; i < 16; ++i) {
     res[i] *= a;
   }
 }
 
-ccl_device_extern void osl_div_m_ff(ccl_private float *res, float a, float b)
+ccl_device_extern void osl_div_m_ff(ccl_private float *res, const float a, float b)
 {
   float f = (b == 0) ? 0.0f : (a / b);
-  copy_identity_matrix(res, f);
+  copy_matrix(res, projection_identity());
+  for (int i = 0; i < 16; ++i) {
+    res[i] *= f;
+  }
 }
 
 ccl_device_extern void osl_transform_vmv(ccl_private float3 *res,
-                                         ccl_private const float *m,
-                                         ccl_private const float3 *v)
+                                         const ccl_private float *m,
+                                         const ccl_private float3 *v)
 {
-  const Transform tfm_m = convert_transform(m);
-  *res = transform_point(&tfm_m, *v);
+  const ProjectionTransform tfm_m = make_projection(m);
+  *res = transform_perspective(&tfm_m, *v);
 }
 
 ccl_device_extern void osl_transform_dvmdv(ccl_private float3 *res,
-                                           ccl_private const float *m,
-                                           ccl_private const float3 *v)
+                                           const ccl_private float *m,
+                                           const ccl_private float3 *v)
 {
   for (int i = 0; i < 3; ++i) {
-    const Transform tfm_m = convert_transform(m + i * 16);
-    res[i] = transform_point(&tfm_m, v[i]);
+    osl_transform_vmv(res + i, m + i * 16, v + i);
   }
 }
 
 ccl_device_extern void osl_transformv_vmv(ccl_private float3 *res,
-                                          ccl_private const float *m,
-                                          ccl_private const float3 *v)
+                                          const ccl_private float *m,
+                                          const ccl_private float3 *v)
 {
-  const Transform tfm_m = convert_transform(m);
+  const Transform tfm_m = make_transform(m);
   *res = transform_direction(&tfm_m, *v);
 }
 
 ccl_device_extern void osl_transformv_dvmdv(ccl_private float3 *res,
-                                            ccl_private const float *m,
-                                            ccl_private const float3 *v)
+                                            const ccl_private float *m,
+                                            const ccl_private float3 *v)
 {
   for (int i = 0; i < 3; ++i) {
-    const Transform tfm_m = convert_transform(m + i * 16);
-    res[i] = transform_direction(&tfm_m, v[i]);
+    osl_transformv_vmv(res + i, m + i * 16, v + i);
   }
 }
 
 ccl_device_extern void osl_transformn_vmv(ccl_private float3 *res,
-                                          ccl_private const float *m,
-                                          ccl_private const float3 *v)
+                                          const ccl_private float *m,
+                                          const ccl_private float3 *v)
 {
-  const Transform tfm_m = convert_transform(m);
-  *res = transform_direction(&tfm_m, *v);
+  const Transform tfm_m = transform_inverse(make_transform(m));
+  *res = transform_direction_transposed(&tfm_m, *v);
 }
 
 ccl_device_extern void osl_transformn_dvmdv(ccl_private float3 *res,
-                                            ccl_private const float *m,
-                                            ccl_private const float3 *v)
+                                            const ccl_private float *m,
+                                            const ccl_private float3 *v)
 {
   for (int i = 0; i < 3; ++i) {
-    const Transform tfm_m = convert_transform(m + i * 16);
-    res[i] = transform_direction(&tfm_m, v[i]);
+    osl_transformn_vmv(res + i, m + i * 16, v + i);
   }
 }
 
@@ -596,12 +609,12 @@ ccl_device_extern bool osl_get_matrix(ccl_private ShaderGlobals *sg,
                                       DeviceString from)
 {
   if (from == DeviceStrings::u_common || from == DeviceStrings::u_world) {
-    copy_identity_matrix(res);
+    copy_matrix(res, projection_identity());
     return true;
   }
   if (from == DeviceStrings::u_shader || from == DeviceStrings::u_object) {
     KernelGlobals kg = nullptr;
-    ccl_private ShaderData *const sd = static_cast<ccl_private ShaderData *>(sg->renderstate);
+    ccl_private ShaderData *const sd = sg->sd;
     int object = sd->object;
 
     if (object != OBJECT_NONE) {
@@ -640,12 +653,12 @@ ccl_device_extern bool osl_get_inverse_matrix(ccl_private ShaderGlobals *sg,
                                               DeviceString to)
 {
   if (to == DeviceStrings::u_common || to == DeviceStrings::u_world) {
-    copy_identity_matrix(res);
+    copy_matrix(res, projection_identity());
     return true;
   }
   if (to == DeviceStrings::u_shader || to == DeviceStrings::u_object) {
     KernelGlobals kg = nullptr;
-    ccl_private ShaderData *const sd = static_cast<ccl_private ShaderData *>(sg->renderstate);
+    ccl_private ShaderData *const sd = sg->sd;
     int object = sd->object;
 
     if (object != OBJECT_NONE) {
@@ -710,10 +723,10 @@ ccl_device_extern bool osl_transform_triple(ccl_private ShaderGlobals *sg,
                                             ccl_private float3 *p_in,
                                             int p_in_derivs,
                                             ccl_private float3 *p_out,
-                                            int p_out_derivs,
+                                            const int p_out_derivs,
                                             DeviceString from,
                                             DeviceString to,
-                                            int vectype)
+                                            const int vectype)
 {
   if (!p_out_derivs) {
     p_in_derivs = false;
@@ -778,19 +791,19 @@ ccl_device_extern bool osl_transform_triple(ccl_private ShaderGlobals *sg,
 
 ccl_device_extern bool osl_transform_triple_nonlinear(ccl_private ShaderGlobals *sg,
                                                       ccl_private float3 *p_in,
-                                                      int p_in_derivs,
+                                                      const int p_in_derivs,
                                                       ccl_private float3 *p_out,
-                                                      int p_out_derivs,
+                                                      const int p_out_derivs,
                                                       DeviceString from,
                                                       DeviceString to,
-                                                      int vectype)
+                                                      const int vectype)
 {
   return osl_transform_triple(sg, p_in, p_in_derivs, p_out, p_out_derivs, from, to, vectype);
 }
 
-ccl_device_extern void osl_transpose_mm(ccl_private float *res, ccl_private const float *m)
+ccl_device_extern void osl_transpose_mm(ccl_private float *res, const ccl_private float *m)
 {
-  copy_matrix(res, *reinterpret_cast<ccl_private const ProjectionTransform *>(m));
+  copy_matrix(res, *reinterpret_cast<const ccl_private ProjectionTransform *>(m));
 }
 
 #if 0
@@ -801,12 +814,10 @@ ccl_device_extern float osl_determinant_fm(ccl_private const float *m)
 
 /* Attributes */
 
-#include "kernel/geom/geom.h"
-
 typedef long long TypeDesc;
 
 ccl_device_inline bool set_attribute_float(ccl_private float fval[3],
-                                           TypeDesc type,
+                                           const TypeDesc type,
                                            bool derivatives,
                                            ccl_private void *val)
 {
@@ -852,8 +863,8 @@ ccl_device_inline bool set_attribute_float(ccl_private float fval[3],
 
   return false;
 }
-ccl_device_inline bool set_attribute_float(float f,
-                                           TypeDesc type,
+ccl_device_inline bool set_attribute_float(const float f,
+                                           const TypeDesc type,
                                            bool derivatives,
                                            ccl_private void *val)
 {
@@ -866,7 +877,7 @@ ccl_device_inline bool set_attribute_float(float f,
   return set_attribute_float(fv, type, derivatives, val);
 }
 ccl_device_inline bool set_attribute_float2(ccl_private float2 fval[3],
-                                            TypeDesc type,
+                                            const TypeDesc type,
                                             bool derivatives,
                                             ccl_private void *val)
 {
@@ -913,7 +924,7 @@ ccl_device_inline bool set_attribute_float2(ccl_private float2 fval[3],
   return false;
 }
 ccl_device_inline bool set_attribute_float3(ccl_private float3 fval[3],
-                                            TypeDesc type,
+                                            const TypeDesc type,
                                             bool derivatives,
                                             ccl_private void *val)
 {
@@ -951,8 +962,8 @@ ccl_device_inline bool set_attribute_float3(ccl_private float3 fval[3],
 
   return false;
 }
-ccl_device_inline bool set_attribute_float3(float3 f,
-                                            TypeDesc type,
+ccl_device_inline bool set_attribute_float3(const float3 f,
+                                            const TypeDesc type,
                                             bool derivatives,
                                             ccl_private void *val)
 {
@@ -965,7 +976,7 @@ ccl_device_inline bool set_attribute_float3(float3 f,
   return set_attribute_float3(fv, type, derivatives, val);
 }
 ccl_device_inline bool set_attribute_float4(ccl_private float4 fval[3],
-                                            TypeDesc type,
+                                            const TypeDesc type,
                                             bool derivatives,
                                             ccl_private void *val)
 {
@@ -995,7 +1006,7 @@ ccl_device_inline bool set_attribute_float4(ccl_private float4 fval[3],
     }
     if ((type_aggregate == 1 /* TypeDesc::SCALAR */)) {
       for (int i = 0; i < (derivatives ? 3 : 1); ++i) {
-        static_cast<ccl_private float *>(val)[i] = average(float4_to_float3(fval[i]));
+        static_cast<ccl_private float *>(val)[i] = average(make_float3(fval[i]));
       }
       return true;
     }
@@ -1003,8 +1014,8 @@ ccl_device_inline bool set_attribute_float4(ccl_private float4 fval[3],
 
   return false;
 }
-ccl_device_inline bool set_attribute_matrix(ccl_private const Transform &tfm,
-                                            TypeDesc type,
+ccl_device_inline bool set_attribute_matrix(const ccl_private Transform &tfm,
+                                            const TypeDesc type,
                                             ccl_private void *val)
 {
   const unsigned char type_basetype = type & 0xF;
@@ -1017,18 +1028,104 @@ ccl_device_inline bool set_attribute_matrix(ccl_private const Transform &tfm,
 
   return false;
 }
+ccl_device_inline bool set_attribute_int(const int i,
+                                         const TypeDesc type,
+                                         bool derivatives,
+                                         void *val)
+{
+  const unsigned char type_basetype = type & 0xF;
+  const unsigned char type_aggregate = (type >> 8) & 0xF;
+  const int type_arraylen = type >> 32;
+
+  if ((type_basetype == 7 /* TypeDesc::INT */) && (type_aggregate == 1 /* TypeDesc::SCALAR */) &&
+      type_arraylen == 0)
+  {
+    static_cast<ccl_private int *>(val)[0] = i;
+
+    if (derivatives) {
+      static_cast<ccl_private int *>(val)[1] = 0;
+      static_cast<ccl_private int *>(val)[2] = 0;
+    }
+
+    return true;
+  }
+
+  return false;
+}
 
 ccl_device_inline bool get_background_attribute(KernelGlobals kg,
+                                                ccl_private ShaderGlobals *sg,
                                                 ccl_private ShaderData *sd,
                                                 DeviceString name,
-                                                TypeDesc type,
+                                                const TypeDesc type,
                                                 bool derivatives,
                                                 ccl_private void *val)
 {
+  ConstIntegratorState state = (sg->shade_index > 0) ? (sg->shade_index - 1) : -1;
+  ConstIntegratorShadowState shadow_state = (sg->shade_index < 0) ? (-sg->shade_index - 1) : -1;
   if (name == DeviceStrings::u_path_ray_length) {
     /* Ray Length */
     float f = sd->ray_length;
     return set_attribute_float(f, type, derivatives, val);
+  }
+
+#define READ_PATH_STATE(elem) \
+  ((state != -1)        ? INTEGRATOR_STATE(state, path, elem) : \
+   (shadow_state != -1) ? INTEGRATOR_STATE(shadow_state, shadow_path, elem) : \
+                          0)
+
+  if (name == DeviceStrings::u_path_ray_depth) {
+    /* Ray Depth */
+    const int f = READ_PATH_STATE(bounce);
+    return set_attribute_int(f, type, derivatives, val);
+  }
+  if (name == DeviceStrings::u_path_diffuse_depth) {
+    /* Diffuse Ray Depth */
+    const int f = READ_PATH_STATE(diffuse_bounce);
+    return set_attribute_int(f, type, derivatives, val);
+  }
+  if (name == DeviceStrings::u_path_glossy_depth) {
+    /* Glossy Ray Depth */
+    const int f = READ_PATH_STATE(glossy_bounce);
+    return set_attribute_int(f, type, derivatives, val);
+  }
+  if (name == DeviceStrings::u_path_transmission_depth) {
+    /* Transmission Ray Depth */
+    const int f = READ_PATH_STATE(transmission_bounce);
+    return set_attribute_int(f, type, derivatives, val);
+  }
+  if (name == DeviceStrings::u_path_transparent_depth) {
+    /* Transparent Ray Depth */
+    const int f = READ_PATH_STATE(transparent_bounce);
+    return set_attribute_int(f, type, derivatives, val);
+  }
+#undef READ_PATH_STATE
+
+  else if (name == DeviceStrings::u_ndc) {
+    /* NDC coordinates with special exception for orthographic projection. */
+    float3 ndc[3];
+
+    if ((sg->raytype & PATH_RAY_CAMERA) && sd->object == OBJECT_NONE &&
+        kernel_data.cam.type == CAMERA_ORTHOGRAPHIC)
+    {
+      ndc[0] = camera_world_to_ndc(kg, sd, sd->ray_P);
+
+      if (derivatives) {
+        ndc[1] = zero_float3();
+        ndc[2] = zero_float3();
+      }
+    }
+    else {
+      ndc[0] = camera_world_to_ndc(kg, sd, sd->P);
+
+      if (derivatives) {
+        const differential3 dP = differential_from_compact(sd->Ng, sd->dP);
+        ndc[1] = camera_world_to_ndc(kg, sd, sd->P + dP.dx) - ndc[0];
+        ndc[2] = camera_world_to_ndc(kg, sd, sd->P + dP.dy) - ndc[0];
+      }
+    }
+
+    return set_attribute_float3(ndc, type, derivatives, val);
   }
 
   return false;
@@ -1037,7 +1134,7 @@ ccl_device_inline bool get_background_attribute(KernelGlobals kg,
 ccl_device_inline bool get_object_attribute(KernelGlobals kg,
                                             ccl_private ShaderData *sd,
                                             const AttributeDescriptor &desc,
-                                            TypeDesc type,
+                                            const TypeDesc type,
                                             bool derivatives,
                                             ccl_private void *val)
 {
@@ -1094,9 +1191,10 @@ ccl_device_inline bool get_object_attribute(KernelGlobals kg,
 }
 
 ccl_device_inline bool get_object_standard_attribute(KernelGlobals kg,
+                                                     ccl_private ShaderGlobals *sg,
                                                      ccl_private ShaderData *sd,
                                                      DeviceString name,
-                                                     TypeDesc type,
+                                                     const TypeDesc type,
                                                      bool derivatives,
                                                      ccl_private void *val)
 {
@@ -1115,6 +1213,10 @@ ccl_device_inline bool get_object_standard_attribute(KernelGlobals kg,
   }
   else if (name == DeviceStrings::u_object_index) {
     float f = object_pass_id(kg, sd->object);
+    return set_attribute_float(f, type, derivatives, val);
+  }
+  else if (name == DeviceStrings::u_object_is_light) {
+    float f = ((sd->type & PRIMITIVE_LAMP) != 0);
     return set_attribute_float(f, type, derivatives, val);
   }
   else if (name == DeviceStrings::u_geom_dupli_generated) {
@@ -1252,20 +1354,20 @@ ccl_device_inline bool get_object_standard_attribute(KernelGlobals kg,
     }
   }
 
-  return get_background_attribute(kg, sd, name, type, derivatives, val);
+  return get_background_attribute(kg, sg, sd, name, type, derivatives, val);
 }
 
 ccl_device_extern bool osl_get_attribute(ccl_private ShaderGlobals *sg,
-                                         int derivatives,
+                                         const int derivatives,
                                          DeviceString object_name,
                                          DeviceString name,
-                                         int array_lookup,
-                                         int index,
-                                         TypeDesc type,
+                                         const int array_lookup,
+                                         const int index,
+                                         const TypeDesc type,
                                          ccl_private void *res)
 {
   KernelGlobals kg = nullptr;
-  ccl_private ShaderData *const sd = static_cast<ccl_private ShaderData *>(sg->renderstate);
+  ccl_private ShaderData *const sd = sg->sd;
   int object;
 
   if (object_name != DeviceStrings::_emptystring_) {
@@ -1281,7 +1383,7 @@ ccl_device_extern bool osl_get_attribute(ccl_private ShaderGlobals *sg,
     return get_object_attribute(kg, sd, desc, type, derivatives, res);
   }
   else {
-    return get_object_standard_attribute(kg, sd, name, type, derivatives, res);
+    return get_object_standard_attribute(kg, sg, sd, name, type, derivatives, res);
   }
 }
 
@@ -1289,13 +1391,13 @@ ccl_device_extern bool osl_get_attribute(ccl_private ShaderGlobals *sg,
 ccl_device_extern bool osl_bind_interpolated_param(ccl_private ShaderGlobals *sg,
                                                        DeviceString name,
                                                        long long type,
-                                                       int userdata_has_derivs,
+                                                     const int userdata_has_derivs,
                                                        ccl_private void *userdata_data,
-                                                       int symbol_has_derivs,
+                                                     const int symbol_has_derivs,
                                                        ccl_private void *symbol_data,
-                                                       int symbol_data_size,
+                                                     const int symbol_data_size,
                                                        ccl_private void *userdata_initialized,
-                                                       int userdata_index)
+                                                     const int userdata_index)
 {
   return false;
 }
@@ -1303,30 +1405,27 @@ ccl_device_extern bool osl_bind_interpolated_param(ccl_private ShaderGlobals *sg
 
 /* Noise */
 
-#include "kernel/svm/noise.h"
-#include "util/hash.h"
-
-ccl_device_extern uint osl_hash_ii(int x)
+ccl_device_extern uint osl_hash_ii(const int x)
 {
   return hash_uint(x);
 }
 
-ccl_device_extern uint osl_hash_if(float x)
+ccl_device_extern uint osl_hash_if(const float x)
 {
   return hash_uint(__float_as_uint(x));
 }
 
-ccl_device_extern uint osl_hash_iff(float x, float y)
+ccl_device_extern uint osl_hash_iff(const float x, const float y)
 {
   return hash_uint2(__float_as_uint(x), __float_as_uint(y));
 }
 
-ccl_device_extern uint osl_hash_iv(ccl_private const float3 *v)
+ccl_device_extern uint osl_hash_iv(const ccl_private float3 *v)
 {
   return hash_uint3(__float_as_uint(v->x), __float_as_uint(v->y), __float_as_uint(v->z));
 }
 
-ccl_device_extern uint osl_hash_ivf(ccl_private const float3 *v, float w)
+ccl_device_extern uint osl_hash_ivf(const ccl_private float3 *v, const float w)
 {
   return hash_uint4(
       __float_as_uint(v->x), __float_as_uint(v->y), __float_as_uint(v->z), __float_as_uint(w));
@@ -1338,12 +1437,12 @@ ccl_device_extern OSLNoiseOptions *osl_get_noise_options(ccl_private ShaderGloba
 }
 
 ccl_device_extern void osl_noiseparams_set_anisotropic(ccl_private OSLNoiseOptions *opt,
-                                                       int anisotropic)
+                                                       const int anisotropic)
 {
 }
 
 ccl_device_extern void osl_noiseparams_set_do_filter(ccl_private OSLNoiseOptions *opt,
-                                                     int do_filter)
+                                                     const int do_filter)
 {
 }
 
@@ -1353,21 +1452,21 @@ ccl_device_extern void osl_noiseparams_set_direction(ccl_private OSLNoiseOptions
 }
 
 ccl_device_extern void osl_noiseparams_set_bandwidth(ccl_private OSLNoiseOptions *opt,
-                                                     float bandwidth)
+                                                     const float bandwidth)
 {
 }
 
 ccl_device_extern void osl_noiseparams_set_impulses(ccl_private OSLNoiseOptions *opt,
-                                                    float impulses)
+                                                    const float impulses)
 {
 }
 
 #define OSL_NOISE_IMPL(name, op) \
-  ccl_device_extern float name##_ff(float x) \
+  ccl_device_extern float name##_ff(const float x) \
   { \
     return op##_1d(x); \
   } \
-  ccl_device_extern float name##_fff(float x, float y) \
+  ccl_device_extern float name##_fff(const float x, const float y) \
   { \
     return op##_2d(make_float2(x, y)); \
   } \
@@ -1375,11 +1474,11 @@ ccl_device_extern void osl_noiseparams_set_impulses(ccl_private OSLNoiseOptions 
   { \
     return op##_3d(*v); \
   } \
-  ccl_device_extern float name##_fvf(ccl_private const float3 *v, float w) \
+  ccl_device_extern float name##_fvf(ccl_private const float3 *v, const float w) \
   { \
     return op##_4d(make_float4(v->x, v->y, v->z, w)); \
   } \
-  ccl_device_extern void name##_vf(ccl_private float3 *res, float x) \
+  ccl_device_extern void name##_vf(ccl_private float3 *res, const float x) \
   { \
     /* TODO: This is not correct. Really need to change the hash function inside the noise \
      * function to spit out a vector instead of a scalar. */ \
@@ -1388,7 +1487,7 @@ ccl_device_extern void osl_noiseparams_set_impulses(ccl_private OSLNoiseOptions 
     res->y = n; \
     res->z = n; \
   } \
-  ccl_device_extern void name##_vff(ccl_private float3 *res, float x, float y) \
+  ccl_device_extern void name##_vff(ccl_private float3 *res, const float x, float y) \
   { \
     const float n = name##_fff(x, y); \
     res->x = n; \
@@ -1403,7 +1502,7 @@ ccl_device_extern void osl_noiseparams_set_impulses(ccl_private OSLNoiseOptions 
     res->z = n; \
   } \
   ccl_device_extern void name##_vvf( \
-      ccl_private float3 *res, ccl_private const float3 *v, float w) \
+      ccl_private float3 *res, ccl_private const float3 *v, const float w) \
   { \
     const float n = name##_fvf(v, w); \
     res->x = n; \
@@ -1417,14 +1516,14 @@ ccl_device_extern void osl_noiseparams_set_impulses(ccl_private OSLNoiseOptions 
     res[2] = name##_ff(x[2]); \
   } \
   ccl_device_extern void name##_dfdff( \
-      ccl_private float *res, ccl_private const float *x, float y) \
+      ccl_private float *res, ccl_private const float *x, const float y) \
   { \
     res[0] = name##_fff(x[0], y); \
     res[1] = name##_fff(x[1], y); \
     res[2] = name##_fff(x[2], y); \
   } \
   ccl_device_extern void name##_dffdf( \
-      ccl_private float *res, float x, ccl_private const float *y) \
+      ccl_private float *res, const float x, ccl_private const float *y) \
   { \
     res[0] = name##_fff(x, y[0]); \
     res[1] = name##_fff(x, y[1]); \
@@ -1444,7 +1543,7 @@ ccl_device_extern void osl_noiseparams_set_impulses(ccl_private OSLNoiseOptions 
     res[2] = name##_fv(&v[2]); \
   } \
   ccl_device_extern void name##_dfdvf( \
-      ccl_private float *res, ccl_private const float3 *v, float w) \
+      ccl_private float *res, ccl_private const float3 *v, const float w) \
   { \
     res[0] = name##_fvf(&v[0], w); \
     res[1] = name##_fvf(&v[1], w); \
@@ -1471,14 +1570,14 @@ ccl_device_extern void osl_noiseparams_set_impulses(ccl_private OSLNoiseOptions 
     name##_vf(&res[2], x[2]); \
   } \
   ccl_device_extern void name##_dvdff( \
-      ccl_private float3 *res, ccl_private const float *x, float y) \
+      ccl_private float3 *res, ccl_private const float *x, const float y) \
   { \
     name##_vff(&res[0], x[0], y); \
     name##_vff(&res[1], x[1], y); \
     name##_vff(&res[2], x[2], y); \
   } \
   ccl_device_extern void name##_dvfdf( \
-      ccl_private float3 *res, float x, ccl_private const float *y) \
+      ccl_private float3 *res, const float x, ccl_private const float *y) \
   { \
     name##_vff(&res[0], x, y[0]); \
     name##_vff(&res[1], x, y[1]); \
@@ -1498,7 +1597,7 @@ ccl_device_extern void osl_noiseparams_set_impulses(ccl_private OSLNoiseOptions 
     name##_vv(&res[2], &v[2]); \
   } \
   ccl_device_extern void name##_dvdvf( \
-      ccl_private float3 *res, ccl_private const float3 *v, float w) \
+      ccl_private float3 *res, ccl_private const float3 *v, const float w) \
   { \
     name##_vvf(&res[0], &v[0], w); \
     name##_vvf(&res[1], &v[1], w); \
@@ -1519,25 +1618,25 @@ ccl_device_extern void osl_noiseparams_set_impulses(ccl_private OSLNoiseOptions 
     name##_vvf(&res[2], &v[2], w[2]); \
   }
 
-ccl_device_forceinline float hashnoise_1d(float p)
+ccl_device_forceinline float hashnoise_1d(const float p)
 {
   const uint x = __float_as_uint(p);
   return hash_uint(x) / static_cast<float>(~0u);
 }
-ccl_device_forceinline float hashnoise_2d(float2 p)
+ccl_device_forceinline float hashnoise_2d(const float2 p)
 {
   const uint x = __float_as_uint(p.x);
   const uint y = __float_as_uint(p.y);
   return hash_uint2(x, y) / static_cast<float>(~0u);
 }
-ccl_device_forceinline float hashnoise_3d(float3 p)
+ccl_device_forceinline float hashnoise_3d(const float3 p)
 {
   const uint x = __float_as_uint(p.x);
   const uint y = __float_as_uint(p.y);
   const uint z = __float_as_uint(p.z);
   return hash_uint3(x, y, z) / static_cast<float>(~0u);
 }
-ccl_device_forceinline float hashnoise_4d(float4 p)
+ccl_device_forceinline float hashnoise_4d(const float4 p)
 {
   const uint x = __float_as_uint(p.x);
   const uint y = __float_as_uint(p.y);
@@ -1553,8 +1652,6 @@ OSL_NOISE_IMPL(osl_snoise, snoise)
 
 /* Texturing */
 
-#include "kernel/util/ies.h"
-
 ccl_device_extern ccl_private OSLTextureOptions *osl_get_texture_options(
     ccl_private ShaderGlobals *sg)
 {
@@ -1562,41 +1659,81 @@ ccl_device_extern ccl_private OSLTextureOptions *osl_get_texture_options(
 }
 
 ccl_device_extern void osl_texture_set_firstchannel(ccl_private OSLTextureOptions *opt,
-                                                    int firstchannel)
+                                                    const int firstchannel)
 {
 }
 
-ccl_device_extern void osl_texture_set_swrap_code(ccl_private OSLTextureOptions *opt, int mode) {}
+ccl_device_extern void osl_texture_set_swrap_code(ccl_private OSLTextureOptions *opt,
+                                                  const int mode)
+{
+}
 
-ccl_device_extern void osl_texture_set_twrap_code(ccl_private OSLTextureOptions *opt, int mode) {}
+ccl_device_extern void osl_texture_set_twrap_code(ccl_private OSLTextureOptions *opt,
+                                                  const int mode)
+{
+}
 
-ccl_device_extern void osl_texture_set_rwrap_code(ccl_private OSLTextureOptions *opt, int mode) {}
+ccl_device_extern void osl_texture_set_rwrap_code(ccl_private OSLTextureOptions *opt,
+                                                  const int mode)
+{
+}
 
-ccl_device_extern void osl_texture_set_stwrap_code(ccl_private OSLTextureOptions *opt, int mode) {}
+ccl_device_extern void osl_texture_set_stwrap_code(ccl_private OSLTextureOptions *opt,
+                                                   const int mode)
+{
+}
 
-ccl_device_extern void osl_texture_set_sblur(ccl_private OSLTextureOptions *opt, float blur) {}
+ccl_device_extern void osl_texture_set_sblur(ccl_private OSLTextureOptions *opt, const float blur)
+{
+}
 
-ccl_device_extern void osl_texture_set_tblur(ccl_private OSLTextureOptions *opt, float blur) {}
+ccl_device_extern void osl_texture_set_tblur(ccl_private OSLTextureOptions *opt, const float blur)
+{
+}
 
-ccl_device_extern void osl_texture_set_rblur(ccl_private OSLTextureOptions *opt, float blur) {}
+ccl_device_extern void osl_texture_set_rblur(ccl_private OSLTextureOptions *opt, const float blur)
+{
+}
 
-ccl_device_extern void osl_texture_set_stblur(ccl_private OSLTextureOptions *opt, float blur) {}
+ccl_device_extern void osl_texture_set_stblur(ccl_private OSLTextureOptions *opt, const float blur)
+{
+}
 
-ccl_device_extern void osl_texture_set_swidth(ccl_private OSLTextureOptions *opt, float width) {}
+ccl_device_extern void osl_texture_set_swidth(ccl_private OSLTextureOptions *opt,
+                                              const float width)
+{
+}
 
-ccl_device_extern void osl_texture_set_twidth(ccl_private OSLTextureOptions *opt, float width) {}
+ccl_device_extern void osl_texture_set_twidth(ccl_private OSLTextureOptions *opt,
+                                              const float width)
+{
+}
 
-ccl_device_extern void osl_texture_set_rwidth(ccl_private OSLTextureOptions *opt, float width) {}
+ccl_device_extern void osl_texture_set_rwidth(ccl_private OSLTextureOptions *opt,
+                                              const float width)
+{
+}
 
-ccl_device_extern void osl_texture_set_stwidth(ccl_private OSLTextureOptions *opt, float width) {}
+ccl_device_extern void osl_texture_set_stwidth(ccl_private OSLTextureOptions *opt,
+                                               const float width)
+{
+}
 
-ccl_device_extern void osl_texture_set_fill(ccl_private OSLTextureOptions *opt, float fill) {}
+ccl_device_extern void osl_texture_set_fill(ccl_private OSLTextureOptions *opt, const float fill)
+{
+}
 
-ccl_device_extern void osl_texture_set_time(ccl_private OSLTextureOptions *opt, float time) {}
+ccl_device_extern void osl_texture_set_time(ccl_private OSLTextureOptions *opt, const float time)
+{
+}
 
-ccl_device_extern void osl_texture_set_interp_code(ccl_private OSLTextureOptions *opt, int mode) {}
+ccl_device_extern void osl_texture_set_interp_code(ccl_private OSLTextureOptions *opt,
+                                                   const int mode)
+{
+}
 
-ccl_device_extern void osl_texture_set_subimage(ccl_private OSLTextureOptions *opt, int subimage)
+ccl_device_extern void osl_texture_set_subimage(ccl_private OSLTextureOptions *opt,
+                                                const int subimage)
 {
 }
 
@@ -1606,8 +1743,8 @@ ccl_device_extern void osl_texture_set_missingcolor_arena(ccl_private OSLTexture
 }
 
 ccl_device_extern void osl_texture_set_missingcolor_alpha(ccl_private OSLTextureOptions *opt,
-                                                          int nchannels,
-                                                          float alpha)
+                                                          const int nchannels,
+                                                          const float alpha)
 {
 }
 
@@ -1615,13 +1752,13 @@ ccl_device_extern bool osl_texture(ccl_private ShaderGlobals *sg,
                                    DeviceString filename,
                                    ccl_private void *texture_handle,
                                    ccl_private OSLTextureOptions *opt,
-                                   float s,
-                                   float t,
-                                   float dsdx,
-                                   float dtdx,
-                                   float dsdy,
-                                   float dtdy,
-                                   int nchannels,
+                                   const float s,
+                                   const float t,
+                                   const float dsdx,
+                                   const float dtdx,
+                                   const float dsdy,
+                                   const float dtdy,
+                                   const int nchannels,
                                    ccl_private float *result,
                                    ccl_private float *dresultdx,
                                    ccl_private float *dresultdy,
@@ -1666,11 +1803,11 @@ ccl_device_extern bool osl_texture3d(ccl_private ShaderGlobals *sg,
                                      DeviceString filename,
                                      ccl_private void *texture_handle,
                                      ccl_private OSLTextureOptions *opt,
-                                     ccl_private const float3 *P,
-                                     ccl_private const float3 *dPdx,
-                                     ccl_private const float3 *dPdy,
-                                     ccl_private const float3 *dPdz,
-                                     int nchannels,
+                                     const ccl_private float3 *P,
+                                     const ccl_private float3 *dPdx,
+                                     const ccl_private float3 *dPdy,
+                                     const ccl_private float3 *dPdz,
+                                     const int nchannels,
                                      ccl_private float *result,
                                      ccl_private float *dresultds,
                                      ccl_private float *dresultdt,
@@ -1709,10 +1846,10 @@ ccl_device_extern bool osl_environment(ccl_private ShaderGlobals *sg,
                                        DeviceString filename,
                                        ccl_private void *texture_handle,
                                        ccl_private OSLTextureOptions *opt,
-                                       ccl_private const float3 *R,
-                                       ccl_private const float3 *dRdx,
-                                       ccl_private const float3 *dRdy,
-                                       int nchannels,
+                                       const ccl_private float3 *R,
+                                       const ccl_private float3 *dRdx,
+                                       const ccl_private float3 *dRdy,
+                                       const int nchannels,
                                        ccl_private float *result,
                                        ccl_private float *dresultds,
                                        ccl_private float *dresultdt,
@@ -1741,9 +1878,9 @@ ccl_device_extern bool osl_get_textureinfo(ccl_private ShaderGlobals *sg,
                                            DeviceString filename,
                                            ccl_private void *texture_handle,
                                            DeviceString dataname,
-                                           int basetype,
-                                           int arraylen,
-                                           int aggegrate,
+                                           const int basetype,
+                                           const int arraylen,
+                                           const int aggegrate,
                                            ccl_private void *data,
                                            ccl_private void *errormessage)
 {
@@ -1753,12 +1890,12 @@ ccl_device_extern bool osl_get_textureinfo(ccl_private ShaderGlobals *sg,
 ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
                                               DeviceString filename,
                                               ccl_private void *texture_handle,
-                                              float s,
-                                              float t,
+                                              const float s,
+                                              const float t,
                                               DeviceString dataname,
-                                              int basetype,
-                                              int arraylen,
-                                              int aggegrate,
+                                              const int basetype,
+                                              const int arraylen,
+                                              const int aggegrate,
                                               ccl_private void *data,
                                               ccl_private void *errormessage)
 {
@@ -1769,17 +1906,17 @@ ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
 /* Standard library */
 
 #define OSL_OP_IMPL_II(name, op) \
-  ccl_device_extern int name##_ii(int a) \
+  ccl_device_extern int name##_ii(const int a) \
   { \
     return op(a); \
   }
 #define OSL_OP_IMPL_IF(name, op) \
-  ccl_device_extern int name##_if(float a) \
+  ccl_device_extern int name##_if(const float a) \
   { \
     return op(a); \
   }
 #define OSL_OP_IMPL_FF(name, op) \
-  ccl_device_extern float name##_ff(float a) \
+  ccl_device_extern float name##_ff(const float a) \
   { \
     return op(a); \
   }
@@ -1832,12 +1969,12 @@ ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
   }
 
 #define OSL_OP_IMPL_III(name, op) \
-  ccl_device_extern int name##_iii(int a, int b) \
+  ccl_device_extern int name##_iii(const int a, const int b) \
   { \
     return op(a, b); \
   }
 #define OSL_OP_IMPL_FFF(name, op) \
-  ccl_device_extern float name##_fff(float a, float b) \
+  ccl_device_extern float name##_fff(const float a, const float b) \
   { \
     return op(a, b); \
   }
@@ -1848,7 +1985,7 @@ ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
   }
 #define OSL_OP_IMPL_DFFDF(name, op) \
   ccl_device_extern void name##_dffdf( \
-      ccl_private float *res, float a, ccl_private const float *b) \
+      ccl_private float *res, const float a, ccl_private const float *b) \
   { \
     for (int i = 0; i < 3; ++i) { \
       res[i] = op(a, b[i]); \
@@ -1856,7 +1993,7 @@ ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
   }
 #define OSL_OP_IMPL_DFDFF(name, op) \
   ccl_device_extern void name##_dfdff( \
-      ccl_private float *res, ccl_private const float *a, float b) \
+      ccl_private float *res, ccl_private const float *a, const float b) \
   { \
     for (int i = 0; i < 3; ++i) { \
       res[i] = op(a[i], b); \
@@ -1896,7 +2033,7 @@ ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
   }
 #define OSL_OP_IMPL_VVF_(name, op) \
   ccl_device_extern void name##_vvf( \
-      ccl_private float3 *res, ccl_private const float3 *a, float b) \
+      ccl_private float3 *res, ccl_private const float3 *a, const float b) \
   { \
     res->x = op(a->x, b); \
     res->y = op(a->y, b); \
@@ -1928,7 +2065,7 @@ ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
   }
 #define OSL_OP_IMPL_DVDVF_(name, op) \
   ccl_device_extern void name##_dvdvf( \
-      ccl_private float3 *res, ccl_private const float3 *a, float b) \
+      ccl_private float3 *res, ccl_private const float3 *a, const float b) \
   { \
     for (int i = 0; i < 3; ++i) { \
       res[i].x = op(a[i].x, b); \
@@ -2002,13 +2139,13 @@ ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
   }
 
 #define OSL_OP_IMPL_FFFF(name, op) \
-  ccl_device_extern float name##_ffff(float a, float b, float c) \
+  ccl_device_extern float name##_ffff(const float a, const float b, float c) \
   { \
     return op(a, b, c); \
   }
 #define OSL_OP_IMPL_DFFFDF(name, op) \
   ccl_device_extern void name##_dfffdf( \
-      ccl_private float *res, float a, float b, ccl_private const float *c) \
+      ccl_private float *res, const float a, float b, ccl_private const float *c) \
   { \
     for (int i = 0; i < 3; ++i) { \
       res[i] = op(a, b, c[i]); \
@@ -2016,15 +2153,17 @@ ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
   }
 #define OSL_OP_IMPL_DFFDFF(name, op) \
   ccl_device_extern void name##_dffdff( \
-      ccl_private float *res, float a, ccl_private const float *b, float c) \
+      ccl_private float *res, const float a, ccl_private const float *b, const float c) \
   { \
     for (int i = 0; i < 3; ++i) { \
       res[i] = op(a, b[i], c); \
     } \
   }
 #define OSL_OP_IMPL_DFFDFDF(name, op) \
-  ccl_device_extern void name##_dffdfdf( \
-      ccl_private float *res, float a, ccl_private const float *b, ccl_private const float *c) \
+  ccl_device_extern void name##_dffdfdf(ccl_private float *res, \
+                                        const float a, \
+                                        ccl_private const float *b, \
+                                        ccl_private const float *c) \
   { \
     for (int i = 0; i < 3; ++i) { \
       res[i] = op(a, b[i], c[i]); \
@@ -2033,23 +2172,27 @@ ccl_device_extern bool osl_get_textureinfo_st(ccl_private ShaderGlobals *sg,
 
 #define OSL_OP_IMPL_DFDFFF(name, op) \
   ccl_device_extern void name##_dfdfff( \
-      ccl_private float *res, ccl_private const float *a, float b, float c) \
+      ccl_private float *res, ccl_private const float *a, const float b, float c) \
   { \
     for (int i = 0; i < 3; ++i) { \
       res[i] = op(a[i], b, c); \
     } \
   }
 #define OSL_OP_IMPL_DFDFFDF(name, op) \
-  ccl_device_extern void name##_dfdffdf( \
-      ccl_private float *res, ccl_private const float *a, float b, ccl_private const float *c) \
+  ccl_device_extern void name##_dfdffdf(ccl_private float *res, \
+                                        ccl_private const float *a, \
+                                        const float b, \
+                                        ccl_private const float *c) \
   { \
     for (int i = 0; i < 3; ++i) { \
       res[i] = op(a[i], b, c[i]); \
     } \
   }
 #define OSL_OP_IMPL_DFDFDFF(name, op) \
-  ccl_device_extern void name##_dfdfdff( \
-      ccl_private float *res, ccl_private const float *a, ccl_private const float *b, float c) \
+  ccl_device_extern void name##_dfdfdff(ccl_private float *res, \
+                                        ccl_private const float *a, \
+                                        ccl_private const float *b, \
+                                        const float c) \
   { \
     for (int i = 0; i < 3; ++i) { \
       res[i] = op(a[i], b[i], c); \
@@ -2093,11 +2236,11 @@ OSL_OP_IMPL_XX(osl_cosh, coshf)
 OSL_OP_IMPL_XX(osl_sinh, sinhf)
 OSL_OP_IMPL_XX(osl_tanh, tanhf)
 
-ccl_device_forceinline int safe_divide(int a, int b)
+ccl_device_forceinline int safe_divide(const int a, const int b)
 {
   return (b != 0) ? a / b : 0;
 }
-ccl_device_forceinline int safe_modulo(int a, int b)
+ccl_device_forceinline int safe_modulo(const int a, const int b)
 {
   return (b != 0) ? a % b : 0;
 }
@@ -2106,11 +2249,11 @@ OSL_OP_IMPL_III(osl_safe_div, safe_divide)
 OSL_OP_IMPL_FFF(osl_safe_div, safe_divide)
 OSL_OP_IMPL_III(osl_safe_mod, safe_modulo)
 
-ccl_device_extern void osl_sincos_fff(float a, ccl_private float *b, ccl_private float *c)
+ccl_device_extern void osl_sincos_fff(const float a, ccl_private float *b, ccl_private float *c)
 {
   sincos(a, b, c);
 }
-ccl_device_extern void osl_sincos_dfdff(ccl_private const float *a,
+ccl_device_extern void osl_sincos_dfdff(const ccl_private float *a,
                                         ccl_private float *b,
                                         ccl_private float *c)
 {
@@ -2118,7 +2261,7 @@ ccl_device_extern void osl_sincos_dfdff(ccl_private const float *a,
     sincos(a[i], b + i, c);
   }
 }
-ccl_device_extern void osl_sincos_dffdf(ccl_private const float *a,
+ccl_device_extern void osl_sincos_dffdf(const ccl_private float *a,
                                         ccl_private float *b,
                                         ccl_private float *c)
 {
@@ -2126,7 +2269,7 @@ ccl_device_extern void osl_sincos_dffdf(ccl_private const float *a,
     sincos(a[i], b, c + i);
   }
 }
-ccl_device_extern void osl_sincos_dfdfdf(ccl_private const float *a,
+ccl_device_extern void osl_sincos_dfdfdf(const ccl_private float *a,
                                          ccl_private float *b,
                                          ccl_private float *c)
 {
@@ -2134,7 +2277,7 @@ ccl_device_extern void osl_sincos_dfdfdf(ccl_private const float *a,
     sincos(a[i], b + i, c + i);
   }
 }
-ccl_device_extern void osl_sincos_vvv(ccl_private const float3 *a,
+ccl_device_extern void osl_sincos_vvv(const ccl_private float3 *a,
                                       ccl_private float3 *b,
                                       ccl_private float3 *c)
 {
@@ -2142,7 +2285,7 @@ ccl_device_extern void osl_sincos_vvv(ccl_private const float3 *a,
   sincos(a->y, &b->y, &c->y);
   sincos(a->z, &b->z, &c->z);
 }
-ccl_device_extern void osl_sincos_dvdvv(ccl_private const float3 *a,
+ccl_device_extern void osl_sincos_dvdvv(const ccl_private float3 *a,
                                         ccl_private float3 *b,
                                         ccl_private float3 *c)
 {
@@ -2152,7 +2295,7 @@ ccl_device_extern void osl_sincos_dvdvv(ccl_private const float3 *a,
     sincos(a[i].z, &b[i].z, &c->z);
   }
 }
-ccl_device_extern void osl_sincos_dvvdv(ccl_private const float3 *a,
+ccl_device_extern void osl_sincos_dvvdv(const ccl_private float3 *a,
                                         ccl_private float3 *b,
                                         ccl_private float3 *c)
 {
@@ -2162,7 +2305,7 @@ ccl_device_extern void osl_sincos_dvvdv(ccl_private const float3 *a,
     sincos(a[i].z, &b->z, &c[i].z);
   }
 }
-ccl_device_extern void osl_sincos_dvdvdv(ccl_private const float3 *a,
+ccl_device_extern void osl_sincos_dvdvdv(const ccl_private float3 *a,
                                          ccl_private float3 *b,
                                          ccl_private float3 *c)
 {
@@ -2204,7 +2347,7 @@ OSL_OP_IMPL_VV_(osl_round, roundf)
 OSL_OP_IMPL_FF(osl_trunc, truncf)
 OSL_OP_IMPL_VV_(osl_trunc, truncf)
 
-ccl_device_forceinline float step_impl(float edge, float x)
+ccl_device_forceinline float step_impl(const float edge, const float x)
 {
   return x < edge ? 0.0f : 1.0f;
 }
@@ -2256,7 +2399,7 @@ OSL_OP_IMPL_DVDV(osl_normalize, safe_normalize)
 
 ccl_device_extern void osl_calculatenormal(ccl_private float3 *res,
                                            ccl_private ShaderGlobals *sg,
-                                           ccl_private const float3 *p)
+                                           const ccl_private float3 *p)
 {
   if (sg->flipHandedness) {
     *res = cross(p[2], p[1]);
@@ -2266,24 +2409,24 @@ ccl_device_extern void osl_calculatenormal(ccl_private float3 *res,
   }
 }
 
-ccl_device_extern float osl_area(ccl_private const float3 *p)
+ccl_device_extern float osl_area(const ccl_private float3 *p)
 {
   return len(cross(p[2], p[1]));
 }
 
-ccl_device_extern float osl_filterwidth_fdf(ccl_private const float *x)
+ccl_device_extern float osl_filterwidth_fdf(const ccl_private float *x)
 {
   return sqrtf(x[1] * x[1] + x[2] * x[2]);
 }
 
-ccl_device_extern void osl_filterwidth_vdv(ccl_private float *res, ccl_private const float *x)
+ccl_device_extern void osl_filterwidth_vdv(ccl_private float *res, const ccl_private float *x)
 {
   for (int i = 0; i < 3; ++i) {
     res[i] = osl_filterwidth_fdf(x + i);
   }
 }
 
-ccl_device_extern bool osl_raytype_bit(ccl_private ShaderGlobals *sg, int bit)
+ccl_device_extern bool osl_raytype_bit(ccl_private ShaderGlobals *sg, const int bit)
 {
   return (sg->raytype & bit) != 0;
 }

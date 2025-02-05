@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include <algorithm>
-#include <iostream>
 #include <random>
 
 #include "GEO_randomize.hh"
@@ -12,8 +11,6 @@
 #include "DNA_mesh_types.h"
 #include "DNA_pointcloud_types.h"
 
-#include "BKE_attribute.hh"
-#include "BKE_attribute_math.hh"
 #include "BKE_curves.hh"
 #include "BKE_customdata.hh"
 #include "BKE_geometry_set.hh"
@@ -74,7 +71,7 @@ static int seed_from_instances(const bke::Instances &instances)
 static void reorder_customdata(CustomData &data, const Span<int> new_by_old_map)
 {
   CustomData new_data;
-  CustomData_copy_layout(&data, &new_data, CD_MASK_ALL, CD_CONSTRUCT, new_by_old_map.size());
+  CustomData_init_layout_from(&data, &new_data, CD_MASK_ALL, CD_CONSTRUCT, new_by_old_map.size());
 
   for (const int old_i : new_by_old_map.index_range()) {
     const int new_i = new_by_old_map[old_i];
@@ -143,7 +140,7 @@ static void reorder_customdata_groups(CustomData &data,
   const int elements_num = new_offsets.total_size();
   const int groups_num = new_by_old_map.size();
   CustomData new_data;
-  CustomData_copy_layout(&data, &new_data, CD_MASK_ALL, CD_CONSTRUCT, elements_num);
+  CustomData_init_layout_from(&data, &new_data, CD_MASK_ALL, CD_CONSTRUCT, elements_num);
   for (const int old_i : IndexRange(groups_num)) {
     const int new_i = new_by_old_map[old_i];
     const IndexRange old_range = old_offsets[old_i];

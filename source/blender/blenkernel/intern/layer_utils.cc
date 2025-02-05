@@ -19,8 +19,6 @@
 #include "DNA_mesh_types.h"
 #include "DNA_object_types.h"
 
-#include "MEM_guardedalloc.h"
-
 /* -------------------------------------------------------------------- */
 /** \name Selected Object Array
  * \{ */
@@ -34,7 +32,7 @@ Vector<Object *> BKE_view_layer_array_selected_objects_params(
     FOREACH_SELECTED_OBJECT_BEGIN (view_layer, v3d, ob_iter) {
       ID *id = static_cast<ID *>(ob_iter->data);
       if (id) {
-        id->tag |= LIB_TAG_DOIT;
+        id->tag |= ID_TAG_DOIT;
       }
     }
     FOREACH_SELECTED_OBJECT_END;
@@ -52,8 +50,8 @@ Vector<Object *> BKE_view_layer_array_selected_objects_params(
     if (params->no_dup_data) {
       ID *id = static_cast<ID *>(ob_iter->data);
       if (id) {
-        if (id->tag & LIB_TAG_DOIT) {
-          id->tag &= ~LIB_TAG_DOIT;
+        if (id->tag & ID_TAG_DOIT) {
+          id->tag &= ~ID_TAG_DOIT;
         }
         else {
           continue;
@@ -83,7 +81,7 @@ Vector<Base *> BKE_view_layer_array_from_bases_in_mode_params(const Scene *scene
     FOREACH_BASE_IN_MODE_BEGIN (scene, view_layer, v3d, -1, params->object_mode, base_iter) {
       ID *id = static_cast<ID *>(base_iter->object->data);
       if (id) {
-        id->tag |= LIB_TAG_DOIT;
+        id->tag |= ID_TAG_DOIT;
       }
     }
     FOREACH_BASE_IN_MODE_END;
@@ -100,8 +98,8 @@ Vector<Base *> BKE_view_layer_array_from_bases_in_mode_params(const Scene *scene
     if (params->no_dup_data) {
       ID *id = static_cast<ID *>(base_iter->object->data);
       if (id) {
-        if (id->tag & LIB_TAG_DOIT) {
-          id->tag &= ~LIB_TAG_DOIT;
+        if (id->tag & ID_TAG_DOIT) {
+          id->tag &= ~ID_TAG_DOIT;
         }
         else {
           continue;

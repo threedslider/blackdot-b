@@ -23,7 +23,13 @@ readable format. `vk.xml` is also part of the vulkan library in blender librarie
 
 The generated source code will be printed to the console.
 """
+__all__ = (
+    "main",
+)
+
 import argparse
+import sys
+
 import xml.etree.ElementTree as ET
 
 
@@ -61,6 +67,8 @@ COMMANDS_TO_GEN = [
 
     "vkCmdBeginRendering",
     "vkCmdEndRendering",
+    "vkCmdBeginRenderPass",
+    "vkCmdEndRenderPass",
     "vkCmdDraw",
     "vkCmdDrawIndexed",
     "vkCmdDrawIndirect",
@@ -71,6 +79,7 @@ COMMANDS_TO_GEN = [
 
     "vkCmdPipelineBarrier",
 ]
+COMMANDS_TO_GEN = ["vkCmdBeginRenderPass", "vkCmdEndRenderPass"]
 
 DEFAULT_ENUMS_TO_GENERATE = [
     "VkObjectType"
@@ -271,7 +280,7 @@ def parse_features(root):
     features = []
     for feature_name in FEATURES:
         feature = root.find(f"feature[@name='{feature_name}']")
-        assert (feature)
+        assert (feature is not None)
         features.append(feature)
     return features
 
@@ -281,7 +290,7 @@ def parse_extensions(root):
     extensions = []
     for extension_name in EXTENSIONS:
         extension = root.find(f"extensions/extension[@name='{extension_name}']")
-        assert (extension)
+        assert (extension is not None)
         extensions.append(extension)
     return extensions
 
@@ -318,14 +327,14 @@ def extract_used_types(root, commands, all_flags):
     while types_undetermined:
         newly_found_types = []
         for type_name in types_undetermined:
-            if root.find(f"enums[@name='{type_name}']"):
+            if root.find(f"enums[@name='{type_name}']") is not None:
                 if type_name not in enums_to_generate and type_name not in ENUMS_TO_IGNORE:
                     enums_to_generate.append(type_name)
             elif type_name in all_flags and type_name not in flags_to_generate:
                 flags_to_generate.append(type_name)
             elif type_name not in structs_to_generate:
                 struct = root.find(f"types/type[@category='struct'][@name='{type_name}']")
-                if struct:
+                if struct is not None:
                     structs_to_generate.append(type_name)
                     for member in struct.findall("member/type"):
                         newly_found_types.append(member.text)
@@ -377,7 +386,7 @@ def generate_to_string(vk_xml, header):
 
         for struct_to_generate in structs_to_generate:
             struct = root.find(f"types/type[@category='struct'][@name='{struct_to_generate}']")
-            assert (struct)
+            assert (struct is not None)
             vk_to_string += generate_struct_to_string_cpp(struct,
                                                           flags_to_generate,
                                                           enums_to_generate,
@@ -387,8 +396,7 @@ def generate_to_string(vk_xml, header):
     print(vk_to_string)
 
 
-if __name__ == "__main__":
-
+def main() -> int:
     parser = argparse.ArgumentParser(
         prog="vk_to_string.py",
         description="Generator for vk_to_string.cc/hh",
@@ -397,3 +405,9 @@ if __name__ == "__main__":
     parser.add_argument("--header", action='store_true', help="generate parts that belong to `vk_to_string.hh`")
     args = parser.parse_args()
     generate_to_string(**dict(args._get_kwargs()))
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

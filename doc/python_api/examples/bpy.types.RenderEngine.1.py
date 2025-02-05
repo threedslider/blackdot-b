@@ -17,14 +17,19 @@ class CustomRenderEngine(bpy.types.RenderEngine):
     # Init is called whenever a new render engine instance is created. Multiple
     # instances may exist at the same time, for example for a viewport and final
     # render.
-    def __init__(self):
+    # Note the generic arguments signature, and the call to the parent class
+    # `__init__` methods, which are required for Blender to create the underlying
+    # `RenderEngine` data.
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.scene_data = None
         self.draw_data = None
 
     # When the render engine instance is destroy, this is called. Clean up any
     # render engine data here, for example stopping running render threads.
     def __del__(self):
-        pass
+        # Own delete code...
+        super().__del__()
 
     # This is the method called by Blender for both final renders (F12) and
     # small preview for materials, world and lights.
@@ -34,7 +39,7 @@ class CustomRenderEngine(bpy.types.RenderEngine):
         self.size_x = int(scene.render.resolution_x * scale)
         self.size_y = int(scene.render.resolution_y * scale)
 
-        # Fill the render result with a flat color. The framebuffer is
+        # Fill the render result with a flat color. The frame-buffer is
         # defined as a list of pixels, each pixel itself being a list of
         # R,G,B,A values.
         if self.is_preview:

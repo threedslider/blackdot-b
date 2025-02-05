@@ -1,4 +1,4 @@
-/* SPDX-FileCopyrightText: 2005 Gradienter Foundation. All rights reserved.
+/* SPDX-FileCopyrightText: 2005 Blender Foundation. All rights reserved.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
@@ -8,8 +8,6 @@
 #include "BKE_texture.h"
 
 #include "BLI_math_vector.hh"
-
-#include "FN_multi_function_builder.hh"
 
 #include "NOD_multi_function.hh"
 
@@ -199,7 +197,12 @@ void register_node_type_sh_tex_gradient()
 
   static blender::bke::bNodeType ntype;
 
-  sh_fn_node_type_base(&ntype, SH_NODE_TEX_GRADIENT, "Gradient Texture", NODE_CLASS_TEXTURE);
+  sh_fn_node_type_base(&ntype, "ShaderNodeTexGradient", SH_NODE_TEX_GRADIENT);
+  ntype.ui_name = "Gradient Texture";
+  ntype.ui_description =
+      "Generate interpolated color and intensity values based on the input vector";
+  ntype.enum_name_legacy = "TEX_GRADIENT";
+  ntype.nclass = NODE_CLASS_TEXTURE;
   ntype.declare = file_ns::sh_node_tex_gradient_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_tex_gradient;
   ntype.initfunc = file_ns::node_shader_init_tex_gradient;
@@ -209,5 +212,5 @@ void register_node_type_sh_tex_gradient()
   ntype.build_multi_function = file_ns::sh_node_gradient_tex_build_multi_function;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

@@ -89,12 +89,12 @@ static OptixResult optixUtilDenoiserInvokeTiled(OptixDenoiser denoiser,
                                                 CUstream stream,
                                                 const OptixDenoiserParams *params,
                                                 CUdeviceptr denoiserState,
-                                                size_t denoiserStateSizeInBytes,
+                                                const size_t denoiserStateSizeInBytes,
                                                 const OptixDenoiserGuideLayer *guideLayer,
                                                 const OptixDenoiserLayer *layers,
                                                 unsigned int numLayers,
                                                 CUdeviceptr scratch,
-                                                size_t scratchSizeInBytes,
+                                                const size_t scratchSizeInBytes,
                                                 unsigned int overlapWindowSizeInPixels,
                                                 unsigned int tileWidth,
                                                 unsigned int tileHeight)
@@ -256,7 +256,7 @@ bool OptiXDenoiser::denoise_create_if_needed(DenoiseContext &context)
   denoiser_options.guideAlbedo = context.use_pass_albedo;
   denoiser_options.guideNormal = context.use_pass_normal;
 
-  OptixDenoiserModelKind model = OPTIX_DENOISER_MODEL_KIND_HDR;
+  OptixDenoiserModelKind model = OPTIX_DENOISER_MODEL_KIND_AOV;
   if (context.use_pass_motion) {
     model = OPTIX_DENOISER_MODEL_KIND_TEMPORAL;
   }
@@ -297,6 +297,9 @@ bool OptiXDenoiser::denoise_configure_if_needed(DenoiseContext &context)
       denoiser_device_,
       optixDenoiserComputeMemoryResources(optix_denoiser_, tile_size.x, tile_size.y, &sizes_));
 
+  const bool tiled = tile_size.x < context.buffer_params.width ||
+                     tile_size.y < context.buffer_params.height;
+
   /* Allocate denoiser state if tile size has changed since last setup. */
   state_.device = denoiser_device_;
   state_.alloc_to_device(sizes_.stateSizeInBytes + sizes_.withOverlapScratchSizeInBytes);
@@ -306,8 +309,8 @@ bool OptiXDenoiser::denoise_configure_if_needed(DenoiseContext &context)
       optix_denoiser_,
       0, /* Work around bug in r495 drivers that causes artifacts when denoiser setup is called
           * on a stream that is not the default stream. */
-      tile_size.x + sizes_.overlapWindowSizeInPixels * 2,
-      tile_size.y + sizes_.overlapWindowSizeInPixels * 2,
+      tile_size.x + (tiled ? sizes_.overlapWindowSizeInPixels * 2 : 0),
+      tile_size.y + (tiled ? sizes_.overlapWindowSizeInPixels * 2 : 0),
       state_.device_pointer,
       sizes_.stateSizeInBytes,
       state_.device_pointer + sizes_.stateSizeInBytes,

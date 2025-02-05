@@ -530,25 +530,25 @@ set(SRC
 )
 
 set(LIB
+  PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
+  PRIVATE bf::blentranslation
   PRIVATE bf::depsgraph
   PRIVATE bf::dna
+  PRIVATE bf::imbuf
   PRIVATE bf::intern::guardedalloc
   bf_python_mathutils
 
   ${PYTHON_LINKFLAGS}
   ${PYTHON_LIBRARIES}
+  PRIVATE bf::render
 )
 
 set(INC
   .
-  ../blenkernel
-  ../blentranslation
-  ../imbuf
   ../makesrna
   ../python
   ../python/intern
-  ../render
   ../render/intern
 
   # RNA_prototypes.hh
@@ -566,7 +566,7 @@ if(WITH_PYTHON_MODULE)
 endif()
 
 if(WITH_PYTHON_SAFETY)
-  # For bpy_rna.h access.
+  # For bpy_rna.hh access.
   add_definitions(-DWITH_PYTHON_SAFETY)
 endif()
 

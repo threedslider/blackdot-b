@@ -4,17 +4,19 @@
 
 #pragma once
 
+#include "bmesh_class.hh"
+
 /** \file
  * \ingroup bmesh
  */
 
-typedef struct BMEditSelection {
+struct BMEditSelection {
   struct BMEditSelection *next, *prev;
   BMElem *ele;
   char htype;
-} BMEditSelection;
+};
 
-typedef enum eBMSelectionFlushFLags {
+enum eBMSelectionFlushFLags {
   BM_SELECT_LEN_FLUSH_RECALC_NOTHING = 0,
   BM_SELECT_LEN_FLUSH_RECALC_VERT = (1 << 0),
   BM_SELECT_LEN_FLUSH_RECALC_EDGE = (1 << 1),
@@ -22,7 +24,7 @@ typedef enum eBMSelectionFlushFLags {
   BM_SELECT_LEN_FLUSH_RECALC_ALL = (BM_SELECT_LEN_FLUSH_RECALC_VERT |
                                     BM_SELECT_LEN_FLUSH_RECALC_EDGE |
                                     BM_SELECT_LEN_FLUSH_RECALC_FACE),
-} eBMSelectionFlushFLags;
+};
 
 /* Geometry hiding code. */
 
@@ -123,7 +125,7 @@ void BM_mesh_active_face_set(BMesh *bm, BMFace *f);
 int BM_mesh_active_face_index_get(BMesh *bm, bool is_sloppy, bool is_selected);
 int BM_mesh_active_edge_index_get(BMesh *bm);
 int BM_mesh_active_vert_index_get(BMesh *bm);
-int BM_mesh_active_elem_index_get(BMesh *bm);
+
 BMFace *BM_mesh_active_face_get(BMesh *bm, bool is_sloppy, bool is_selected);
 BMEdge *BM_mesh_active_edge_get(BMesh *bm);
 BMVert *BM_mesh_active_vert_get(BMesh *bm);

@@ -14,17 +14,14 @@
 #  include "scene/hair.h"
 #  include "scene/mesh.h"
 #  include "scene/object.h"
-#  include "scene/pass.h"
 #  include "scene/pointcloud.h"
 #  include "scene/scene.h"
 
 #  include "util/debug.h"
 #  include "util/log.h"
-#  include "util/md5.h"
 #  include "util/path.h"
 #  include "util/progress.h"
 #  include "util/task.h"
-#  include "util/time.h"
 
 #  define __KERNEL_OPTIX__
 #  include "kernel/device/optix/globals.h"
@@ -40,8 +37,9 @@ static void execute_optix_task(TaskPool &pool, OptixTask task, OptixResult &fail
   const OptixResult result = optixTaskExecute(task, additional_tasks, 16, &num_additional_tasks);
   if (result == OPTIX_SUCCESS) {
     for (unsigned int i = 0; i < num_additional_tasks; ++i) {
-      pool.push(function_bind(
-          &execute_optix_task, std::ref(pool), additional_tasks[i], std::ref(failure_reason)));
+      pool.push([&pool, additional_task = additional_tasks[i], &failure_reason] {
+        execute_optix_task(pool, additional_task, failure_reason);
+      });
     }
   }
   else {
@@ -80,6 +78,8 @@ OptiXDevice::OptiXDevice(const DeviceInfo &info, Stats &stats, Profiler &profile
       case 4:
         LOG_IF(INFO, VLOG_IS_ON(1)) << message;
         break;
+      default:
+        break;
     }
   };
 #  endif
@@ -112,33 +112,33 @@ OptiXDevice::~OptiXDevice()
   launch_params.free();
 
   /* Unload modules. */
-  if (optix_module != NULL) {
+  if (optix_module != nullptr) {
     optixModuleDestroy(optix_module);
   }
   for (int i = 0; i < 2; ++i) {
-    if (builtin_modules[i] != NULL) {
+    if (builtin_modules[i] != nullptr) {
       optixModuleDestroy(builtin_modules[i]);
     }
   }
   for (int i = 0; i < NUM_PIPELINES; ++i) {
-    if (pipelines[i] != NULL) {
+    if (pipelines[i] != nullptr) {
       optixPipelineDestroy(pipelines[i]);
     }
   }
   for (int i = 0; i < NUM_PROGRAM_GROUPS; ++i) {
-    if (groups[i] != NULL) {
+    if (groups[i] != nullptr) {
       optixProgramGroupDestroy(groups[i]);
     }
   }
 
 #  ifdef WITH_OSL
   for (const OptixModule &module : osl_modules) {
-    if (module != NULL) {
+    if (module != nullptr) {
       optixModuleDestroy(module);
     }
   }
   for (const OptixProgramGroup &group : osl_groups) {
-    if (group != NULL) {
+    if (group != nullptr) {
       optixProgramGroupDestroy(group);
     }
   }
@@ -167,7 +167,7 @@ static string get_optix_include_dir()
     const string env_include_dir = path_join(env_dir, "include");
     return env_include_dir;
   }
-  else if (default_dir[0]) {
+  if (default_dir[0]) {
     const string default_include_dir = path_join(default_dir, "include");
     return default_include_dir;
   }
@@ -225,7 +225,7 @@ bool OptiXDevice::load_kernels(const uint kernel_features)
             "to a directory containing the OptiX SDK.");
         return false;
       }
-      else if (!path_is_directory(optix_include_dir)) {
+      if (!path_is_directory(optix_include_dir)) {
         set_error(string_printf(
             "OptiX headers not found at %s, unable to compile OptiX kernels at runtime. Install "
             "OptiX SDK in the specified location, or set OPTIX_ROOT_DIR environment variable to a "
@@ -248,40 +248,40 @@ bool OptiXDevice::load_kernels(const uint kernel_features)
   const CUDAContextScope scope(this);
 
   /* Unload existing OptiX module and pipelines first. */
-  if (optix_module != NULL) {
+  if (optix_module != nullptr) {
     optixModuleDestroy(optix_module);
-    optix_module = NULL;
+    optix_module = nullptr;
   }
   for (int i = 0; i < 2; ++i) {
-    if (builtin_modules[i] != NULL) {
+    if (builtin_modules[i] != nullptr) {
       optixModuleDestroy(builtin_modules[i]);
-      builtin_modules[i] = NULL;
+      builtin_modules[i] = nullptr;
     }
   }
   for (int i = 0; i < NUM_PIPELINES; ++i) {
-    if (pipelines[i] != NULL) {
+    if (pipelines[i] != nullptr) {
       optixPipelineDestroy(pipelines[i]);
-      pipelines[i] = NULL;
+      pipelines[i] = nullptr;
     }
   }
   for (int i = 0; i < NUM_PROGRAM_GROUPS; ++i) {
-    if (groups[i] != NULL) {
+    if (groups[i] != nullptr) {
       optixProgramGroupDestroy(groups[i]);
-      groups[i] = NULL;
+      groups[i] = nullptr;
     }
   }
 
 #  ifdef WITH_OSL
   /* Recreating base OptiX module invalidates all OSL modules too, since they link against it. */
   for (const OptixModule &module : osl_modules) {
-    if (module != NULL) {
+    if (module != nullptr) {
       optixModuleDestroy(module);
     }
   }
   osl_modules.clear();
 
   for (const OptixProgramGroup &group : osl_groups) {
-    if (group != NULL) {
+    if (group != nullptr) {
       optixProgramGroupDestroy(group);
     }
   }
@@ -325,8 +325,9 @@ bool OptiXDevice::load_kernels(const uint kernel_features)
       pipeline_options.usesPrimitiveTypeFlags |= OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_CUBIC_BSPLINE;
 #  endif
     }
-    else
+    else {
       pipeline_options.usesPrimitiveTypeFlags |= OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM;
+    }
   }
   if (kernel_features & KERNEL_FEATURE_POINTCLOUD) {
     pipeline_options.usesPrimitiveTypeFlags |= OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM;
@@ -392,7 +393,7 @@ bool OptiXDevice::load_kernels(const uint kernel_features)
                                                         ptx_data.data(),
                                                         ptx_data.size(),
                                                         nullptr,
-                                                        0,
+                                                        nullptr,
                                                         &optix_module);
 #  endif
     if (result != OPTIX_SUCCESS) {
@@ -450,7 +451,8 @@ bool OptiXDevice::load_kernels(const uint kernel_features)
 #  if OPTIX_ABI_VERSION >= 55
       builtin_options.builtinISModuleType = OPTIX_PRIMITIVE_TYPE_ROUND_CATMULLROM;
       builtin_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE |
-                                   OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
+                                   OPTIX_BUILD_FLAG_ALLOW_COMPACTION |
+                                   OPTIX_BUILD_FLAG_ALLOW_UPDATE;
       builtin_options.curveEndcapFlags = OPTIX_CURVE_ENDCAP_DEFAULT; /* Disable end-caps. */
 #  else
       builtin_options.builtinISModuleType = OPTIX_PRIMITIVE_TYPE_ROUND_CUBIC_BSPLINE;
@@ -571,7 +573,7 @@ bool OptiXDevice::load_kernels(const uint kernel_features)
   }
 
   optix_assert(optixProgramGroupCreate(
-      context, group_descs, NUM_PROGRAM_GROUPS, &group_options, nullptr, 0, groups));
+      context, group_descs, NUM_PROGRAM_GROUPS, &group_options, nullptr, nullptr, groups));
 
   /* Get program stack sizes. */
   OptixStackSizes stack_size[NUM_PROGRAM_GROUPS] = {};
@@ -646,7 +648,7 @@ bool OptiXDevice::load_kernels(const uint kernel_features)
                                      pipeline_groups.data(),
                                      pipeline_groups.size(),
                                      nullptr,
-                                     0,
+                                     nullptr,
                                      &pipelines[PIP_SHADE]));
 
     /* Combine ray generation and trace continuation stack size. */
@@ -689,7 +691,7 @@ bool OptiXDevice::load_kernels(const uint kernel_features)
                                      pipeline_groups.data(),
                                      pipeline_groups.size(),
                                      nullptr,
-                                     0,
+                                     nullptr,
                                      &pipelines[PIP_INTERSECT]));
 
     /* Calculate continuation stack size based on the maximum of all ray generation stack sizes. */
@@ -716,8 +718,7 @@ bool OptiXDevice::load_osl_kernels()
 
   struct OSLKernel {
     string ptx;
-    string init_entry;
-    string exec_entry;
+    string fused_entry;
   };
 
   /* This has to be in the same order as the ShaderType enum, so that the index calculation in
@@ -736,9 +737,8 @@ bool OptiXDevice::load_osl_kernels()
                                                      osl_globals.bump_state);
     for (const OSL::ShaderGroupRef &group : groups) {
       if (group) {
-        string osl_ptx, init_name, entry_name;
-        osl_globals.ss->getattribute(group.get(), "group_init_name", init_name);
-        osl_globals.ss->getattribute(group.get(), "group_entry_name", entry_name);
+        string osl_ptx, fused_name;
+        osl_globals.ss->getattribute(group.get(), "group_fused_name", fused_name);
         osl_globals.ss->getattribute(
             group.get(), "ptx_compiled_version", OSL::TypeDesc::PTR, &osl_ptx);
 
@@ -756,7 +756,7 @@ bool OptiXDevice::load_osl_kernels()
           return false;
         }
 
-        osl_kernels.push_back({std::move(osl_ptx), std::move(init_name), std::move(entry_name)});
+        osl_kernels.push_back({std::move(osl_ptx), std::move(fused_name)});
       }
       else {
         /* Add empty entry for non-existent shader groups, so that the index stays stable. */
@@ -772,15 +772,15 @@ bool OptiXDevice::load_osl_kernels()
   }
 
   for (OptixModule &module : osl_modules) {
-    if (module != NULL) {
+    if (module != nullptr) {
       optixModuleDestroy(module);
-      module = NULL;
+      module = nullptr;
     }
   }
   for (OptixProgramGroup &group : osl_groups) {
-    if (group != NULL) {
+    if (group != nullptr) {
       optixProgramGroupDestroy(group);
-      group = NULL;
+      group = nullptr;
     }
   }
 
@@ -794,7 +794,7 @@ bool OptiXDevice::load_osl_kernels()
   module_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_3;
   module_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
 
-  osl_groups.resize(osl_kernels.size() * 2 + 1);
+  osl_groups.resize(osl_kernels.size() + 1);
   osl_modules.resize(osl_kernels.size() + 1);
 
   { /* Load and compile PTX module with OSL services. */
@@ -812,7 +812,7 @@ bool OptiXDevice::load_osl_kernels()
                                                  ptx_data.data(),
                                                  ptx_data.size(),
                                                  nullptr,
-                                                 0,
+                                                 nullptr,
                                                  &osl_modules.back());
 #    else
     const OptixResult result = optixModuleCreateFromPTX(context,
@@ -821,7 +821,7 @@ bool OptiXDevice::load_osl_kernels()
                                                         ptx_data.data(),
                                                         ptx_data.size(),
                                                         nullptr,
-                                                        0,
+                                                        nullptr,
                                                         &osl_modules.back());
 #    endif
     if (result != OPTIX_SUCCESS) {
@@ -837,7 +837,7 @@ bool OptiXDevice::load_osl_kernels()
     group_desc.callables.moduleDC = osl_modules.back();
 
     optix_assert(optixProgramGroupCreate(
-        context, &group_desc, 1, &group_options, nullptr, 0, &osl_groups.back()));
+        context, &group_desc, 1, &group_options, nullptr, nullptr, &osl_groups.back()));
   }
 
   TaskPool pool;
@@ -884,7 +884,7 @@ bool OptiXDevice::load_osl_kernels()
                                             osl_kernels[i].ptx.data(),
                                             osl_kernels[i].ptx.size(),
                                             nullptr,
-                                            0,
+                                            nullptr,
                                             &osl_modules[i]);
     });
 #    endif
@@ -899,21 +899,18 @@ bool OptiXDevice::load_osl_kernels()
 
     if (results[i] != OPTIX_SUCCESS) {
       set_error(string_printf("Failed to load OptiX OSL kernel for %s (%s)",
-                              osl_kernels[i].init_entry.c_str(),
+                              osl_kernels[i].fused_entry.c_str(),
                               optixGetErrorName(results[i])));
       return false;
     }
 
-    OptixProgramGroupDesc group_descs[2] = {};
-    group_descs[0].kind = OPTIX_PROGRAM_GROUP_KIND_CALLABLES;
-    group_descs[0].callables.entryFunctionNameDC = osl_kernels[i].init_entry.c_str();
-    group_descs[0].callables.moduleDC = osl_modules[i];
-    group_descs[1].kind = OPTIX_PROGRAM_GROUP_KIND_CALLABLES;
-    group_descs[1].callables.entryFunctionNameDC = osl_kernels[i].exec_entry.c_str();
-    group_descs[1].callables.moduleDC = osl_modules[i];
+    OptixProgramGroupDesc group_desc = {};
+    group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_CALLABLES;
+    group_desc.callables.entryFunctionNameDC = osl_kernels[i].fused_entry.c_str();
+    group_desc.callables.moduleDC = osl_modules[i];
 
     optix_assert(optixProgramGroupCreate(
-        context, group_descs, 2, &group_options, nullptr, 0, &osl_groups[i * 2]));
+        context, &group_desc, 1, &group_options, nullptr, nullptr, &osl_groups[i]));
   }
 
   /* Update SBT with new entries. */
@@ -922,7 +919,7 @@ bool OptiXDevice::load_osl_kernels()
     optix_assert(optixSbtRecordPackHeader(groups[i], &sbt_data[i]));
   }
   for (size_t i = 0; i < osl_groups.size(); ++i) {
-    if (osl_groups[i] != NULL) {
+    if (osl_groups[i] != nullptr) {
       optix_assert(optixSbtRecordPackHeader(osl_groups[i], &sbt_data[NUM_PROGRAM_GROUPS + i]));
     }
     else {
@@ -955,7 +952,7 @@ bool OptiXDevice::load_osl_kernels()
     pipeline_groups.push_back(groups[PG_RGEN_EVAL_CURVE_SHADOW_TRANSPARENCY]);
 
     for (const OptixProgramGroup &group : osl_groups) {
-      if (group != NULL) {
+      if (group != nullptr) {
         pipeline_groups.push_back(group);
       }
     }
@@ -966,7 +963,7 @@ bool OptiXDevice::load_osl_kernels()
                                      pipeline_groups.data(),
                                      pipeline_groups.size(),
                                      nullptr,
-                                     0,
+                                     nullptr,
                                      &pipelines[PIP_SHADE]));
 
     /* Get program stack sizes. */
@@ -981,7 +978,7 @@ bool OptiXDevice::load_osl_kernels()
 #    endif
     }
     for (size_t i = 0; i < osl_groups.size(); ++i) {
-      if (osl_groups[i] != NULL) {
+      if (osl_groups[i] != nullptr) {
 #    if OPTIX_ABI_VERSION >= 84
         optix_assert(optixProgramGroupGetStackSize(
             osl_groups[i], &osl_stack_size[i], pipelines[PIP_SHADE]));
@@ -1008,19 +1005,19 @@ bool OptiXDevice::load_osl_kernels()
 #  endif
 }
 
-void *OptiXDevice::get_cpu_osl_memory()
+OSLGlobals *OptiXDevice::get_cpu_osl_memory()
 {
 #  ifdef WITH_OSL
   return &osl_globals;
 #  else
-  return NULL;
+  return nullptr;
 #  endif
 }
 
 bool OptiXDevice::build_optix_bvh(BVHOptiX *bvh,
                                   OptixBuildOperation operation,
                                   const OptixBuildInput &build_input,
-                                  uint16_t num_motion_steps)
+                                  const uint16_t num_motion_steps)
 {
   /* Allocate and build acceleration structures only one at a time, to prevent parallel builds
    * from running out of memory (since both original and compacted acceleration structure memory
@@ -1031,17 +1028,20 @@ bool OptiXDevice::build_optix_bvh(BVHOptiX *bvh,
 
   const CUDAContextScope scope(this);
 
-  const bool use_fast_trace_bvh = (bvh->params.bvh_type == BVH_TYPE_STATIC);
+  bool use_fast_trace_bvh = (bvh->params.bvh_type == BVH_TYPE_STATIC);
 
   /* Compute memory usage. */
   OptixAccelBufferSizes sizes = {};
   OptixAccelBuildOptions options = {};
   options.operation = operation;
-  if (use_fast_trace_bvh ||
-      /* The build flags have to match the ones used to query the built-in curve intersection
-       * program (see optixBuiltinISModuleGet above) */
-      build_input.type == OPTIX_BUILD_INPUT_TYPE_CURVES)
-  {
+  if (build_input.type == OPTIX_BUILD_INPUT_TYPE_CURVES) {
+    /* The build flags have to match the ones used to query the built-in curve intersection
+     * program (see optixBuiltinISModuleGet above) */
+    options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE | OPTIX_BUILD_FLAG_ALLOW_COMPACTION |
+                         OPTIX_BUILD_FLAG_ALLOW_UPDATE;
+    use_fast_trace_bvh = true;
+  }
+  else if (use_fast_trace_bvh) {
     VLOG_INFO << "Using fast to trace OptiX BVH";
     options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE | OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
   }
@@ -1087,7 +1087,7 @@ bool OptiXDevice::build_optix_bvh(BVHOptiX *bvh,
 
   OptixTraversableHandle out_handle = 0;
   optix_assert(optixAccelBuild(context,
-                               NULL,
+                               nullptr,
                                &options,
                                &build_input,
                                1,
@@ -1096,12 +1096,12 @@ bool OptiXDevice::build_optix_bvh(BVHOptiX *bvh,
                                out_data.device_pointer,
                                sizes.outputSizeInBytes,
                                &out_handle,
-                               use_fast_trace_bvh ? &compacted_size_prop : NULL,
+                               use_fast_trace_bvh ? &compacted_size_prop : nullptr,
                                use_fast_trace_bvh ? 1 : 0));
   bvh->traversable_handle = static_cast<uint64_t>(out_handle);
 
   /* Wait for all operations to finish. */
-  cuda_assert(cuStreamSynchronize(NULL));
+  cuda_assert(cuStreamSynchronize(nullptr));
 
   /* Compact acceleration structure to save memory (do not do this in viewport for faster builds).
    */
@@ -1122,12 +1122,16 @@ bool OptiXDevice::build_optix_bvh(BVHOptiX *bvh,
         return !have_error();
       }
 
-      optix_assert(optixAccelCompact(
-          context, NULL, out_handle, compacted_data.device_pointer, compacted_size, &out_handle));
+      optix_assert(optixAccelCompact(context,
+                                     nullptr,
+                                     out_handle,
+                                     compacted_data.device_pointer,
+                                     compacted_size,
+                                     &out_handle));
       bvh->traversable_handle = static_cast<uint64_t>(out_handle);
 
       /* Wait for compaction to finish. */
-      cuda_assert(cuStreamSynchronize(NULL));
+      cuda_assert(cuStreamSynchronize(nullptr));
 
       std::swap(out_data.device_size, compacted_data.device_size);
       std::swap(out_data.device_pointer, compacted_data.device_pointer);
@@ -1166,7 +1170,7 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
 
     /* Build bottom level acceleration structures (BLAS). */
     Geometry *const geom = bvh->geometry[0];
-    if (geom->geometry_type == Geometry::HAIR) {
+    if (geom->is_hair()) {
       /* Build BLAS for curve primitives. */
       Hair *const hair = static_cast<Hair *const>(geom);
       if (hair->num_segments() == 0) {
@@ -1185,13 +1189,17 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
       device_vector<int> index_data(this, "optix temp index data", MEM_READ_ONLY);
       device_vector<float4> vertex_data(this, "optix temp vertex data", MEM_READ_ONLY);
       /* Four control points for each curve segment. */
-      const size_t num_vertices = num_segments * 4;
+      size_t num_vertices = num_segments * 4;
       if (hair->curve_shape == CURVE_THICK) {
+#  if OPTIX_ABI_VERSION >= 55
+        num_vertices = hair->num_keys() + 2 * hair->num_curves();
+#  endif
         index_data.alloc(num_segments);
         vertex_data.alloc(num_vertices * num_motion_steps);
       }
-      else
+      else {
         aabb_data.alloc(num_segments * num_motion_steps);
+      }
 
       /* Get AABBs for each motion step. */
       for (size_t step = 0; step < num_motion_steps; ++step) {
@@ -1204,59 +1212,100 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
           keys = motion_keys->data_float3() + attr_offset * hair->get_curve_keys().size();
         }
 
-        for (size_t j = 0, i = 0; j < hair->num_curves(); ++j) {
-          const Hair::Curve curve = hair->get_curve(j);
-          const array<float> &curve_radius = hair->get_curve_radius();
-
-          for (int segment = 0; segment < curve.num_segments(); ++segment, ++i) {
-            if (hair->curve_shape == CURVE_THICK) {
-              int k0 = curve.first_key + segment;
-              int k1 = k0 + 1;
-              int ka = max(k0 - 1, curve.first_key);
-              int kb = min(k1 + 1, curve.first_key + curve.num_keys - 1);
-
-              index_data[i] = i * 4;
-              float4 *const v = vertex_data.data() + step * num_vertices + index_data[i];
-
 #  if OPTIX_ABI_VERSION >= 55
-              v[0] = make_float4(keys[ka].x, keys[ka].y, keys[ka].z, curve_radius[ka]);
-              v[1] = make_float4(keys[k0].x, keys[k0].y, keys[k0].z, curve_radius[k0]);
-              v[2] = make_float4(keys[k1].x, keys[k1].y, keys[k1].z, curve_radius[k1]);
-              v[3] = make_float4(keys[kb].x, keys[kb].y, keys[kb].z, curve_radius[kb]);
-#  else
-              const float4 px = make_float4(keys[ka].x, keys[k0].x, keys[k1].x, keys[kb].x);
-              const float4 py = make_float4(keys[ka].y, keys[k0].y, keys[k1].y, keys[kb].y);
-              const float4 pz = make_float4(keys[ka].z, keys[k0].z, keys[k1].z, keys[kb].z);
-              const float4 pw = make_float4(
-                  curve_radius[ka], curve_radius[k0], curve_radius[k1], curve_radius[kb]);
+        if (hair->curve_shape == CURVE_THICK) {
+          for (size_t curve_index = 0, segment_index = 0, vertex_index = step * num_vertices;
+               curve_index < hair->num_curves();
+               ++curve_index)
+          {
+            const Hair::Curve curve = hair->get_curve(curve_index);
+            const array<float> &curve_radius = hair->get_curve_radius();
 
-              /* Convert Catmull-Rom data to B-spline. */
-              static const float4 cr2bsp0 = make_float4(+7, -4, +5, -2) / 6.f;
-              static const float4 cr2bsp1 = make_float4(-2, 11, -4, +1) / 6.f;
-              static const float4 cr2bsp2 = make_float4(+1, -4, 11, -2) / 6.f;
-              static const float4 cr2bsp3 = make_float4(-2, +5, -4, +7) / 6.f;
-
-              v[0] = make_float4(
-                  dot(cr2bsp0, px), dot(cr2bsp0, py), dot(cr2bsp0, pz), dot(cr2bsp0, pw));
-              v[1] = make_float4(
-                  dot(cr2bsp1, px), dot(cr2bsp1, py), dot(cr2bsp1, pz), dot(cr2bsp1, pw));
-              v[2] = make_float4(
-                  dot(cr2bsp2, px), dot(cr2bsp2, py), dot(cr2bsp2, pz), dot(cr2bsp2, pw));
-              v[3] = make_float4(
-                  dot(cr2bsp3, px), dot(cr2bsp3, py), dot(cr2bsp3, pz), dot(cr2bsp3, pw));
-#  endif
+            const int first_key_index = curve.first_key;
+            {
+              vertex_data[vertex_index++] = make_float4(keys[first_key_index].x,
+                                                        keys[first_key_index].y,
+                                                        keys[first_key_index].z,
+                                                        curve_radius[first_key_index]);
             }
-            else {
-              BoundBox bounds = BoundBox::empty;
-              curve.bounds_grow(segment, keys, hair->get_curve_radius().data(), bounds);
 
-              const size_t index = step * num_segments + i;
-              aabb_data[index].minX = bounds.min.x;
-              aabb_data[index].minY = bounds.min.y;
-              aabb_data[index].minZ = bounds.min.z;
-              aabb_data[index].maxX = bounds.max.x;
-              aabb_data[index].maxY = bounds.max.y;
-              aabb_data[index].maxZ = bounds.max.z;
+            for (int k = 0; k < curve.num_segments(); ++k) {
+              if (step == 0) {
+                index_data[segment_index++] = vertex_index - 1;
+              }
+              vertex_data[vertex_index++] = make_float4(keys[first_key_index + k].x,
+                                                        keys[first_key_index + k].y,
+                                                        keys[first_key_index + k].z,
+                                                        curve_radius[first_key_index + k]);
+            }
+
+            const int last_key_index = first_key_index + curve.num_keys - 1;
+            {
+              vertex_data[vertex_index++] = make_float4(keys[last_key_index].x,
+                                                        keys[last_key_index].y,
+                                                        keys[last_key_index].z,
+                                                        curve_radius[last_key_index]);
+              vertex_data[vertex_index++] = make_float4(keys[last_key_index].x,
+                                                        keys[last_key_index].y,
+                                                        keys[last_key_index].z,
+                                                        curve_radius[last_key_index]);
+            }
+          }
+        }
+        else
+#  endif
+        {
+          for (size_t curve_index = 0, i = 0; curve_index < hair->num_curves(); ++curve_index) {
+            const Hair::Curve curve = hair->get_curve(curve_index);
+
+            for (int segment = 0; segment < curve.num_segments(); ++segment, ++i) {
+#  if OPTIX_ABI_VERSION < 55
+              if (hair->curve_shape == CURVE_THICK) {
+                const array<float> &curve_radius = hair->get_curve_radius();
+
+                int k0 = curve.first_key + segment;
+                int k1 = k0 + 1;
+                int ka = max(k0 - 1, curve.first_key);
+                int kb = min(k1 + 1, curve.first_key + curve.num_keys - 1);
+
+                index_data[i] = i * 4;
+                float4 *const v = vertex_data.data() + step * num_vertices + index_data[i];
+
+                const float4 px = make_float4(keys[ka].x, keys[k0].x, keys[k1].x, keys[kb].x);
+                const float4 py = make_float4(keys[ka].y, keys[k0].y, keys[k1].y, keys[kb].y);
+                const float4 pz = make_float4(keys[ka].z, keys[k0].z, keys[k1].z, keys[kb].z);
+                const float4 pw = make_float4(
+                    curve_radius[ka], curve_radius[k0], curve_radius[k1], curve_radius[kb]);
+
+                /* Convert Catmull-Rom data to B-spline. */
+                static const float4 cr2bsp0 = make_float4(+7, -4, +5, -2) / 6.f;
+                static const float4 cr2bsp1 = make_float4(-2, 11, -4, +1) / 6.f;
+                static const float4 cr2bsp2 = make_float4(+1, -4, 11, -2) / 6.f;
+                static const float4 cr2bsp3 = make_float4(-2, +5, -4, +7) / 6.f;
+
+                v[0] = make_float4(
+                    dot(cr2bsp0, px), dot(cr2bsp0, py), dot(cr2bsp0, pz), dot(cr2bsp0, pw));
+                v[1] = make_float4(
+                    dot(cr2bsp1, px), dot(cr2bsp1, py), dot(cr2bsp1, pz), dot(cr2bsp1, pw));
+                v[2] = make_float4(
+                    dot(cr2bsp2, px), dot(cr2bsp2, py), dot(cr2bsp2, pz), dot(cr2bsp2, pw));
+                v[3] = make_float4(
+                    dot(cr2bsp3, px), dot(cr2bsp3, py), dot(cr2bsp3, pz), dot(cr2bsp3, pw));
+              }
+              else
+#  endif
+              {
+                BoundBox bounds = BoundBox::empty;
+                curve.bounds_grow(segment, keys, hair->get_curve_radius().data(), bounds);
+
+                const size_t index = step * num_segments + i;
+                aabb_data[index].minX = bounds.min.x;
+                aabb_data[index].minY = bounds.min.y;
+                aabb_data[index].minZ = bounds.min.z;
+                aabb_data[index].maxX = bounds.max.x;
+                aabb_data[index].maxY = bounds.max.y;
+                aabb_data[index].maxZ = bounds.max.z;
+              }
             }
           }
         }
@@ -1320,7 +1369,7 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
         progress.set_error("Failed to build OptiX acceleration structure");
       }
     }
-    else if (geom->geometry_type == Geometry::MESH || geom->geometry_type == Geometry::VOLUME) {
+    else if (geom->is_mesh() || geom->is_volume()) {
       /* Build BLAS for triangle primitives. */
       Mesh *const mesh = static_cast<Mesh *const>(geom);
       if (mesh->num_triangles() == 0) {
@@ -1388,7 +1437,7 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
         progress.set_error("Failed to build OptiX acceleration structure");
       }
     }
-    else if (geom->geometry_type == Geometry::POINTCLOUD) {
+    else if (geom->is_pointcloud()) {
       /* Build BLAS for points primitives. */
       PointCloud *const pointcloud = static_cast<PointCloud *const>(geom);
       const size_t num_points = pointcloud->num_points();
@@ -1534,7 +1583,7 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
         continue;
       }
 
-      BVHOptiX *const blas = static_cast<BVHOptiX *>(ob->get_geometry()->bvh);
+      BVHOptiX *const blas = static_cast<BVHOptiX *>(ob->get_geometry()->bvh.get());
       OptixTraversableHandle handle = blas->traversable_handle;
       if (handle == 0) {
         continue;
@@ -1563,7 +1612,7 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
         instance.visibilityMask = 0xFF;
       }
 
-      if (ob->get_geometry()->geometry_type == Geometry::HAIR &&
+      if (ob->get_geometry()->is_hair() &&
           static_cast<const Hair *>(ob->get_geometry())->curve_shape == CURVE_THICK)
       {
         if (pipeline_options.usesMotionBlur && ob->get_geometry()->has_motion_blur()) {
@@ -1571,7 +1620,7 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
           instance.sbtOffset = PG_HITD_MOTION - PG_HITD;
         }
       }
-      else if (ob->get_geometry()->geometry_type == Geometry::POINTCLOUD) {
+      else if (ob->get_geometry()->is_pointcloud()) {
         /* Use the hit group that has an intersection program for point clouds. */
         instance.sbtOffset = PG_HITD_POINTCLOUD - PG_HITD;
 
@@ -1608,15 +1657,16 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
         motion_transform_offset += motion_transform_size;
 
         /* Allocate host side memory for motion transform and fill it with transform data. */
-        OptixSRTMotionTransform &motion_transform = *reinterpret_cast<OptixSRTMotionTransform *>(
-            new uint8_t[motion_transform_size]);
-        motion_transform.child = handle;
-        motion_transform.motionOptions.numKeys = ob->get_motion().size();
-        motion_transform.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
-        motion_transform.motionOptions.timeBegin = 0.0f;
-        motion_transform.motionOptions.timeEnd = 1.0f;
+        array<uint8_t> motion_transform_storage(motion_transform_size);
+        OptixSRTMotionTransform *motion_transform = reinterpret_cast<OptixSRTMotionTransform *>(
+            motion_transform_storage.data());
+        motion_transform->child = handle;
+        motion_transform->motionOptions.numKeys = ob->get_motion().size();
+        motion_transform->motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
+        motion_transform->motionOptions.timeBegin = 0.0f;
+        motion_transform->motionOptions.timeEnd = 1.0f;
 
-        OptixSRTData *const srt_data = motion_transform.srtData;
+        OptixSRTData *const srt_data = motion_transform->srtData;
         array<DecomposedTransform> decomp(ob->get_motion().size());
         transform_motion_decompose(
             decomp.data(), ob->get_motion().data(), ob->get_motion().size());
@@ -1653,8 +1703,9 @@ void OptiXDevice::build_bvh(BVH *bvh, Progress &progress, bool refit)
         }
 
         /* Upload motion transform to GPU. */
-        cuMemcpyHtoD(motion_transform_gpu, &motion_transform, motion_transform_size);
-        delete[] reinterpret_cast<uint8_t *>(&motion_transform);
+        cuMemcpyHtoD(motion_transform_gpu, motion_transform, motion_transform_size);
+        motion_transform = nullptr;
+        motion_transform_storage.clear();
 
         /* Get traversable handle to motion transform. */
         optixConvertPointerToTraversableHandle(context,
@@ -1707,7 +1758,7 @@ void OptiXDevice::free_bvh_memory_delayed()
   delayed_free_bvh_memory.free_memory();
 }
 
-void OptiXDevice::const_copy_to(const char *name, void *host, size_t size)
+void OptiXDevice::const_copy_to(const char *name, void *host, const size_t size)
 {
   /* Set constant memory for CUDA module. */
   CUDADevice::const_copy_to(name, host, size);
@@ -1734,7 +1785,7 @@ void OptiXDevice::const_copy_to(const char *name, void *host, size_t size)
 #  undef KERNEL_DATA_ARRAY
 }
 
-void OptiXDevice::update_launch_params(size_t offset, void *data, size_t data_size)
+void OptiXDevice::update_launch_params(const size_t offset, void *data, const size_t data_size)
 {
   const CUDAContextScope scope(this);
 

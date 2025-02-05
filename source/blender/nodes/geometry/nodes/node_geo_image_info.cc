@@ -2,12 +2,12 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_image.h"
+#include "BKE_image.hh"
 
 #include "IMB_imbuf.hh"
 #include "IMB_imbuf_types.hh"
 
-#include "UI_resources.hh"
+#include "MOV_read.hh"
 
 #include "node_geometry_util.hh"
 
@@ -60,14 +60,10 @@ static void node_geo_exec(GeoNodeExecParams params)
   float fps = 0.0f;
 
   if (ImageAnim *ianim = static_cast<ImageAnim *>(image->anims.first)) {
-    ImBufAnim *anim = ianim->anim;
+    MovieReader *anim = ianim->anim;
     if (anim) {
-      frames = IMB_anim_get_duration(anim, IMB_TC_NONE);
-
-      short fps_sec = 0;
-      float fps_sec_base = 0.0f;
-      IMB_anim_get_fps(anim, true, &fps_sec, &fps_sec_base);
-      fps = float(fps_sec) / fps_sec_base;
+      frames = MOV_get_duration_frames(anim, IMB_TC_NONE);
+      fps = MOV_get_fps(anim);
     }
   }
 
@@ -79,11 +75,15 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_IMAGE_INFO, "Image Info", NODE_CLASS_INPUT);
+  geo_node_type_base(&ntype, "GeometryNodeImageInfo", GEO_NODE_IMAGE_INFO);
+  ntype.ui_name = "Image Info";
+  ntype.ui_description = "Retrieve information about an image";
+  ntype.enum_name_legacy = "IMAGE_INFO";
+  ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Large);
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

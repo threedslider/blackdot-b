@@ -12,9 +12,10 @@
 #include "DNA_collection_types.h"
 #include "DNA_scene_types.h"
 
+#include "DNA_screen_types.h"
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
@@ -60,14 +61,14 @@ static SpaceLink *nla_create(const ScrArea *area, const Scene *scene)
   snla->flag = SNLA_SHOW_MARKERS;
 
   /* header */
-  region = MEM_cnew<ARegion>("header for nla");
+  region = BKE_area_region_new();
 
   BLI_addtail(&snla->regionbase, region);
   region->regiontype = RGN_TYPE_HEADER;
   region->alignment = (U.uiflag & USER_HEADER_BOTTOM) ? RGN_ALIGN_BOTTOM : RGN_ALIGN_TOP;
 
   /* track list region */
-  region = MEM_cnew<ARegion>("track list for nla");
+  region = BKE_area_region_new();
   BLI_addtail(&snla->regionbase, region);
   region->regiontype = RGN_TYPE_CHANNELS;
   region->alignment = RGN_ALIGN_LEFT;
@@ -77,14 +78,14 @@ static SpaceLink *nla_create(const ScrArea *area, const Scene *scene)
   region->v2d.flag = V2D_VIEWSYNC_AREA_VERTICAL;
 
   /* ui buttons */
-  region = MEM_cnew<ARegion>("buttons region for nla");
+  region = BKE_area_region_new();
 
   BLI_addtail(&snla->regionbase, region);
   region->regiontype = RGN_TYPE_UI;
   region->alignment = RGN_ALIGN_RIGHT;
 
   /* main region */
-  region = MEM_cnew<ARegion>("main region for nla");
+  region = BKE_area_region_new();
 
   BLI_addtail(&snla->regionbase, region);
   region->regiontype = RGN_TYPE_WINDOW;
@@ -163,13 +164,14 @@ static void nla_track_region_init(wmWindowManager *wm, ARegion *region)
   /* own keymap */
   /* own tracks map first to override some track keymaps */
   keymap = WM_keymap_ensure(wm->defaultconf, "NLA Tracks", SPACE_NLA, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler_v2d_mask(&region->handlers, keymap);
+  WM_event_add_keymap_handler_poll(
+      &region->runtime->handlers, keymap, WM_event_handler_region_v2d_mask_no_marker_poll);
   /* now generic channels map for everything else that can apply */
   keymap = WM_keymap_ensure(wm->defaultconf, "Animation Channels", SPACE_EMPTY, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler_v2d_mask(&region->handlers, keymap);
+  WM_event_add_keymap_handler_v2d_mask(&region->runtime->handlers, keymap);
 
   keymap = WM_keymap_ensure(wm->defaultconf, "NLA Generic", SPACE_NLA, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler_v2d_mask(&region->handlers, keymap);
+  WM_event_add_keymap_handler_v2d_mask(&region->runtime->handlers, keymap);
 }
 
 /* draw entirely, view changes should be handled here */
@@ -196,6 +198,8 @@ static void nla_track_region_draw(const bContext *C, ARegion *region)
   /* Recalculate the height of the track list.
    * Needs to be done before the call to #UI_view2d_view_ortho. */
   int height = NLATRACK_TOT_HEIGHT(&ac, item_count);
+  /* Add padding for the collapsed redo panel. */
+  height += HEADERY;
   if (!BLI_listbase_is_empty(ED_context_get_markers(C))) {
     height += (UI_MARKER_MARGIN_Y - NLATRACK_STEP(snla));
   }
@@ -226,9 +230,9 @@ static void nla_main_region_init(wmWindowManager *wm, ARegion *region)
 
   /* own keymap */
   keymap = WM_keymap_ensure(wm->defaultconf, "NLA Editor", SPACE_NLA, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler_v2d_mask(&region->handlers, keymap);
+  WM_event_add_keymap_handler_v2d_mask(&region->runtime->handlers, keymap);
   keymap = WM_keymap_ensure(wm->defaultconf, "NLA Generic", SPACE_NLA, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler(&region->handlers, keymap);
+  WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
 }
 
 static void nla_main_region_draw(const bContext *C, ARegion *region)
@@ -315,7 +319,7 @@ static void nla_buttons_region_init(wmWindowManager *wm, ARegion *region)
   ED_region_panels_init(wm, region);
 
   keymap = WM_keymap_ensure(wm->defaultconf, "NLA Generic", SPACE_NLA, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler_v2d_mask(&region->handlers, keymap);
+  WM_event_add_keymap_handler_v2d_mask(&region->runtime->handlers, keymap);
 }
 
 static void nla_buttons_region_draw(const bContext *C, ARegion *region)
@@ -463,6 +467,7 @@ static void nla_track_region_listener(const wmRegionListenerParams *params)
       switch (wmn->data) {
         case ND_OB_ACTIVE:
         case ND_LAYER_CONTENT:
+        case ND_FRAME:
         case ND_OB_SELECT:
           ED_region_tag_redraw(region);
           break;
@@ -505,7 +510,7 @@ static void nla_track_region_message_subscribe(const wmRegionMessageSubscribePar
    * so just whitelist the entire struct for updates
    */
   {
-    wmMsgParams_RNA msg_key_params = {{nullptr}};
+    wmMsgParams_RNA msg_key_params = {{}};
     StructRNA *type_array[] = {
         &RNA_DopeSheet,
     };
@@ -570,7 +575,7 @@ static void nla_id_remap(ScrArea * /*area*/,
   }
 
   mappings.apply(reinterpret_cast<ID **>(&snla->ads->filter_grp), ID_REMAP_APPLY_DEFAULT);
-  mappings.apply(reinterpret_cast<ID **>(&snla->ads->source), ID_REMAP_APPLY_DEFAULT);
+  mappings.apply((&snla->ads->source), ID_REMAP_APPLY_DEFAULT);
 }
 
 static void nla_foreach_id(SpaceLink *space_link, LibraryForeachIDData *data)
@@ -663,7 +668,7 @@ void ED_spacetype_nla()
   art = MEM_cnew<ARegionType>("spacetype nla region");
   art->regionid = RGN_TYPE_UI;
   art->prefsizex = UI_SIDEBAR_PANEL_WIDTH;
-  art->keymapflag = ED_KEYMAP_UI;
+  art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_FRAMES;
   art->listener = nla_region_listener;
   art->init = nla_buttons_region_init;
   art->draw = nla_buttons_region_draw;

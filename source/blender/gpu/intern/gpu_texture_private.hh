@@ -14,8 +14,7 @@
 
 #include "gpu_framebuffer_private.hh"
 
-namespace blender {
-namespace gpu {
+namespace blender::gpu {
 
 enum eGPUTextureFormatFlag {
   /* The format has a depth component and can be used as depth attachment. */
@@ -341,7 +340,7 @@ class PixelBuffer {
 
  public:
   PixelBuffer(size_t size) : size_(size){};
-  virtual ~PixelBuffer(){};
+  virtual ~PixelBuffer() = default;
 
   virtual void *map() = 0;
   virtual void unmap() = 0;
@@ -767,8 +766,7 @@ inline size_t to_bytesize(eGPUTextureFormat tex_format, eGPUDataFormat data_form
 }
 
 /* Definitely not complete, edit according to the gl specification. */
-constexpr inline bool validate_data_format(eGPUTextureFormat tex_format,
-                                           eGPUDataFormat data_format)
+constexpr bool validate_data_format(eGPUTextureFormat tex_format, eGPUDataFormat data_format)
 {
   switch (tex_format) {
     /* Formats texture & render-buffer */
@@ -825,7 +823,7 @@ constexpr inline bool validate_data_format(eGPUTextureFormat tex_format,
       /* Should have its own type. For now, we rely on the backend to do the conversion. */
       ATTR_FALLTHROUGH;
     case GPU_DEPTH24_STENCIL8:
-      return ELEM(data_format, GPU_DATA_UINT_24_8, GPU_DATA_UINT);
+      return ELEM(data_format, GPU_DATA_FLOAT, GPU_DATA_UINT_24_8, GPU_DATA_UINT);
     case GPU_SRGB8_A8:
       return ELEM(data_format, GPU_DATA_FLOAT, GPU_DATA_UBYTE);
 
@@ -1170,5 +1168,4 @@ static inline eGPUTextureFormat to_texture_format(const GPUVertFormat *format)
   return GPU_DEPTH_COMPONENT24;
 }
 
-}  // namespace gpu
-}  // namespace blender
+}  // namespace blender::gpu

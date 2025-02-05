@@ -6,7 +6,6 @@
  * \ingroup RNA
  */
 
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -17,13 +16,21 @@
 
 #ifdef RNA_RUNTIME
 
-#  include <stddef.h>
+#  include <cstddef>
 
 #  include "DNA_armature_types.h"
 
-#  include "BKE_armature.hh"
 #  include "BLI_math_matrix.h"
 #  include "BLI_math_vector.h"
+
+#  include "BKE_armature.hh"
+#  include "BKE_report.hh"
+
+#  include "ED_armature.hh"
+
+#  include "ANIM_bone_collections.hh"
+
+#  include "WM_api.hh"
 
 static void rna_EditBone_align_roll(EditBone *ebo, const float no[3])
 {
@@ -287,11 +294,7 @@ void RNA_api_bonecollection(StructRNA *srna)
   RNA_def_function_flag(func, FUNC_USE_CONTEXT | FUNC_USE_REPORTS);
   RNA_def_function_ui_description(func, "Assign the given bone to this collection");
   parm = RNA_def_pointer(
-      func,
-      "bone",
-      "AnyType",
-      "",
-      "Bone to assign to this collection. This must be a Bone, PoseBone, or EditBone");
+      func, "bone", "AnyType", "", "Bone, PoseBone, or EditBone to assign to this collection");
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED | PARM_RNAPTR);
   /* return value */
   parm = RNA_def_boolean(func,
@@ -306,11 +309,7 @@ void RNA_api_bonecollection(StructRNA *srna)
   RNA_def_function_flag(func, FUNC_USE_CONTEXT | FUNC_USE_REPORTS);
   RNA_def_function_ui_description(func, "Remove the given bone from this collection");
   parm = RNA_def_pointer(
-      func,
-      "bone",
-      "AnyType",
-      "",
-      "Bone to remove from this collection. This must be a Bone, PoseBone, or EditBone");
+      func, "bone", "AnyType", "", "Bone, PoseBone, or EditBone to remove from this collection");
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED | PARM_RNAPTR);
   /* return value */
   parm = RNA_def_boolean(func,

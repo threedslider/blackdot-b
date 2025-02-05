@@ -2,7 +2,9 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma BLENDER_REQUIRE(common_view_lib.glsl)
+#include "draw_model_lib.glsl"
+#include "draw_view_lib.glsl"
+#include "select_lib.glsl"
 
 vec4 flag_to_color(uint flag)
 {
@@ -32,6 +34,8 @@ vec4 flag_to_color(uint flag)
 
 void main()
 {
+  select_id_set(in_select_id);
+
   int cell = gl_VertexID / 8;
   mat3 rot_mat = mat3(0.0);
 
@@ -84,19 +88,19 @@ void main()
 #endif
   /* NOTE(Metal): Declaring constant arrays in function scope to avoid increasing local shader
    * memory pressure. */
-  const int indices[8] = int[8](0, 1, 1, 2, 2, 3, 3, 0);
+  const int indices[8] = int_array(0, 1, 1, 2, 2, 3, 3, 0);
 
   /* Corners for cell outlines. 0.45 is arbitrary. Any value below 0.5 can be used to avoid
    * overlapping of the outlines. */
-  const vec3 corners[4] = vec3[4](vec3(-0.45, 0.45, 0.0),
-                                  vec3(0.45, 0.45, 0.0),
-                                  vec3(0.45, -0.45, 0.0),
-                                  vec3(-0.45, -0.45, 0.0));
+  const vec3 corners[4] = float3_array(vec3(-0.45, 0.45, 0.0),
+                                       vec3(0.45, 0.45, 0.0),
+                                       vec3(0.45, -0.45, 0.0),
+                                       vec3(-0.45, -0.45, 0.0));
 
   vec3 pos = domainOriginOffset + cellSize * (vec3(cell_co + adaptiveCellOffset) + cell_offset);
   vec3 rotated_pos = rot_mat * corners[indices[gl_VertexID % 8]];
   pos += rotated_pos * cellSize;
 
-  vec3 world_pos = point_object_to_world(pos);
-  gl_Position = point_world_to_ndc(world_pos);
+  vec3 world_pos = drw_point_object_to_world(pos);
+  gl_Position = drw_point_world_to_homogenous(world_pos);
 }

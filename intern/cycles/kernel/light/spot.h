@@ -5,6 +5,10 @@
 #pragma once
 
 #include "kernel/light/common.h"
+#include "kernel/light/point.h"
+
+#include "util/math_fast.h"
+#include "util/math_intersect.h"
 
 CCL_NAMESPACE_BEGIN
 
@@ -268,7 +272,7 @@ ccl_device_inline bool spot_light_sample_from_intersection(const ccl_global Kern
 ccl_device_inline bool spot_light_valid_ray_segment(const ccl_global KernelLight *klight,
                                                     const float3 P,
                                                     const float3 D,
-                                                    ccl_private float2 *t_range)
+                                                    ccl_private Interval<float> *t_range)
 {
   /* Convert to local space of the spot light. */
   const Transform itfm = klight->itfm;
@@ -286,7 +290,7 @@ template<bool in_volume_segment>
 ccl_device_forceinline bool spot_light_tree_parameters(const ccl_global KernelLight *klight,
                                                        const float3 centroid,
                                                        const float3 P,
-                                                       const ccl_private BoundingCone &bcone,
+                                                       const ccl_private KernelBoundingCone &bcone,
                                                        ccl_private float &cos_theta_u,
                                                        ccl_private float2 &distance,
                                                        ccl_private float3 &point_to_centroid,

@@ -11,6 +11,8 @@
 #include "DNA_listBase.h"
 #include "DNA_space_types.h"
 
+#include "BLI_string_ref.hh"
+
 struct ARegion;
 struct ImBuf;
 struct Image;
@@ -200,19 +202,14 @@ struct ImageFrameRange {
 
   /* Temporary data. */
   ListBase frames;
-
-  /** Sequences filename head. */
-  char filename_head[FILE_MAX];
-  /** Sequences digits size. */
-  unsigned short filename_digits;
-  /** Sequences filename tail. */
-  char filename_tail[FILE_MAX];
 };
 
 /**
  * Used for both images and volume file loading.
  */
-ListBase ED_image_filesel_detect_sequences(Main *bmain, wmOperator *op, bool detect_udim);
+ListBase ED_image_filesel_detect_sequences(blender::StringRefNull root_path,
+                                           wmOperator *op,
+                                           bool detect_udim);
 
 bool ED_image_tools_paint_poll(bContext *C);
 void ED_paint_cursor_start(Paint *paint, bool (*poll)(bContext *C));

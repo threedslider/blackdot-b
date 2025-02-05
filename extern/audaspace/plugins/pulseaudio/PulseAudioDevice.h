@@ -45,10 +45,16 @@ private:
 	class PulseAudioSynchronizer : public DefaultSynchronizer
 	{
 		PulseAudioDevice* m_device;
+		bool m_playing = false;
+		pa_usec_t m_time_start = 0;
+		double m_seek_pos = 0.0f;
 
 	public:
 		PulseAudioSynchronizer(PulseAudioDevice* device);
 
+		virtual void play();
+		virtual void stop();
+		virtual void seek(std::shared_ptr<IHandle> handle, double time);
 		virtual double getPosition(std::shared_ptr<IHandle> handle);
 	};
 
@@ -60,10 +66,7 @@ private:
 	 */
 	volatile bool m_playback;
 
-	/**
-	 * Set when playback is paused in order to later clear the ring buffer when the playback starts again.
-	 */
-	volatile bool m_clear;
+	bool m_corked;
 
 	pa_threaded_mainloop* m_mainloop;
 	pa_context* m_context;

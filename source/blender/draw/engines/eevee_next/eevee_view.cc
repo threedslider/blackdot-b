@@ -15,8 +15,9 @@
  * its type. Passes are shared between views.
  */
 
-#include "BKE_global.hh"
 #include "DRW_render.hh"
+
+#include "draw_manager_profiling.hh"
 
 #include "eevee_instance.hh"
 
@@ -117,11 +118,10 @@ void ShadingView::render()
   float4 clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
   GPU_framebuffer_bind(combined_fb_);
   GPU_framebuffer_clear_color_depth(combined_fb_, clear_color, 1.0f);
+  inst_.pipelines.background.clear(render_view_);
 
   /* TODO(fclem): Move it after the first prepass (and hiz update) once pipeline is stabilized. */
   inst_.lights.set_view(render_view_, extent_);
-
-  inst_.pipelines.background.render(render_view_);
 
   inst_.hiz_buffer.set_source(&inst_.render_buffers.depth_tx);
 
@@ -136,6 +136,8 @@ void ShadingView::render()
                                   extent_,
                                   rt_buffer_opaque_,
                                   rt_buffer_refract_);
+
+  inst_.pipelines.background.render(render_view_, combined_fb_);
 
   inst_.gbuffer.release();
 
@@ -196,8 +198,8 @@ GPUTexture *ShadingView::render_postfx(GPUTexture *input_tx)
   GPUTexture *output_tx = postfx_tx_;
 
   /* Swapping is done internally. Actual output is set to the next input. */
-  inst_.depth_of_field.render(render_view_, &input_tx, &output_tx, dof_buffer_);
   inst_.motion_blur.render(render_view_, &input_tx, &output_tx);
+  inst_.depth_of_field.render(render_view_, &input_tx, &output_tx, dof_buffer_);
 
   return input_tx;
 }
@@ -210,8 +212,8 @@ void ShadingView::update_view()
   float4x4 winmat = main_view_.winmat();
 
   if (film.scaling_factor_get() > 1) {
-    /* This whole section ensures that the render target pixel grid will match the film pixel pixel
-     * grid. Otherwise the weight computation inside the film accumulation will be wrong. */
+    /* This whole section ensures that the render target pixel grid will match the film pixel grid.
+     * Otherwise the weight computation inside the film accumulation will be wrong. */
 
     float left, right, bottom, top, near, far;
     projmat_dimensions(winmat.ptr(), &left, &right, &bottom, &top, &near, &far);
@@ -227,7 +229,7 @@ void ShadingView::update_view()
     if (overscan > 0.0f) {
       /* Size of overscan on the screen. */
       const float max_size_with_overscan = math::reduce_max(render_size);
-      const float max_size_original = max_size_with_overscan / (1.0f - 2.0f * overscan);
+      const float max_size_original = max_size_with_overscan / (1.0f + 2.0f * overscan);
       const float overscan_size = (max_size_with_overscan - max_size_original) / 2.0f;
       /* Undo overscan to get the initial dimension of the screen. */
       bottom_left = bottom_left_with_overscan + overscan_size;

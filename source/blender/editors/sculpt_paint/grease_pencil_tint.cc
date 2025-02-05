@@ -2,19 +2,19 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_attribute.hh"
 #include "BKE_brush.hh"
 #include "BKE_colortools.hh"
 #include "BKE_context.hh"
 #include "BKE_curves.hh"
 #include "BKE_grease_pencil.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_paint.hh"
 
 #include "BLI_bounds.hh"
-#include "BLI_length_parameterize.hh"
 #include "BLI_math_color.h"
 #include "BLI_math_geom.h"
+
+#include "DNA_brush_types.h"
 
 #include "DEG_depsgraph_query.hh"
 
@@ -71,7 +71,7 @@ void TintOperation::on_stroke_begin(const bContext &C, const InputSample & /*sta
 
   float4 color_linear;
   color_linear[3] = 1.0f;
-  srgb_to_linearrgb_v3_v3(color_linear, brush->rgb);
+  srgb_to_linearrgb_v3_v3(color_linear, BKE_brush_color_get(scene, paint, brush));
 
   color_ = ColorGeometry4f(color_linear);
 
@@ -106,7 +106,7 @@ void TintOperation::on_stroke_begin(const bContext &C, const InputSample & /*sta
     const int drawing_index = (&drawing_info - drawings_.data());
 
     bke::CurvesGeometry &strokes = drawing_info.drawing.strokes_for_write();
-    const Layer &layer = *grease_pencil.layer(drawing_info.layer_index);
+    const Layer &layer = grease_pencil.layer(drawing_info.layer_index);
 
     screen_positions_per_drawing_[drawing_index].reinitialize(strokes.points_num());
 
@@ -137,7 +137,7 @@ void TintOperation::execute_tint(const bContext &C, const InputSample &extension
   Paint *paint = &scene->toolsettings->gp_paint->paint;
   Brush *brush = BKE_paint_brush(paint);
 
-  /* Get the tool's data. */
+  /* Get the brush's data. */
   const float2 mouse_position = extension_sample.mouse_position;
   float radius = radius_;
   float strength = strength_;

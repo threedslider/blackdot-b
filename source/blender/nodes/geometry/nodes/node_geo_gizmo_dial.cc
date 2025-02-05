@@ -23,7 +23,7 @@ static void node_declare(NodeDeclarationBuilder &b)
   b.add_input<decl::Bool>("Screen Space")
       .default_value(true)
       .description(
-          "If true, true gizmo is displayed in screen space. Otherwise it's in object space");
+          "If true, the gizmo is displayed in screen space. Otherwise it's in object space");
   b.add_input<decl::Float>("Radius").default_value(1.0f);
   b.add_output<decl::Geometry>("Transform");
 }
@@ -52,13 +52,17 @@ static void node_rna(StructRNA *srna)
 static void node_register()
 {
   static bke::bNodeType ntype;
-  geo_node_type_base(&ntype, GEO_NODE_GIZMO_DIAL, "Dial Gizmo", NODE_CLASS_INTERFACE);
+  geo_node_type_base(&ntype, "GeometryNodeGizmoDial", GEO_NODE_GIZMO_DIAL);
+  ntype.ui_name = "Dial Gizmo";
+  ntype.ui_description = "Show a dial gizmo in the viewport for a value";
+  ntype.enum_name_legacy = "GIZMO_DIAL";
+  ntype.nclass = NODE_CLASS_INTERFACE;
   bke::node_type_storage(
       &ntype, "NodeGeometryDialGizmo", node_free_standard_storage, node_copy_standard_storage);
   ntype.declare = node_declare;
   ntype.draw_buttons = node_layout;
   ntype.initfunc = node_init;
-  bke::nodeRegisterType(&ntype);
+  bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

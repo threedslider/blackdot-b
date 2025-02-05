@@ -10,20 +10,16 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_fileops_types.h"
 #include "BLI_listbase.h"
-#include "BLI_math_base.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_utildefines.h"
 
-#include "DNA_image_types.h"
 #include "DNA_windowmanager_types.h"
 
 #include "RNA_access.hh"
 
-#include "BKE_image.h"
-#include "BKE_main.hh"
+#include "BKE_image.hh"
 
 #include "ED_image.hh"
 
@@ -42,7 +38,10 @@ static void image_sequence_get_frame_ranges(wmOperator *op, ListBase *ranges)
 {
   char dir[FILE_MAXDIR];
   const bool do_frame_range = RNA_boolean_get(op->ptr, "use_sequence_detection");
+  ImageFrameRange *range = nullptr;
   int range_first_frame = 0;
+  /* Track when a new series of files are found that aren't compatible with the previous file. */
+  char base_head[FILE_MAX], base_tail[FILE_MAX];
 
   RNA_string_get(op->ptr, "directory", dir);
   RNA_BEGIN (op->ptr, itemptr, "files") {
@@ -55,19 +54,10 @@ static void image_sequence_get_frame_ranges(wmOperator *op, ListBase *ranges)
     frame->framenr = BLI_path_sequence_decode(
         filename, head, sizeof(head), tail, sizeof(tail), &digits);
 
-    /* Check if the image sequence is already initialized. */
-    ImageFrameRange *range = nullptr;
-    if (do_frame_range) {
-      LISTBASE_FOREACH (ImageFrameRange *, range_test, ranges) {
-        if ((digits == range_test->filename_digits) &&
-            (STREQ(head, range_test->filename_head) && STREQ(tail, range_test->filename_tail)))
-        {
-          range = range_test;
-          break;
-        }
-      }
-    }
-    if (range) {
+    /* still in the same sequence */
+    if (do_frame_range && (range != nullptr) && STREQLEN(base_head, head, FILE_MAX) &&
+        STREQLEN(base_tail, tail, FILE_MAX))
+    {
       /* Set filepath to first frame in the range. */
       if (frame->framenr < range_first_frame) {
         BLI_path_join(range->filepath, sizeof(range->filepath), dir, filename);
@@ -79,9 +69,9 @@ static void image_sequence_get_frame_ranges(wmOperator *op, ListBase *ranges)
       range = static_cast<ImageFrameRange *>(MEM_callocN(sizeof(*range), __func__));
       BLI_path_join(range->filepath, sizeof(range->filepath), dir, filename);
       BLI_addtail(ranges, range);
-      range->filename_digits = digits;
-      STRNCPY(range->filename_head, head);
-      STRNCPY(range->filename_tail, tail);
+
+      STRNCPY(base_head, head);
+      STRNCPY(base_tail, tail);
 
       range_first_frame = frame->framenr;
     }
@@ -146,7 +136,9 @@ static void image_detect_frame_range(ImageFrameRange *range, const bool detect_u
   }
 }
 
-ListBase ED_image_filesel_detect_sequences(Main *bmain, wmOperator *op, const bool detect_udim)
+ListBase ED_image_filesel_detect_sequences(blender::StringRefNull root_path,
+                                           wmOperator *op,
+                                           const bool detect_udim)
 {
   ListBase ranges;
   BLI_listbase_clear(&ranges);
@@ -166,7 +158,7 @@ ListBase ED_image_filesel_detect_sequences(Main *bmain, wmOperator *op, const bo
       BLI_freelistN(&range->frames);
 
       if (was_relative) {
-        BLI_path_rel(range->filepath, BKE_main_blendfile_path(bmain));
+        BLI_path_rel(range->filepath, root_path.c_str());
       }
     }
   }

@@ -21,17 +21,18 @@ static CLG_LogRef LOG = {"gpu.vulkan"};
 namespace blender::gpu {
 void VKContext::debug_group_begin(const char *name, int)
 {
-  render_graph.debug_group_begin(name);
+  render_graph().debug_group_begin(name, debug::get_debug_group_color(name));
 }
 
 void VKContext::debug_group_end()
 {
-  render_graph.debug_group_end();
+  render_graph().debug_group_end();
 }
 
 bool VKContext::debug_capture_begin(const char *title)
 {
-  flush_render_graph();
+  flush_render_graph(RenderGraphFlushFlags::SUBMIT | RenderGraphFlushFlags::WAIT_FOR_COMPLETION |
+                     RenderGraphFlushFlags::RENEW_RENDER_GRAPH);
   return VKBackend::get().debug_capture_begin(title);
 }
 
@@ -51,7 +52,8 @@ bool VKBackend::debug_capture_begin(const char *title)
 
 void VKContext::debug_capture_end()
 {
-  flush_render_graph();
+  flush_render_graph(RenderGraphFlushFlags::SUBMIT | RenderGraphFlushFlags::WAIT_FOR_COMPLETION |
+                     RenderGraphFlushFlags::RENEW_RENDER_GRAPH);
   VKBackend::get().debug_capture_end();
 }
 
@@ -62,17 +64,37 @@ void VKBackend::debug_capture_end()
 #endif
 }
 
-void *VKContext::debug_capture_scope_create(const char * /*name*/)
+void *VKContext::debug_capture_scope_create(const char *name)
 {
-  return nullptr;
+  return (void *)name;
 }
 
-bool VKContext::debug_capture_scope_begin(void * /*scope*/)
+bool VKContext::debug_capture_scope_begin(void *scope)
 {
+#ifdef WITH_RENDERDOC
+  const char *title = (const char *)scope;
+  if (StringRefNull(title) != StringRefNull(G.gpu_debug_scope_name)) {
+    return false;
+  }
+  VKBackend::get().debug_capture_begin(title);
+#else
+  UNUSED_VARS(scope);
+#endif
   return false;
 }
 
-void VKContext::debug_capture_scope_end(void * /*scope*/) {}
+void VKContext::debug_capture_scope_end(void *scope)
+{
+#ifdef WITH_RENDERDOC
+  const char *title = (const char *)scope;
+  if (StringRefNull(title) == StringRefNull(G.gpu_debug_scope_name)) {
+    VKBackend::get().debug_capture_end();
+  }
+#else
+  UNUSED_VARS(scope);
+#endif
+}
+
 }  // namespace blender::gpu
 
 namespace blender::gpu::debug {

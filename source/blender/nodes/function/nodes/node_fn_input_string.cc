@@ -61,13 +61,16 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  fn_node_type_base(&ntype, FN_NODE_INPUT_STRING, "String", NODE_CLASS_INPUT);
+  fn_node_type_base(&ntype, "FunctionNodeInputString", FN_NODE_INPUT_STRING);
+  ntype.ui_name = "String";
+  ntype.enum_name_legacy = "INPUT_STRING";
+  ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = node_declare;
   ntype.initfunc = node_init;
   blender::bke::node_type_storage(&ntype, "NodeInputString", node_storage_free, node_storage_copy);
   ntype.build_multi_function = node_build_multi_function;
   ntype.draw_buttons = node_layout;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

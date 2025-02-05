@@ -3,7 +3,7 @@ Hello World Text Example
 ++++++++++++++++++++++++
 
 Example of using the blf module. For this module to work we
-need to use the OpenGL wrapper :class:`~bgl` as well.
+need to use the GPU module :mod:`gpu` as well.
 """
 # import stand alone modules
 import blf
@@ -18,7 +18,7 @@ font_info = {
 def init():
     """init function - runs once"""
     import os
-    # Create a new font object, use external ttf file.
+    # Create a new font object, use external TTF file.
     font_path = bpy.path.abspath('//Zeyada.ttf')
     # Store the font indice - to use later.
     if os.path.exists(font_path):

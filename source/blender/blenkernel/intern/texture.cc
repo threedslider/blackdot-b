@@ -14,9 +14,8 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_kdopbvh.h"
+#include "BLI_kdopbvh.hh"
 #include "BLI_listbase.h"
-#include "BLI_math_color.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
@@ -27,20 +26,21 @@
 /* Allow using deprecated functionality for .blend file I/O. */
 #define DNA_DEPRECATED_ALLOW
 
+#include "BKE_node_legacy_types.hh"
 #include "DNA_brush_types.h"
 #include "DNA_color_types.h"
 #include "DNA_defaults.h"
 #include "DNA_linestyle_types.h"
 #include "DNA_material_types.h"
 #include "DNA_node_types.h"
-#include "DNA_object_types.h"
 #include "DNA_particle_types.h"
 
+#include "BKE_brush.hh"
 #include "BKE_colorband.hh"
 #include "BKE_colortools.hh"
 #include "BKE_icons.h"
 #include "BKE_idtype.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
 #include "BKE_node_runtime.hh"
@@ -76,8 +76,10 @@ static void texture_copy_data(Main *bmain,
   const Tex *texture_src = (const Tex *)id_src;
 
   const bool is_localized = (flag & LIB_ID_CREATE_LOCAL) != 0;
-  /* We always need allocation of our private ID data. */
-  const int flag_private_id_data = flag & ~LIB_ID_CREATE_NO_ALLOCATE;
+  /* Never handle user-count here for own sub-data. */
+  const int flag_subdata = flag | LIB_ID_CREATE_NO_USER_REFCOUNT;
+  /* Always need allocation of the embedded ID data. */
+  const int flag_embedded_id_data = flag_subdata & ~LIB_ID_CREATE_NO_ALLOCATE;
 
   if (!BKE_texture_is_image_user(texture_src)) {
     texture_dst->ima = nullptr;
@@ -92,7 +94,8 @@ static void texture_copy_data(Main *bmain,
     }
 
     if (is_localized) {
-      texture_dst->nodetree = blender::bke::ntreeLocalize(texture_src->nodetree, &texture_dst->id);
+      texture_dst->nodetree = blender::bke::node_tree_localize(texture_src->nodetree,
+                                                               &texture_dst->id);
     }
     else {
       BKE_id_copy_in_lib(bmain,
@@ -100,7 +103,7 @@ static void texture_copy_data(Main *bmain,
                          &texture_src->nodetree->id,
                          &texture_dst->id,
                          reinterpret_cast<ID **>(&texture_dst->nodetree),
-                         flag_private_id_data);
+                         flag_embedded_id_data);
     }
   }
 
@@ -122,7 +125,7 @@ static void texture_free_data(ID *id)
 
   /* is no lib link block, but texture extension */
   if (texture->nodetree) {
-    blender::bke::ntreeFreeEmbeddedTree(texture->nodetree);
+    blender::bke::node_tree_free_embedded_tree(texture->nodetree);
     MEM_freeN(texture->nodetree);
     texture->nodetree = nullptr;
   }
@@ -165,17 +168,10 @@ static void texture_blend_write(BlendWriter *writer, ID *id, const void *id_addr
 
   /* nodetree is integral part of texture, no libdata */
   if (tex->nodetree) {
-    BLO_Write_IDBuffer *temp_embedded_id_buffer = BLO_write_allocate_id_buffer();
-    BLO_write_init_id_buffer_from_id(
-        temp_embedded_id_buffer, &tex->nodetree->id, BLO_write_is_undo(writer));
-    BLO_write_struct_at_address(writer,
-                                bNodeTree,
-                                tex->nodetree,
-                                BLO_write_get_id_buffer_temp_id(temp_embedded_id_buffer));
-    blender::bke::ntreeBlendWrite(
-        writer,
-        reinterpret_cast<bNodeTree *>(BLO_write_get_id_buffer_temp_id(temp_embedded_id_buffer)));
-    BLO_write_destroy_id_buffer(&temp_embedded_id_buffer);
+    BLO_Write_IDBuffer temp_embedded_id_buffer{tex->nodetree->id, writer};
+    BLO_write_struct_at_address(writer, bNodeTree, tex->nodetree, temp_embedded_id_buffer.get());
+    blender::bke::node_tree_blend_write(
+        writer, reinterpret_cast<bNodeTree *>(temp_embedded_id_buffer.get()));
   }
 
   BKE_previewimg_blend_write(writer, tex->preview);
@@ -548,6 +544,7 @@ void set_current_brush_texture(Brush *br, Tex *newtex)
     br->mtex.tex = newtex;
     id_us_plus(&newtex->id);
   }
+  BKE_brush_tag_unsaved_changes(br);
 }
 
 Tex *give_current_particle_texture(ParticleSettings *part)
@@ -725,11 +722,11 @@ void BKE_texture_get_value(Tex *texture,
 static void texture_nodes_fetch_images_for_pool(Tex *texture, bNodeTree *ntree, ImagePool *pool)
 {
   for (bNode *node : ntree->all_nodes()) {
-    if (node->type == SH_NODE_TEX_IMAGE && node->id != nullptr) {
+    if (node->type_legacy == SH_NODE_TEX_IMAGE && node->id != nullptr) {
       Image *image = (Image *)node->id;
       BKE_image_pool_acquire_ibuf(image, &texture->iuser, pool);
     }
-    else if (node->type == NODE_GROUP && node->id != nullptr) {
+    else if (node->is_group() && node->id != nullptr) {
       /* TODO(sergey): Do we need to control recursion here? */
       bNodeTree *nested_tree = (bNodeTree *)node->id;
       texture_nodes_fetch_images_for_pool(texture, nested_tree, pool);

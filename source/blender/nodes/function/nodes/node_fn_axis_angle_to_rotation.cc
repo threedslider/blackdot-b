@@ -67,14 +67,16 @@ static void node_eval_inverse(inverse_eval::InverseEvalParams &params)
 static void node_register()
 {
   static blender::bke::bNodeType ntype;
-  fn_node_type_base(
-      &ntype, FN_NODE_AXIS_ANGLE_TO_ROTATION, "Axis Angle to Rotation", NODE_CLASS_CONVERTER);
+  fn_node_type_base(&ntype, "FunctionNodeAxisAngleToRotation", FN_NODE_AXIS_ANGLE_TO_ROTATION);
+  ntype.ui_name = "Axis Angle to Rotation";
+  ntype.enum_name_legacy = "AXIS_ANGLE_TO_ROTATION";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
   ntype.build_multi_function = node_build_multi_function;
   ntype.eval_elem = node_eval_elem;
   ntype.eval_inverse_elem = node_eval_inverse_elem;
   ntype.eval_inverse = node_eval_inverse;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

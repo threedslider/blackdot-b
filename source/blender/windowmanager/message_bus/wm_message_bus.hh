@@ -8,9 +8,11 @@
 
 #pragma once
 
+#include "DNA_listBase.h"
+
 #include "RNA_prototypes.hh"
 #include "RNA_types.hh"
-#include <stdio.h>
+#include <cstdio>
 
 struct ID;
 struct bContext;
@@ -101,7 +103,7 @@ void WM_msgbus_destroy(wmMsgBus *mbus);
 
 void WM_msgbus_clear_by_owner(wmMsgBus *mbus, void *owner);
 
-void WM_msg_dump(wmMsgBus *mbus, const char *info);
+void WM_msg_dump(wmMsgBus *mbus, const char *info_str);
 void WM_msgbus_handle(wmMsgBus *mbus, bContext *C);
 
 void WM_msg_publish_with_key(wmMsgBus *mbus, wmMsgSubscribeKey *msg_key);
@@ -216,16 +218,16 @@ void WM_msg_publish_ID(wmMsgBus *mbus, ID *id);
 
 #define WM_msg_publish_rna_prop(mbus, id_, data_, type_, prop_) \
   { \
-    wmMsgParams_RNA msg_key_params_ = {{0}}; \
-    msg_key_params_.ptr = RNA_pointer_create(id_, &RNA_##type_, data_); \
+    wmMsgParams_RNA msg_key_params_ = {{}}; \
+    msg_key_params_.ptr = RNA_pointer_create_discrete(id_, &RNA_##type_, data_); \
     msg_key_params_.prop = &rna_##type_##_##prop_; \
     WM_msg_publish_rna_params(mbus, &msg_key_params_); \
   } \
   ((void)0)
 #define WM_msg_subscribe_rna_prop(mbus, id_, data_, type_, prop_, value) \
   { \
-    wmMsgParams_RNA msg_key_params_ = {{0}}; \
-    msg_key_params_.ptr = RNA_pointer_create(id_, &RNA_##type_, data_); \
+    wmMsgParams_RNA msg_key_params_ = {{}}; \
+    msg_key_params_.ptr = RNA_pointer_create_discrete(id_, &RNA_##type_, data_); \
     msg_key_params_.prop = &rna_##type_##_##prop_; \
     WM_msg_subscribe_rna_params(mbus, &msg_key_params_, value, __func__); \
   } \
@@ -234,8 +236,8 @@ void WM_msg_publish_ID(wmMsgBus *mbus, ID *id);
 /* Anonymous variants (for convenience). */
 #define WM_msg_subscribe_rna_anon_type(mbus, type_, value) \
   { \
-    PointerRNA msg_ptr_ = {0, &RNA_##type_}; \
-    wmMsgParams_RNA msg_key_params_ = {{0}}; \
+    PointerRNA msg_ptr_ = {nullptr, &RNA_##type_, nullptr}; \
+    wmMsgParams_RNA msg_key_params_ = {{}}; \
     msg_key_params_.ptr = msg_ptr_; \
 \
     WM_msg_subscribe_rna_params(mbus, &msg_key_params_, value, __func__); \
@@ -243,8 +245,8 @@ void WM_msg_publish_ID(wmMsgBus *mbus, ID *id);
   ((void)0)
 #define WM_msg_subscribe_rna_anon_prop(mbus, type_, prop_, value) \
   { \
-    PointerRNA msg_ptr_ = {0, &RNA_##type_}; \
-    wmMsgParams_RNA msg_key_params_ = {{0}}; \
+    PointerRNA msg_ptr_ = {nullptr, &RNA_##type_, nullptr}; \
+    wmMsgParams_RNA msg_key_params_ = {{}}; \
     msg_key_params_.ptr = msg_ptr_; \
     msg_key_params_.prop = &rna_##type_##_##prop_; \
 \

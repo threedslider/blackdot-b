@@ -2,7 +2,11 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma BLENDER_REQUIRE(gpu_shader_common_math_utils.glsl)
+#pragma once
+
+#include "gpu_glsl_cpp_stubs.hh"
+
+#include "gpu_shader_common_math_utils.glsl"
 
 void math_add(float a, float b, float c, out float result)
 {
@@ -186,9 +190,11 @@ void math_arctangent(float a, float b, float c, out float result)
   result = atan(a);
 }
 
+/* The behavior of `atan2(0, 0)` is undefined on many platforms, to ensure consistent behavior, we
+ * return 0 in this case. See !126951. */
 void math_arctan2(float a, float b, float c, out float result)
 {
-  result = atan(a, b);
+  result = ((a == 0.0 && b == 0.0) ? 0.0 : atan(a, b));
 }
 
 void math_sign(float a, float b, float c, out float result)

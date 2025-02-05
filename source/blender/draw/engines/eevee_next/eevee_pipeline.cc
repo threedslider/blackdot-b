@@ -11,12 +11,13 @@
  */
 
 #include "BLI_bounds.hh"
+#include "GPU_capabilities.hh"
 
 #include "eevee_instance.hh"
 #include "eevee_pipeline.hh"
 #include "eevee_shadow.hh"
 
-#include <iostream>
+#include "draw_manager_profiling.hh"
 
 #include "draw_common.hh"
 
@@ -36,14 +37,14 @@ void BackgroundPipeline::sync(GPUMaterial *gpumat,
   RenderBuffers &rbufs = inst_.render_buffers;
 
   world_ps_.init();
-  world_ps_.state_set(DRW_STATE_WRITE_COLOR);
+  world_ps_.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_DEPTH_EQUAL);
   world_ps_.material_set(manager, gpumat);
   world_ps_.push_constant("world_opacity_fade", background_opacity);
   world_ps_.push_constant("world_background_blur", square_f(background_blur));
   SphereProbeData &world_data = *static_cast<SphereProbeData *>(&inst_.light_probes.world_sphere_);
   world_ps_.push_constant("world_coord_packed", reinterpret_cast<int4 *>(&world_data.atlas_coord));
   world_ps_.bind_texture("utility_tx", inst_.pipelines.utility_tx);
-  /* RenderPasses & AOVs. Cleared by background (even if bad practice). */
+  /* RenderPasses & AOVs. */
   world_ps_.bind_image("rp_color_img", &rbufs.rp_color_tx);
   world_ps_.bind_image("rp_value_img", &rbufs.rp_value_tx);
   world_ps_.bind_image("rp_cryptomatte_img", &rbufs.cryptomatte_tx);
@@ -56,10 +57,30 @@ void BackgroundPipeline::sync(GPUMaterial *gpumat,
   world_ps_.draw_procedural(GPU_PRIM_TRIS, 1, 3);
   /* To allow opaque pass rendering over it. */
   world_ps_.barrier(GPU_BARRIER_SHADER_IMAGE_ACCESS);
+
+  clear_ps_.init();
+  clear_ps_.state_set(DRW_STATE_WRITE_COLOR);
+  clear_ps_.shader_set(inst_.shaders.static_shader_get(RENDERPASS_CLEAR));
+  /* RenderPasses & AOVs. Cleared by background (even if bad practice). */
+  clear_ps_.bind_image("rp_color_img", &rbufs.rp_color_tx);
+  clear_ps_.bind_image("rp_value_img", &rbufs.rp_value_tx);
+  clear_ps_.bind_image("rp_cryptomatte_img", &rbufs.cryptomatte_tx);
+  /* Required by validation layers. */
+  clear_ps_.bind_resources(inst_.cryptomatte);
+  clear_ps_.bind_resources(inst_.uniform_data);
+  clear_ps_.draw_procedural(GPU_PRIM_TRIS, 1, 3);
+  /* To allow opaque pass rendering over it. */
+  clear_ps_.barrier(GPU_BARRIER_SHADER_IMAGE_ACCESS);
 }
 
-void BackgroundPipeline::render(View &view)
+void BackgroundPipeline::clear(View &view)
 {
+  inst_.manager->submit(clear_ps_, view);
+}
+
+void BackgroundPipeline::render(View &view, Framebuffer &combined_fb)
+{
+  GPU_framebuffer_bind(combined_fb);
   inst_.manager->submit(world_ps_, view);
 }
 
@@ -164,6 +185,7 @@ void WorldVolumePipeline::render(View &view)
     inst_.volume.prop_extinction_tx_.clear(float4(0.0f));
     inst_.volume.prop_emission_tx_.clear(float4(0.0f));
     inst_.volume.prop_phase_tx_.clear(float4(0.0f));
+    inst_.volume.prop_phase_weight_tx_.clear(float4(0.0f));
     return;
   }
 
@@ -535,9 +557,14 @@ void DeferredLayer::begin_sync()
   this->gbuffer_pass_sync(inst_);
 }
 
-void DeferredLayer::end_sync(bool is_first_pass, bool is_last_pass)
+void DeferredLayer::end_sync(bool is_first_pass,
+                             bool is_last_pass,
+                             bool next_layer_has_transmission)
 {
   const SceneEEVEE &sce_eevee = inst_.scene->eevee;
+  const bool has_any_closure = closure_bits_ != 0;
+  /* We need the feedback output in case of refraction in the next pass (see #126455). */
+  const bool is_layer_refracted = (next_layer_has_transmission && has_any_closure);
   const bool has_transmit_closure = (closure_bits_ & (CLOSURE_REFRACTION | CLOSURE_TRANSLUCENT));
   const bool has_reflect_closure = (closure_bits_ & (CLOSURE_REFLECTION | CLOSURE_DIFFUSE));
   use_raytracing_ = (has_transmit_closure || has_reflect_closure) &&
@@ -552,7 +579,8 @@ void DeferredLayer::end_sync(bool is_first_pass, bool is_last_pass)
   use_screen_reflection_ = use_raytracing_ && has_reflect_closure;
 
   use_split_radiance_ = use_raytracing_ || (use_clamp_direct_ || use_clamp_indirect_);
-  use_feedback_output_ = use_raytracing_ && (!is_last_pass || use_screen_reflection_);
+  use_feedback_output_ = (use_raytracing_ || is_layer_refracted) &&
+                         (!is_last_pass || use_screen_reflection_);
 
   {
     RenderBuffersInfoData &rbuf_data = inst_.render_buffers.data;
@@ -568,6 +596,10 @@ void DeferredLayer::end_sync(bool is_first_pass, bool is_last_pass)
                               GPU_ATTACHMENT_IGNORE,
                               GPU_ATTACHMENT_IGNORE});
       sub.shader_set(sh);
+      if (GPU_stencil_clasify_buffer_workaround()) {
+        /* Binding any buffer to satisfy the binding. The buffer is not actually used. */
+        sub.bind_ssbo("dummy_workaround_buf", &inst_.film.aovs_info);
+      }
       sub.state_set(DRW_STATE_WRITE_STENCIL | DRW_STATE_STENCIL_ALWAYS);
       if (GPU_stencil_export_support()) {
         /* The shader sets the stencil directly in one full-screen pass. */
@@ -730,6 +762,12 @@ PassMain::Sub *DeferredLayer::prepass_add(::Material *blender_mat,
 PassMain::Sub *DeferredLayer::material_add(::Material *blender_mat, GPUMaterial *gpumat)
 {
   eClosureBits closure_bits = shader_closure_bits_from_flag(gpumat);
+  if (closure_bits == eClosureBits(0)) {
+    /* Fix the case where there is no active closure in the shader.
+     * In this case we force the evaluation of emission to avoid disabling the entire layer by
+     * accident, see #126459. */
+    closure_bits |= CLOSURE_EMISSION;
+  }
   closure_bits_ |= closure_bits;
   closure_count_ = max_ii(closure_count_, count_bits_i(closure_bits));
 
@@ -864,8 +902,8 @@ void DeferredPipeline::begin_sync()
 
 void DeferredPipeline::end_sync()
 {
-  opaque_layer_.end_sync(true, refraction_layer_.is_empty());
-  refraction_layer_.end_sync(opaque_layer_.is_empty(), true);
+  opaque_layer_.end_sync(true, refraction_layer_.is_empty(), refraction_layer_.has_transmission());
+  refraction_layer_.end_sync(opaque_layer_.is_empty(), true, false);
 
   debug_pass_sync();
 }
@@ -901,10 +939,10 @@ void DeferredPipeline::debug_draw(draw::View &view, GPUFrameBuffer *combined_fb)
 
   switch (inst.debug_mode) {
     case eDebugMode::DEBUG_GBUFFER_EVALUATION:
-      inst.info = "Debug Mode: Deferred Lighting Cost";
+      inst.info_append("Debug Mode: Deferred Lighting Cost");
       break;
     case eDebugMode::DEBUG_GBUFFER_STORAGE:
-      inst.info = "Debug Mode: Gbuffer Storage Cost";
+      inst.info_append("Debug Mode: Gbuffer Storage Cost");
       break;
     default:
       /* Nothing to display. */
@@ -922,9 +960,7 @@ PassMain::Sub *DeferredPipeline::prepass_add(::Material *blender_mat,
   if (!use_combined_lightprobe_eval && (blender_mat->blend_flag & MA_BL_SS_REFRACTION)) {
     return refraction_layer_.prepass_add(blender_mat, gpumat, has_motion);
   }
-  else {
-    return opaque_layer_.prepass_add(blender_mat, gpumat, has_motion);
-  }
+  return opaque_layer_.prepass_add(blender_mat, gpumat, has_motion);
 }
 
 PassMain::Sub *DeferredPipeline::material_add(::Material *blender_mat, GPUMaterial *gpumat)
@@ -932,9 +968,7 @@ PassMain::Sub *DeferredPipeline::material_add(::Material *blender_mat, GPUMateri
   if (!use_combined_lightprobe_eval && (blender_mat->blend_flag & MA_BL_SS_REFRACTION)) {
     return refraction_layer_.material_add(blender_mat, gpumat);
   }
-  else {
-    return opaque_layer_.material_add(blender_mat, gpumat);
-  }
+  return opaque_layer_.material_add(blender_mat, gpumat);
 }
 
 void DeferredPipeline::render(View &main_view,
@@ -1150,6 +1184,7 @@ VolumeObjectBounds::VolumeObjectBounds(const Camera &camera, Object *ob)
 
 VolumeLayer *VolumePipeline::register_and_get_layer(Object *ob)
 {
+  /* TODO(fclem): This is against design. Sync shouldn't depend on view properties (camera). */
   VolumeObjectBounds object_bounds(inst_.camera, ob);
   object_integration_range_ = bounds::merge(object_integration_range_, object_bounds.z_range);
 
@@ -1173,7 +1208,7 @@ std::optional<Bounds<float>> VolumePipeline::object_integration_range() const
 
 bool VolumePipeline::use_hit_list() const
 {
-  for (auto &layer : layers_) {
+  for (const auto &layer : layers_) {
     if (layer->use_hit_list) {
       return true;
     }
@@ -1249,6 +1284,12 @@ PassMain::Sub *DeferredProbePipeline::prepass_add(::Material *blender_mat, GPUMa
 PassMain::Sub *DeferredProbePipeline::material_add(::Material *blender_mat, GPUMaterial *gpumat)
 {
   eClosureBits closure_bits = shader_closure_bits_from_flag(gpumat);
+  if (closure_bits == eClosureBits(0)) {
+    /* Fix the case where there is no active closure in the shader.
+     * In this case we force the evaluation of emission to avoid disabling the entire layer by
+     * accident, see #126459. */
+    closure_bits |= CLOSURE_EMISSION;
+  }
   opaque_layer_.closure_bits_ |= closure_bits;
   opaque_layer_.closure_count_ = max_ii(opaque_layer_.closure_count_, count_bits_i(closure_bits));
 
@@ -1360,6 +1401,12 @@ PassMain::Sub *PlanarProbePipeline::prepass_add(::Material *blender_mat, GPUMate
 PassMain::Sub *PlanarProbePipeline::material_add(::Material *blender_mat, GPUMaterial *gpumat)
 {
   eClosureBits closure_bits = shader_closure_bits_from_flag(gpumat);
+  if (closure_bits == eClosureBits(0)) {
+    /* Fix the case where there is no active closure in the shader.
+     * In this case we force the evaluation of emission to avoid disabling the entire layer by
+     * accident, see #126459. */
+    closure_bits |= CLOSURE_EMISSION;
+  }
   closure_bits_ |= closure_bits;
   closure_count_ = max_ii(closure_count_, count_bits_i(closure_bits));
 

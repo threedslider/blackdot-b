@@ -6,8 +6,6 @@
  * \ingroup edmesh
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "DNA_object_types.h"
 
 #include "BLI_buffer.h"
@@ -16,10 +14,11 @@
 #include "BLI_math_vector.h"
 #include "BLI_memarena.h"
 #include "BLI_stack.h"
+#include "BLI_vector.hh"
 
 #include "BKE_context.hh"
 #include "BKE_editmesh.hh"
-#include "BKE_editmesh_bvh.h"
+#include "BKE_editmesh_bvh.hh"
 #include "BKE_layer.hh"
 #include "BKE_report.hh"
 
@@ -250,18 +249,18 @@ static void edbm_intersect_ui(bContext * /*C*/, wmOperator *op)
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
   row = uiLayoutRow(layout, false);
-  uiItemR(row, op->ptr, "mode", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(row, op->ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   uiItemS(layout);
   row = uiLayoutRow(layout, false);
-  uiItemR(row, op->ptr, "separate_mode", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(row, op->ptr, "separate_mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   uiItemS(layout);
 
   row = uiLayoutRow(layout, false);
-  uiItemR(row, op->ptr, "solver", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(row, op->ptr, "solver", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   uiItemS(layout);
 
   if (!use_exact) {
-    uiItemR(layout, op->ptr, "threshold", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(layout, op->ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 }
 
@@ -403,17 +402,17 @@ static void edbm_intersect_boolean_ui(bContext * /*C*/, wmOperator *op)
   uiLayoutSetPropDecorate(layout, false);
 
   row = uiLayoutRow(layout, false);
-  uiItemR(row, op->ptr, "operation", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(row, op->ptr, "operation", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   uiItemS(layout);
 
   row = uiLayoutRow(layout, false);
-  uiItemR(row, op->ptr, "solver", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(row, op->ptr, "solver", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   uiItemS(layout);
 
-  uiItemR(layout, op->ptr, "use_swap", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(layout, op->ptr, "use_self", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, op->ptr, "use_swap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(layout, op->ptr, "use_self", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (!use_exact) {
-    uiItemR(layout, op->ptr, "threshold", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(layout, op->ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 }
 
@@ -486,9 +485,6 @@ static void bm_face_split_by_edges(BMesh *bm,
   BMLoop *l_first;
   BMVert *v;
 
-  BMFace **face_arr;
-  int face_arr_len;
-
   /* likely this will stay very small
    * all verts pushed into this stack _must_ have their previous edges set! */
   BLI_SMALLSTACK_DECLARE(vert_stack, BMVert *);
@@ -534,25 +530,15 @@ static void bm_face_split_by_edges(BMesh *bm,
     }
   }
 
-  BM_face_split_edgenet(bm,
-                        f,
-                        static_cast<BMEdge **>(edge_net_temp_buf->data),
-                        edge_net_temp_buf->count,
-                        &face_arr,
-                        &face_arr_len);
+  Vector<BMFace *> face_arr;
+  BM_face_split_edgenet(
+      bm, f, static_cast<BMEdge **>(edge_net_temp_buf->data), edge_net_temp_buf->count, &face_arr);
 
   BLI_buffer_clear(edge_net_temp_buf);
 
-  if (face_arr_len) {
-    int i;
-    for (i = 0; i < face_arr_len; i++) {
-      BM_face_select_set(bm, face_arr[i], true);
-      BM_elem_flag_disable(face_arr[i], hflag);
-    }
-  }
-
-  if (face_arr) {
-    MEM_freeN(face_arr);
+  for (BMFace *face : face_arr) {
+    BM_face_select_set(bm, face, true);
+    BM_elem_flag_disable(face, hflag);
   }
 }
 
@@ -652,7 +638,7 @@ static void bm_face_split_by_edges_island_connect(
     }
   }
 
-  BM_face_split_edgenet(bm, f, edge_arr, edge_arr_len, nullptr, nullptr);
+  BM_face_split_edgenet(bm, f, edge_arr, edge_arr_len, nullptr);
 
   for (int i = e_link_len; i < edge_arr_len; i++) {
     BM_edge_select_set(bm, edge_arr[i], true);

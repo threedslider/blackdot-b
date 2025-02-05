@@ -28,41 +28,42 @@ NODE_STORAGE_FUNCS(NodeGeometryStringToCurves)
 
 static void node_declare(NodeDeclarationBuilder &b)
 {
-  b.add_input<decl::String>("String");
+  b.add_input<decl::String>("String").hide_label();
   b.add_input<decl::Float>("Size").default_value(1.0f).min(0.0f).subtype(PROP_DISTANCE);
   b.add_input<decl::Float>("Character Spacing").default_value(1.0f).min(0.0f);
   b.add_input<decl::Float>("Word Spacing").default_value(1.0f).min(0.0f);
   b.add_input<decl::Float>("Line Spacing").default_value(1.0f).min(0.0f);
   b.add_input<decl::Float>("Text Box Width").default_value(0.0f).min(0.0f).subtype(PROP_DISTANCE);
-  b.add_input<decl::Float>("Text Box Height")
-      .default_value(0.0f)
-      .min(0.0f)
-      .subtype(PROP_DISTANCE)
-      .make_available([](bNode &node) {
-        node_storage(node).overflow = GEO_NODE_STRING_TO_CURVES_MODE_SCALE_TO_FIT;
-      });
+  auto &height = b.add_input<decl::Float>("Text Box Height")
+                     .default_value(0.0f)
+                     .min(0.0f)
+                     .subtype(PROP_DISTANCE)
+                     .make_available([](bNode &node) {
+                       node_storage(node).overflow = GEO_NODE_STRING_TO_CURVES_MODE_SCALE_TO_FIT;
+                     });
   b.add_output<decl::Geometry>("Curve Instances");
-  b.add_output<decl::String>("Remainder").make_available([](bNode &node) {
+  auto &remainder = b.add_output<decl::String>("Remainder").make_available([](bNode &node) {
     node_storage(node).overflow = GEO_NODE_STRING_TO_CURVES_MODE_TRUNCATE;
   });
   b.add_output<decl::Int>("Line").field_on_all();
   b.add_output<decl::Vector>("Pivot Point").field_on_all();
+
+  const bNode *node = b.node_or_null();
+  if (node != nullptr) {
+    const NodeGeometryStringToCurves &storage = node_storage(*node);
+    const GeometryNodeStringToCurvesOverflowMode overflow = GeometryNodeStringToCurvesOverflowMode(
+        storage.overflow);
+
+    remainder.available(overflow == GEO_NODE_STRING_TO_CURVES_MODE_TRUNCATE);
+    height.available(overflow != GEO_NODE_STRING_TO_CURVES_MODE_OVERFLOW);
+  }
 }
 
 static void node_layout(uiLayout *layout, bContext *C, PointerRNA *ptr)
 {
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
-  uiTemplateID(layout,
-               C,
-               ptr,
-               "font",
-               nullptr,
-               "FONT_OT_open",
-               "FONT_OT_unlink",
-               UI_TEMPLATE_ID_FILTER_ALL,
-               false,
-               nullptr);
+  uiTemplateID(layout, C, ptr, "font", nullptr, "FONT_OT_open", "FONT_OT_unlink");
   uiItemR(layout, ptr, "overflow", UI_ITEM_NONE, "", ICON_NONE);
   uiItemR(layout, ptr, "align_x", UI_ITEM_NONE, "", ICON_NONE);
   uiItemR(layout, ptr, "align_y", UI_ITEM_NONE, "", ICON_NONE);
@@ -78,21 +79,7 @@ static void node_init(bNodeTree * /*tree*/, bNode *node)
   data->align_y = GEO_NODE_STRING_TO_CURVES_ALIGN_Y_TOP_BASELINE;
   data->pivot_mode = GEO_NODE_STRING_TO_CURVES_PIVOT_MODE_BOTTOM_LEFT;
   node->storage = data;
-  node->id = reinterpret_cast<ID *>(BKE_vfont_builtin_get());
-}
-
-static void node_update(bNodeTree *ntree, bNode *node)
-{
-  const NodeGeometryStringToCurves &storage = node_storage(*node);
-  const GeometryNodeStringToCurvesOverflowMode overflow = (GeometryNodeStringToCurvesOverflowMode)
-                                                              storage.overflow;
-  bNodeSocket *socket_remainder = static_cast<bNodeSocket *>(node->outputs.first)->next;
-  bke::nodeSetSocketAvailability(
-      ntree, socket_remainder, overflow == GEO_NODE_STRING_TO_CURVES_MODE_TRUNCATE);
-
-  bNodeSocket *height_socket = static_cast<bNodeSocket *>(node->inputs.last);
-  bke::nodeSetSocketAvailability(
-      ntree, height_socket, overflow != GEO_NODE_STRING_TO_CURVES_MODE_OVERFLOW);
+  node->id = reinterpret_cast<ID *>(BKE_vfont_builtin_ensure());
 }
 
 static float3 get_pivot_point(GeoNodeExecParams &params, bke::CurvesGeometry &curves)
@@ -283,7 +270,7 @@ static Map<int, int> create_curve_instances(GeoNodeExecParams &params,
     CharInfo charinfo = {0};
     charinfo.mat_nr = 1;
 
-    BKE_vfont_build_char(&cu, &cu.nurb, layout.char_codes[i], &charinfo, 0, 0, 0, i, 1);
+    BKE_vfont_char_build(&cu, &cu.nurb, layout.char_codes[i], &charinfo, 0, 0, 0, i, 1);
     Curves *curves_id = bke::curve_legacy_to_curves(cu);
     if (curves_id == nullptr) {
       if (pivot_required) {
@@ -335,7 +322,8 @@ static void create_attributes(GeoNodeExecParams &params,
 {
   MutableAttributeAccessor attributes = instances.attributes_for_write();
 
-  if (AnonymousAttributeIDPtr line_id = params.get_output_anonymous_attribute_id_if_needed("Line"))
+  if (std::optional<std::string> line_id = params.get_output_anonymous_attribute_id_if_needed(
+          "Line"))
   {
     SpanAttributeWriter<int> line_attribute = attributes.lookup_or_add_for_write_only_span<int>(
         *line_id, AttrDomain::Instance);
@@ -343,7 +331,7 @@ static void create_attributes(GeoNodeExecParams &params,
     line_attribute.finish();
   }
 
-  if (AnonymousAttributeIDPtr pivot_id = params.get_output_anonymous_attribute_id_if_needed(
+  if (std::optional<std::string> pivot_id = params.get_output_anonymous_attribute_id_if_needed(
           "Pivot Point"))
   {
     SpanAttributeWriter<float3> pivot_attribute =
@@ -390,18 +378,23 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_STRING_TO_CURVES, "String to Curves", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeStringToCurves", GEO_NODE_STRING_TO_CURVES);
+  ntype.ui_name = "String to Curves";
+  ntype.ui_description =
+      "Generate a paragraph of text with a specific font, using a curve instance to store each "
+      "character";
+  ntype.enum_name_legacy = "STRING_TO_CURVES";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.initfunc = node_init;
-  ntype.updatefunc = node_update;
   blender::bke::node_type_size(&ntype, 190, 120, 700);
   blender::bke::node_type_storage(&ntype,
                                   "NodeGeometryStringToCurves",
                                   node_free_standard_storage,
                                   node_copy_standard_storage);
   ntype.draw_buttons = node_layout;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

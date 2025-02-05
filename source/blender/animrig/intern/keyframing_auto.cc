@@ -11,16 +11,11 @@
 #include "BKE_fcurve.hh"
 #include "BKE_scene.hh"
 
-#include "BLI_listbase.h"
-#include "BLI_string.h"
-
 #include "DNA_scene_types.h"
 
 #include "RNA_access.hh"
 #include "RNA_path.hh"
 #include "RNA_prototypes.hh"
-
-#include "ED_keyframing.hh"
 
 #include "ANIM_keyframing.hh"
 #include "ANIM_keyingsets.hh"
@@ -30,7 +25,7 @@
 
 namespace blender::animrig {
 
-static eInsertKeyFlags get_autokey_flags(Scene *scene)
+static eInsertKeyFlags get_autokey_flags(const Scene *scene)
 {
   eInsertKeyFlags flag = INSERTKEY_NOFLAGS;
 
@@ -104,7 +99,7 @@ bool autokeyframe_cfra_can_key(const Scene *scene, ID *id)
   return true;
 }
 
-void autokeyframe_object(bContext *C, Scene *scene, Object *ob, Span<RNAPath> rna_paths)
+void autokeyframe_object(bContext *C, const Scene *scene, Object *ob, Span<RNAPath> rna_paths)
 {
   BLI_assert(ob != nullptr);
   BLI_assert(scene != nullptr);
@@ -116,7 +111,7 @@ void autokeyframe_object(bContext *C, Scene *scene, Object *ob, Span<RNAPath> rn
   }
 
   ReportList *reports = CTX_wm_reports(C);
-  KeyingSet *active_ks = ANIM_scene_get_active_keyingset(scene);
+  KeyingSet *active_ks = scene_get_active_keyingset(scene);
   Depsgraph *depsgraph = CTX_data_depsgraph_pointer(C);
   const AnimationEvalContext anim_eval_context = BKE_animsys_eval_context_construct(
       depsgraph, BKE_scene_frame_get(scene));
@@ -126,15 +121,14 @@ void autokeyframe_object(bContext *C, Scene *scene, Object *ob, Span<RNAPath> rn
 
   /* Add data-source override for the object. */
   blender::Vector<PointerRNA> sources;
-  ANIM_relative_keyingset_add_source(sources, id);
+  relative_keyingset_add_source(sources, id);
 
   if (is_keying_flag(scene, AUTOKEY_FLAG_ONLYKEYINGSET) && (active_ks)) {
     /* Only insert into active keyingset
      * NOTE: we assume here that the active Keying Set
      * does not need to have its iterator overridden.
      */
-    ANIM_apply_keyingset(
-        C, &sources, active_ks, ModifyKeyMode::INSERT, anim_eval_context.eval_time);
+    apply_keyingset(C, &sources, active_ks, ModifyKeyMode::INSERT, anim_eval_context.eval_time);
     return;
   }
 
@@ -172,8 +166,8 @@ bool autokeyframe_object(bContext *C, Scene *scene, Object *ob, KeyingSet *ks)
    * 3) Free the extra info.
    */
   blender::Vector<PointerRNA> sources;
-  ANIM_relative_keyingset_add_source(sources, &ob->id);
-  ANIM_apply_keyingset(C, &sources, ks, ModifyKeyMode::INSERT, BKE_scene_frame_get(scene));
+  relative_keyingset_add_source(sources, &ob->id);
+  apply_keyingset(C, &sources, ks, ModifyKeyMode::INSERT, BKE_scene_frame_get(scene));
 
   return true;
 }
@@ -190,8 +184,8 @@ bool autokeyframe_pchan(bContext *C, Scene *scene, Object *ob, bPoseChannel *pch
    * 3) Free the extra info.
    */
   blender::Vector<PointerRNA> sources;
-  ANIM_relative_keyingset_add_source(sources, &ob->id, &RNA_PoseBone, pchan);
-  ANIM_apply_keyingset(C, &sources, ks, ModifyKeyMode::INSERT, BKE_scene_frame_get(scene));
+  relative_keyingset_add_source(sources, &ob->id, &RNA_PoseBone, pchan);
+  apply_keyingset(C, &sources, ks, ModifyKeyMode::INSERT, BKE_scene_frame_get(scene));
 
   return true;
 }
@@ -216,7 +210,7 @@ void autokeyframe_pose_channel(bContext *C,
   }
 
   ReportList *reports = CTX_wm_reports(C);
-  KeyingSet *active_ks = ANIM_scene_get_active_keyingset(scene);
+  KeyingSet *active_ks = scene_get_active_keyingset(scene);
   Depsgraph *depsgraph = CTX_data_depsgraph_pointer(C);
   const float scene_frame = BKE_scene_frame_get(scene);
   const AnimationEvalContext anim_eval_context = BKE_animsys_eval_context_construct(depsgraph,
@@ -235,13 +229,12 @@ void autokeyframe_pose_channel(bContext *C,
 
   Vector<PointerRNA> sources;
   /* Add data-source override for the camera object. */
-  ANIM_relative_keyingset_add_source(sources, id, &RNA_PoseBone, pose_channel);
+  relative_keyingset_add_source(sources, id, &RNA_PoseBone, pose_channel);
 
   /* only insert into active keyingset? */
   if (is_keying_flag(scene, AUTOKEY_FLAG_ONLYKEYINGSET) && (active_ks)) {
     /* Run the active Keying Set on the current data-source. */
-    ANIM_apply_keyingset(
-        C, &sources, active_ks, ModifyKeyMode::INSERT, anim_eval_context.eval_time);
+    apply_keyingset(C, &sources, active_ks, ModifyKeyMode::INSERT, anim_eval_context.eval_time);
     return;
   }
 

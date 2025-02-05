@@ -13,8 +13,6 @@
 #include "MEM_guardedalloc.h"
 
 #include "DNA_collection_types.h"
-#include "DNA_gpencil_legacy_types.h"
-#include "DNA_linestyle_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
@@ -26,7 +24,6 @@
 #include "DEG_depsgraph.hh"
 
 #include "BLI_listbase.h"
-#include "BLI_string.h"
 #include "BLI_threads.h"
 #include "BLI_utildefines.h"
 
@@ -49,7 +46,7 @@
 #include "CLG_log.h"
 
 #ifdef WITH_PYTHON
-#  include "BPY_extern.h"
+#  include "BPY_extern.hh"
 #endif
 
 using blender::Vector;
@@ -150,7 +147,7 @@ static bContextStore *ctx_store_extend(Vector<std::unique_ptr<bContextStore>> &c
 }
 
 bContextStore *CTX_store_add(Vector<std::unique_ptr<bContextStore>> &contexts,
-                             const blender::StringRefNull name,
+                             const blender::StringRef name,
                              const PointerRNA *ptr)
 {
   bContextStore *ctx = ctx_store_extend(contexts);
@@ -159,11 +156,20 @@ bContextStore *CTX_store_add(Vector<std::unique_ptr<bContextStore>> &contexts,
 }
 
 bContextStore *CTX_store_add(Vector<std::unique_ptr<bContextStore>> &contexts,
-                             const blender::StringRefNull name,
+                             const blender::StringRef name,
                              const blender::StringRef str)
 {
   bContextStore *ctx = ctx_store_extend(contexts);
   ctx->entries.append(bContextStoreEntry{name, std::string{str}});
+  return ctx;
+}
+
+bContextStore *CTX_store_add(Vector<std::unique_ptr<bContextStore>> &contexts,
+                             const blender::StringRef name,
+                             const int64_t value)
+{
+  bContextStore *ctx = ctx_store_extend(contexts);
+  ctx->entries.append(bContextStoreEntry{name, value});
   return ctx;
 }
 
@@ -188,7 +194,7 @@ void CTX_store_set(bContext *C, const bContextStore *store)
 }
 
 const PointerRNA *CTX_store_ptr_lookup(const bContextStore *store,
-                                       const blender::StringRefNull name,
+                                       const blender::StringRef name,
                                        const StructRNA *type)
 {
   for (auto entry = store->entries.rbegin(); entry != store->entries.rend(); ++entry) {
@@ -202,13 +208,31 @@ const PointerRNA *CTX_store_ptr_lookup(const bContextStore *store,
   return nullptr;
 }
 
-std::optional<blender::StringRefNull> CTX_store_string_lookup(const bContextStore *store,
-                                                              const blender::StringRefNull name)
+template<typename T>
+const T *ctx_store_lookup_impl(const bContextStore *store, const blender::StringRef name)
 {
   for (auto entry = store->entries.rbegin(); entry != store->entries.rend(); ++entry) {
-    if (entry->name == name && std::holds_alternative<std::string>(entry->value)) {
-      return std::get<std::string>(entry->value);
+    if (entry->name == name && std::holds_alternative<T>(entry->value)) {
+      return &std::get<T>(entry->value);
     }
+  }
+  return nullptr;
+}
+
+std::optional<blender::StringRefNull> CTX_store_string_lookup(const bContextStore *store,
+                                                              const blender::StringRef name)
+{
+  if (const std::string *value = ctx_store_lookup_impl<std::string>(store, name)) {
+    return *value;
+  }
+  return {};
+}
+
+std::optional<int64_t> CTX_store_int_lookup(const bContextStore *store,
+                                            const blender::StringRef name)
+{
+  if (const int64_t *value = ctx_store_lookup_impl<int64_t>(store, name)) {
+    return *value;
   }
   return {};
 }
@@ -255,6 +279,7 @@ struct bContextDataResult {
   PropertyRNA *prop;
   int index;
   blender::StringRefNull str;
+  std::optional<int64_t> int_value;
   const char **dir;
   short type; /* 0: normal, 1: seq */
 };
@@ -327,26 +352,27 @@ static eContextResult ctx_data_get(bContext *C, const char *member, bContextData
   if (done != 1 && recursion < 1 && C->wm.store) {
     C->data.recursion = 1;
 
-    const PointerRNA *ptr = CTX_store_ptr_lookup(C->wm.store, member, nullptr);
-
-    if (ptr) {
+    if (const PointerRNA *ptr = CTX_store_ptr_lookup(C->wm.store, member, nullptr)) {
       result->ptr = *ptr;
       done = 1;
     }
-    else {
-      std::optional<blender::StringRefNull> str = CTX_store_string_lookup(C->wm.store, member);
-
-      if (str) {
-        result->str = *str;
-        result->type = CTX_DATA_TYPE_STRING;
-        done = 1;
-      }
+    else if (std::optional<blender::StringRefNull> str = CTX_store_string_lookup(C->wm.store,
+                                                                                 member))
+    {
+      result->str = *str;
+      result->type = CTX_DATA_TYPE_STRING;
+      done = 1;
+    }
+    else if (std::optional<int64_t> int_value = CTX_store_int_lookup(C->wm.store, member)) {
+      result->int_value = int_value;
+      result->type = CTX_DATA_TYPE_INT64;
+      done = 1;
     }
   }
   if (done != 1 && recursion < 2 && (region = CTX_wm_region(C))) {
     C->data.recursion = 2;
-    if (region->type && region->type->context) {
-      ret = region->type->context(C, member, result);
+    if (region->runtime->type && region->runtime->type->context) {
+      ret = region->runtime->type->context(C, member, result);
       if (ret) {
         done = -(-ret | -done);
       }
@@ -527,6 +553,17 @@ std::optional<blender::StringRefNull> CTX_data_string_get(const bContext *C, con
   return {};
 }
 
+std::optional<int64_t> CTX_data_int_get(const bContext *C, const char *member)
+{
+  bContextDataResult result;
+  if (ctx_data_get((bContext *)C, member, &result) == CTX_RESULT_OK) {
+    BLI_assert(result.type == CTX_DATA_TYPE_INT64);
+    return result.int_value;
+  }
+
+  return {};
+}
+
 int /*eContextResult*/ CTX_data_get(const bContext *C,
                                     const char *member,
                                     PointerRNA *r_ptr,
@@ -534,6 +571,7 @@ int /*eContextResult*/ CTX_data_get(const bContext *C,
                                     PropertyRNA **r_prop,
                                     int *r_index,
                                     blender::StringRef *r_str,
+                                    std::optional<int64_t> *r_int_value,
                                     short *r_type)
 {
   bContextDataResult result;
@@ -545,12 +583,14 @@ int /*eContextResult*/ CTX_data_get(const bContext *C,
     *r_prop = result.prop;
     *r_index = result.index;
     *r_str = result.str;
+    *r_int_value = result.int_value;
     *r_type = result.type;
   }
   else {
-    memset(r_ptr, 0, sizeof(*r_ptr));
+    *r_ptr = {};
     r_lb->clear();
     *r_str = "";
+    *r_int_value = {};
     *r_type = 0;
   }
 
@@ -593,7 +633,7 @@ ListBase CTX_data_dir_get_ex(const bContext *C,
     int namelen;
 
     PropertyRNA *iterprop;
-    PointerRNA ctx_ptr = RNA_pointer_create(nullptr, &RNA_Context, (void *)C);
+    PointerRNA ctx_ptr = RNA_pointer_create_discrete(nullptr, &RNA_Context, (void *)C);
 
     iterprop = RNA_struct_iterator_property(ctx_ptr.type);
 
@@ -611,8 +651,8 @@ ListBase CTX_data_dir_get_ex(const bContext *C,
       data_dir_add(&lb, entry.name.c_str(), use_all);
     }
   }
-  if ((region = CTX_wm_region(C)) && region->type && region->type->context) {
-    region->type->context(C, "", &result);
+  if ((region = CTX_wm_region(C)) && region->runtime->type && region->runtime->type->context) {
+    region->runtime->type->context(C, "", &result);
 
     if (result.dir) {
       for (a = 0; result.dir[a]; a++) {
@@ -665,7 +705,7 @@ void CTX_data_id_pointer_set(bContextDataResult *result, ID *id)
 
 void CTX_data_pointer_set(bContextDataResult *result, ID *id, StructRNA *type, void *data)
 {
-  result->ptr = RNA_pointer_create(id, type, data);
+  result->ptr = RNA_pointer_create_discrete(id, type, data);
 }
 
 void CTX_data_pointer_set_ptr(bContextDataResult *result, const PointerRNA *ptr)
@@ -680,7 +720,7 @@ void CTX_data_id_list_add(bContextDataResult *result, ID *id)
 
 void CTX_data_list_add(bContextDataResult *result, ID *id, StructRNA *type, void *data)
 {
-  result->list.append(RNA_pointer_create(id, type, data));
+  result->list.append(RNA_pointer_create_discrete(id, type, data));
 }
 
 void CTX_data_list_add_ptr(bContextDataResult *result, const PointerRNA *ptr)
@@ -1226,10 +1266,7 @@ enum eContextObjectMode CTX_data_mode_enum_ex(const Object *obedit,
       if (object_mode & OB_MODE_PARTICLE_EDIT) {
         return CTX_MODE_PARTICLE;
       }
-      if (object_mode & OB_MODE_PAINT_GPENCIL_LEGACY) {
-        if (ob->type == OB_GPENCIL_LEGACY) {
-          return CTX_MODE_PAINT_GPENCIL_LEGACY;
-        }
+      if (object_mode & OB_MODE_PAINT_GREASE_PENCIL) {
         if (ob->type == OB_GREASE_PENCIL) {
           return CTX_MODE_PAINT_GREASE_PENCIL;
         }
@@ -1237,24 +1274,20 @@ enum eContextObjectMode CTX_data_mode_enum_ex(const Object *obedit,
       if (object_mode & OB_MODE_EDIT_GPENCIL_LEGACY) {
         return CTX_MODE_EDIT_GPENCIL_LEGACY;
       }
-      if (object_mode & OB_MODE_SCULPT_GPENCIL_LEGACY) {
-        if (ob->type == OB_GPENCIL_LEGACY) {
-          return CTX_MODE_SCULPT_GPENCIL_LEGACY;
-        }
+      if (object_mode & OB_MODE_SCULPT_GREASE_PENCIL) {
         if (ob->type == OB_GREASE_PENCIL) {
           return CTX_MODE_SCULPT_GREASE_PENCIL;
         }
       }
-      if (object_mode & OB_MODE_WEIGHT_GPENCIL_LEGACY) {
-        if (ob->type == OB_GPENCIL_LEGACY) {
-          return CTX_MODE_WEIGHT_GPENCIL_LEGACY;
-        }
+      if (object_mode & OB_MODE_WEIGHT_GREASE_PENCIL) {
         if (ob->type == OB_GREASE_PENCIL) {
           return CTX_MODE_WEIGHT_GREASE_PENCIL;
         }
       }
-      if (object_mode & OB_MODE_VERTEX_GPENCIL_LEGACY) {
-        return CTX_MODE_VERTEX_GPENCIL_LEGACY;
+      if (object_mode & OB_MODE_VERTEX_GREASE_PENCIL) {
+        if (ob->type == OB_GREASE_PENCIL) {
+          return CTX_MODE_VERTEX_GREASE_PENCIL;
+        }
       }
       if (object_mode & OB_MODE_SCULPT_CURVES) {
         return CTX_MODE_SCULPT_CURVES;
@@ -1304,6 +1337,7 @@ static const char *data_mode_strings[] = {
     "grease_pencil_paint",
     "grease_pencil_sculpt",
     "grease_pencil_weight",
+    "grease_pencil_vertex",
     nullptr,
 };
 BLI_STATIC_ASSERT(ARRAY_SIZE(data_mode_strings) == CTX_MODE_NUM + 1,
@@ -1488,36 +1522,6 @@ bool CTX_data_selected_pose_bones_from_active_object(const bContext *C,
 bool CTX_data_visible_pose_bones(const bContext *C, blender::Vector<PointerRNA> *list)
 {
   return ctx_data_collection_get(C, "visible_pose_bones", list);
-}
-
-bGPdata *CTX_data_gpencil_data(const bContext *C)
-{
-  return static_cast<bGPdata *>(ctx_data_pointer_get(C, "gpencil_data"));
-}
-
-bGPDlayer *CTX_data_active_gpencil_layer(const bContext *C)
-{
-  return static_cast<bGPDlayer *>(ctx_data_pointer_get(C, "active_gpencil_layer"));
-}
-
-bGPDframe *CTX_data_active_gpencil_frame(const bContext *C)
-{
-  return static_cast<bGPDframe *>(ctx_data_pointer_get(C, "active_gpencil_frame"));
-}
-
-bool CTX_data_visible_gpencil_layers(const bContext *C, blender::Vector<PointerRNA> *list)
-{
-  return ctx_data_collection_get(C, "visible_gpencil_layers", list);
-}
-
-bool CTX_data_editable_gpencil_layers(const bContext *C, blender::Vector<PointerRNA> *list)
-{
-  return ctx_data_collection_get(C, "editable_gpencil_layers", list);
-}
-
-bool CTX_data_editable_gpencil_strokes(const bContext *C, blender::Vector<PointerRNA> *list)
-{
-  return ctx_data_collection_get(C, "editable_gpencil_strokes", list);
 }
 
 const AssetLibraryReference *CTX_wm_asset_library_ref(const bContext *C)

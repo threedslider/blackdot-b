@@ -25,7 +25,7 @@ bool USDMetaballWriter::is_supported(const HierarchyContext *context) const
 
 bool USDMetaballWriter::check_is_animated(const HierarchyContext & /*context*/) const
 {
-  /* We assume that metaballs are always animated, as the current object may
+  /* We assume that meta-balls are always animated, as the current object may
    * not be animated but another ball in the same group may be. */
   return true;
 }
@@ -49,7 +49,7 @@ void USDMetaballWriter::free_export_mesh(Mesh *mesh)
 
 bool USDMetaballWriter::is_basis_ball(Scene *scene, Object *ob) const
 {
-  Object *basis_ob = BKE_mball_basis_find(scene, ob);
+  const Object *basis_ob = BKE_mball_basis_find(scene, ob);
   return ob == basis_ob;
 }
 

@@ -15,12 +15,15 @@
 
 #include "DNA_asset_types.h"
 #include "DNA_defs.h"
-#include "DNA_space_types.h"
 
 #include "rna_internal.hh"
 
 const EnumPropertyItem rna_enum_asset_library_type_items[] = {
-    {ASSET_LIBRARY_ALL, "ALL", 0, "All", "Show assets from all of the listed asset libraries"},
+    {ASSET_LIBRARY_ALL,
+     "ALL",
+     0,
+     "All Libraries",
+     "Show assets from all of the listed asset libraries"},
     {ASSET_LIBRARY_LOCAL,
      "LOCAL",
      0,
@@ -49,9 +52,10 @@ const EnumPropertyItem rna_enum_asset_library_type_items[] = {
 
 #  include "BKE_asset.hh"
 #  include "BKE_context.hh"
-#  include "BKE_idprop.hh"
+#  include "BKE_report.hh"
 
 #  include "BLI_listbase.h"
+#  include "BLI_string.h"
 #  include "BLI_uuid.h"
 
 #  include "ED_asset.hh"
@@ -372,8 +376,8 @@ static PointerRNA rna_AssetHandle_file_data_get(PointerRNA *ptr)
 {
   AssetHandle *asset_handle = static_cast<AssetHandle *>(ptr->data);
   /* Have to cast away const, but the file entry API doesn't allow modifications anyway. */
-  return rna_pointer_inherit_refine(
-      ptr, &RNA_FileSelectEntry, (FileDirEntry *)asset_handle->file_data);
+  return RNA_pointer_create_with_parent(
+      *ptr, &RNA_FileSelectEntry, (FileDirEntry *)asset_handle->file_data);
 }
 
 static void rna_AssetHandle_file_data_set(PointerRNA *ptr,
@@ -410,10 +414,10 @@ static PointerRNA rna_AssetRepresentation_metadata_get(PointerRNA *ptr)
 
   if (asset->is_local_id()) {
     PointerRNA id_ptr = RNA_id_pointer_create(asset->local_id());
-    return rna_pointer_inherit_refine(&id_ptr, &RNA_AssetMetaData, &asset_data);
+    return RNA_pointer_create_with_parent(id_ptr, &RNA_AssetMetaData, &asset_data);
   }
 
-  return rna_pointer_inherit_refine(ptr, &RNA_AssetMetaData, &asset_data);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_AssetMetaData, &asset_data);
 }
 
 static int rna_AssetRepresentation_id_type_get(PointerRNA *ptr)
@@ -425,34 +429,34 @@ static int rna_AssetRepresentation_id_type_get(PointerRNA *ptr)
 static PointerRNA rna_AssetRepresentation_local_id_get(PointerRNA *ptr)
 {
   const AssetRepresentation *asset = static_cast<const AssetRepresentation *>(ptr->data);
-  return rna_pointer_inherit_refine(ptr, &RNA_ID, asset->local_id());
+  return RNA_id_pointer_create(asset->local_id());
 }
 
 static void rna_AssetRepresentation_full_library_path_get(PointerRNA *ptr, char *value)
 {
   const AssetRepresentation *asset = static_cast<const AssetRepresentation *>(ptr->data);
-  const std::string full_library_path = asset->get_identifier().full_library_path();
+  const std::string full_library_path = asset->full_library_path();
   BLI_strncpy(value, full_library_path.c_str(), full_library_path.size() + 1);
 }
 
 static int rna_AssetRepresentation_full_library_path_length(PointerRNA *ptr)
 {
   const AssetRepresentation *asset = static_cast<const AssetRepresentation *>(ptr->data);
-  const std::string full_library_path = asset->get_identifier().full_library_path();
+  const std::string full_library_path = asset->full_library_path();
   return full_library_path.size();
 }
 
 static void rna_AssetRepresentation_full_path_get(PointerRNA *ptr, char *value)
 {
   const AssetRepresentation *asset = static_cast<const AssetRepresentation *>(ptr->data);
-  const std::string full_path = asset->get_identifier().full_path();
+  const std::string full_path = asset->full_path();
   BLI_strncpy(value, full_path.c_str(), full_path.size() + 1);
 }
 
 static int rna_AssetRepresentation_full_path_length(PointerRNA *ptr)
 {
   const AssetRepresentation *asset = static_cast<const AssetRepresentation *>(ptr->data);
-  const std::string full_path = asset->get_identifier().full_path();
+  const std::string full_path = asset->full_path();
   return full_path.size();
 }
 
@@ -461,7 +465,10 @@ const EnumPropertyItem *rna_asset_library_reference_itemf(bContext * /*C*/,
                                                           PropertyRNA * /*prop*/,
                                                           bool *r_free)
 {
-  const EnumPropertyItem *items = blender::ed::asset::library_reference_to_rna_enum_itemf(true);
+  const EnumPropertyItem *items = blender::ed::asset::library_reference_to_rna_enum_itemf(
+      /* Include all valid libraries for the user to choose from. */
+      /*include_readonly=*/true,
+      /*include_current_file=*/true);
   if (!items) {
     *r_free = false;
     return rna_enum_dummy_NULL_items;
@@ -564,7 +571,7 @@ static void rna_def_asset_data(BlenderRNA *brna)
       prop,
       "Copyright",
       "Copyright notice for this asset. An empty copyright notice does not necessarily indicate "
-      "that this is copyright-free. Contact the author if any clarification is needed");
+      "that this is copyright-free. Contact the author if any clarification is needed.");
 
   prop = RNA_def_property(srna, "license", PROP_STRING, PROP_NONE);
   RNA_def_property_editable_func(prop, "rna_AssetMetaData_editable");
@@ -576,7 +583,7 @@ static void rna_def_asset_data(BlenderRNA *brna)
                            "License",
                            "The type of license this asset is distributed under. An empty license "
                            "name does not necessarily indicate that this is free of licensing "
-                           "terms. Contact the author if any clarification is needed");
+                           "terms. Contact the author if any clarification is needed.");
 
   prop = RNA_def_property(srna, "tags", PROP_COLLECTION, PROP_NONE);
   RNA_def_property_struct_type(prop, "AssetTag");
@@ -601,7 +608,7 @@ static void rna_def_asset_data(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Catalog UUID",
                            "Identifier for the asset's catalog, used by Blender to look up the "
-                           "asset's catalog path. Must be a UUID according to RFC4122");
+                           "asset's catalog path. Must be a UUID according to RFC4122.");
 
   prop = RNA_def_property(srna, "catalog_simple_name", PROP_STRING, PROP_NONE);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);

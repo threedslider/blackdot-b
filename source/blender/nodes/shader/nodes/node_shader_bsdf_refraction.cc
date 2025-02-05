@@ -16,7 +16,7 @@ static void node_declare(NodeDeclarationBuilder &b)
       .subtype(PROP_FACTOR);
   b.add_input<decl::Float>("IOR").default_value(1.45f).min(0.0f).max(1000.0f);
   b.add_input<decl::Vector>("Normal").hide_value();
-  b.add_input<decl::Float>("Weight").unavailable();
+  b.add_input<decl::Float>("Weight").available(false);
   b.add_output<decl::Shader>("BSDF");
 }
 
@@ -72,7 +72,13 @@ void register_node_type_sh_bsdf_refraction()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(&ntype, SH_NODE_BSDF_REFRACTION, "Refraction BSDF", NODE_CLASS_SHADER);
+  sh_node_type_base(&ntype, "ShaderNodeBsdfRefraction", SH_NODE_BSDF_REFRACTION);
+  ntype.ui_name = "Refraction BSDF";
+  ntype.ui_description =
+      "Glossy refraction with sharp or microfacet distribution, typically used for materials that "
+      "transmit light";
+  ntype.enum_name_legacy = "BSDF_REFRACTION";
+  ntype.nclass = NODE_CLASS_SHADER;
   ntype.declare = file_ns::node_declare;
   ntype.add_ui_poll = object_shader_nodes_poll;
   blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
@@ -80,5 +86,5 @@ void register_node_type_sh_bsdf_refraction()
   ntype.gpu_fn = file_ns::node_shader_gpu_bsdf_refraction;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

@@ -79,7 +79,7 @@ static void node_gather_link_searches(GatherLinkSearchOpParams &params)
 class SampleNearestSurfaceFunction : public mf::MultiFunction {
  private:
   GeometrySet source_;
-  Array<BVHTreeFromMesh> bvh_trees_;
+  Array<bke::BVHTreeFromMesh> bvh_trees_;
   VectorSet<int> group_indices_;
 
  public:
@@ -122,20 +122,14 @@ class SampleNearestSurfaceFunction : public mf::MultiFunction {
         [&](const IndexRange range) {
           for (const int group_i : range) {
             const IndexMask &group_mask = group_masks[group_i];
-            BVHTreeFromMesh &bvh = bvh_trees_[group_i];
-            BKE_bvhtree_from_mesh_tris_init(mesh, group_mask, bvh);
+            bvh_trees_[group_i] = bke::bvhtree_from_mesh_tris_init(mesh, group_mask);
           }
         },
         threading::individual_task_sizes(
             [&](const int group_i) { return group_masks[group_i].size(); }, mesh.faces_num));
   }
 
-  ~SampleNearestSurfaceFunction()
-  {
-    for (BVHTreeFromMesh &tree : bvh_trees_) {
-      free_bvhtree_from_mesh(&tree);
-    }
-  }
+  ~SampleNearestSurfaceFunction() override = default;
 
   void call(const IndexMask &mask, mf::Params params, mf::Context /*context*/) const override
   {
@@ -159,11 +153,15 @@ class SampleNearestSurfaceFunction : public mf::MultiFunction {
         }
         return;
       }
-      const BVHTreeFromMesh &bvh = bvh_trees_[group_index];
+      const bke::BVHTreeFromMesh &bvh = bvh_trees_[group_index];
       BVHTreeNearest nearest;
       nearest.dist_sq = FLT_MAX;
-      BLI_bvhtree_find_nearest(
-          bvh.tree, position, &nearest, bvh.nearest_callback, const_cast<BVHTreeFromMesh *>(&bvh));
+      nearest.index = -1;
+      BLI_bvhtree_find_nearest(bvh.tree,
+                               position,
+                               &nearest,
+                               bvh.nearest_callback,
+                               const_cast<bke::BVHTreeFromMesh *>(&bvh));
       triangle_index[i] = nearest.index;
       sample_position[i] = nearest.co;
       if (!is_valid_span.is_empty()) {
@@ -236,15 +234,19 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(
-      &ntype, GEO_NODE_SAMPLE_NEAREST_SURFACE, "Sample Nearest Surface", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeSampleNearestSurface", GEO_NODE_SAMPLE_NEAREST_SURFACE);
+  ntype.ui_name = "Sample Nearest Surface";
+  ntype.ui_description =
+      "Calculate the interpolated value of a mesh attribute on the closest point of its surface";
+  ntype.enum_name_legacy = "SAMPLE_NEAREST_SURFACE";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.initfunc = node_init;
   ntype.declare = node_declare;
   blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
   ntype.gather_link_search_ops = node_gather_link_searches;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

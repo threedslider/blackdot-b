@@ -16,9 +16,7 @@
 
 #include <Python.h>
 
-#include "BLI_utildefines.h"
-
-#include "../generic/py_capi_utils.h"
+#include "../generic/py_capi_utils.hh"
 
 #include "GPU_select.hh"
 

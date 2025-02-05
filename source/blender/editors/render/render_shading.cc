@@ -25,7 +25,7 @@
 
 #include "BLI_listbase.h"
 #include "BLI_math_vector.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.h"
@@ -42,7 +42,7 @@
 #include "BKE_curve.hh"
 #include "BKE_editmesh.hh"
 #include "BKE_global.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
@@ -50,8 +50,10 @@
 #include "BKE_lightprobe.h"
 #include "BKE_linestyle.h"
 #include "BKE_main.hh"
-#include "BKE_material.h"
+#include "BKE_main_invariants.hh"
+#include "BKE_material.hh"
 #include "BKE_node.hh"
+#include "BKE_node_runtime.hh"
 #include "BKE_node_tree_update.hh"
 #include "BKE_object.hh"
 #include "BKE_report.hh"
@@ -396,7 +398,8 @@ static int material_slot_de_select(bContext *C, bool select)
       continue;
     }
 
-    short mat_nr_active = BKE_object_material_index_get(ob, mat_active);
+    const short mat_nr_active = BKE_object_material_index_get_with_hint(
+        ob, mat_active, obact ? obact->actcol - 1 : -1);
 
     if (mat_nr_active == -1) {
       continue;
@@ -763,7 +766,7 @@ static int new_material_exec(bContext *C, wmOperator * /*op*/)
   }
   else {
     const char *name = DATA_("Material");
-    if (!(ob != nullptr && ELEM(ob->type, OB_GPENCIL_LEGACY, OB_GREASE_PENCIL))) {
+    if (!(ob != nullptr && ob->type == OB_GREASE_PENCIL)) {
       ma = BKE_material_add(bmain, name);
     }
     else {
@@ -1237,19 +1240,19 @@ void SCENE_OT_view_layer_remove_lightgroup(wmOperatorType *ot)
 /** \name View Layer Add Used Lightgroups Operator
  * \{ */
 
-static GSet *get_used_lightgroups(Scene *scene)
+static blender::Set<blender::StringRefNull> get_used_lightgroups(Scene *scene)
 {
-  GSet *used_lightgroups = BLI_gset_str_new(__func__);
+  blender::Set<blender::StringRefNull> used_lightgroups;
 
   FOREACH_SCENE_OBJECT_BEGIN (scene, ob) {
     if (ob->lightgroup && ob->lightgroup->name[0]) {
-      BLI_gset_add(used_lightgroups, ob->lightgroup->name);
+      used_lightgroups.add_as(ob->lightgroup->name);
     }
   }
   FOREACH_SCENE_OBJECT_END;
 
   if (scene->world && scene->world->lightgroup && scene->world->lightgroup->name[0]) {
-    BLI_gset_add(used_lightgroups, scene->world->lightgroup->name);
+    used_lightgroups.add_as(scene->world->lightgroup->name);
   }
 
   return used_lightgroups;
@@ -1260,16 +1263,15 @@ static int view_layer_add_used_lightgroups_exec(bContext *C, wmOperator * /*op*/
   Scene *scene = CTX_data_scene(C);
   ViewLayer *view_layer = CTX_data_view_layer(C);
 
-  GSet *used_lightgroups = get_used_lightgroups(scene);
-  GSET_FOREACH_BEGIN (const char *, used_lightgroup, used_lightgroups) {
-    if (!BLI_findstring(
-            &view_layer->lightgroups, used_lightgroup, offsetof(ViewLayerLightgroup, name)))
+  blender::Set<blender::StringRefNull> used_lightgroups = get_used_lightgroups(scene);
+  for (const blender::StringRefNull used_lightgroup : used_lightgroups) {
+    if (!BLI_findstring(&view_layer->lightgroups,
+                        used_lightgroup.c_str(),
+                        offsetof(ViewLayerLightgroup, name)))
     {
-      BKE_view_layer_add_lightgroup(view_layer, used_lightgroup);
+      BKE_view_layer_add_lightgroup(view_layer, used_lightgroup.c_str());
     }
   }
-  GSET_FOREACH_END();
-  BLI_gset_free(used_lightgroups, nullptr);
 
   if (scene->nodetree) {
     ntreeCompositUpdateRLayers(scene->nodetree);
@@ -1307,13 +1309,12 @@ static int view_layer_remove_unused_lightgroups_exec(bContext *C, wmOperator * /
   Scene *scene = CTX_data_scene(C);
   ViewLayer *view_layer = CTX_data_view_layer(C);
 
-  GSet *used_lightgroups = get_used_lightgroups(scene);
+  blender::Set<blender::StringRefNull> used_lightgroups = get_used_lightgroups(scene);
   LISTBASE_FOREACH_MUTABLE (ViewLayerLightgroup *, lightgroup, &view_layer->lightgroups) {
-    if (!BLI_gset_haskey(used_lightgroups, lightgroup->name)) {
+    if (!used_lightgroups.contains_as(lightgroup->name)) {
       BKE_view_layer_remove_lightgroup(view_layer, lightgroup);
     }
   }
-  BLI_gset_free(used_lightgroups, nullptr);
 
   if (scene->nodetree) {
     ntreeCompositUpdateRLayers(scene->nodetree);
@@ -1642,7 +1643,7 @@ static int render_view_add_exec(bContext *C, wmOperator * /*op*/)
   WM_event_add_notifier(C, NC_SCENE | ND_RENDER_OPTIONS, scene);
 
   BKE_ntree_update_tag_id_changed(bmain, &scene->id);
-  ED_node_tree_propagate_change(C, bmain, nullptr);
+  BKE_main_ensure_invariants(*bmain);
 
   return OPERATOR_FINISHED;
 }
@@ -1681,7 +1682,7 @@ static int render_view_remove_exec(bContext *C, wmOperator * /*op*/)
   WM_event_add_notifier(C, NC_SCENE | ND_RENDER_OPTIONS, scene);
 
   BKE_ntree_update_tag_id_changed(bmain, &scene->id);
-  ED_node_tree_propagate_change(C, bmain, nullptr);
+  BKE_main_ensure_invariants(*bmain);
 
   return OPERATOR_FINISHED;
 }
@@ -2615,12 +2616,12 @@ static int copy_material_exec(bContext *C, wmOperator *op)
   PartialWriteContext copybuffer{BKE_main_blendfile_path(bmain)};
 
   /* Add the material to the copybuffer (and all of its dependencies). */
-  copybuffer.id_add(&ma->id,
-                    PartialWriteContext::IDAddOptions{PartialWriteContext::IDAddOperations(
-                        PartialWriteContext::IDAddOperations::SET_FAKE_USER |
-                        PartialWriteContext::IDAddOperations::SET_CLIPBOARD_MARK |
-                        PartialWriteContext::IDAddOperations::ADD_DEPENDENCIES)},
-                    nullptr);
+  copybuffer.id_add(
+      &ma->id,
+      PartialWriteContext::IDAddOptions{(PartialWriteContext::IDAddOperations::SET_FAKE_USER |
+                                         PartialWriteContext::IDAddOperations::SET_CLIPBOARD_MARK |
+                                         PartialWriteContext::IDAddOperations::ADD_DEPENDENCIES)},
+      nullptr);
 
   char filepath[FILE_MAX];
   material_copybuffer_filepath_get(filepath, sizeof(filepath));
@@ -2737,7 +2738,7 @@ static int paste_material_exec(bContext *C, wmOperator *op)
    * check for a property that marks this as the active material. */
   Material *ma_from = nullptr;
   LISTBASE_FOREACH (Material *, ma_iter, &temp_bmain->materials) {
-    if (ma_iter->id.flag & LIB_CLIPBOARD_MARK) {
+    if (ma_iter->id.flag & ID_FLAG_CLIPBOARD_MARK) {
       ma_from = ma_iter;
       break;
     }
@@ -2767,7 +2768,7 @@ static int paste_material_exec(bContext *C, wmOperator *op)
     BKE_library_foreach_ID_link(
         bmain, &nodetree->id, paste_material_nodetree_ids_decref, nullptr, IDWALK_NOP);
 
-    blender::bke::ntreeFreeEmbeddedTree(nodetree);
+    blender::bke::node_tree_free_embedded_tree(nodetree);
     MEM_freeN(nodetree);
     ma->nodetree = nullptr;
   }
@@ -2833,6 +2834,10 @@ static int paste_material_exec(bContext *C, wmOperator *op)
    * Always call instead of checking when it *might* be needed. */
   DEG_relations_tag_update(bmain);
 
+  /* There are some custom updates to the node tree above, better do a full update pass. */
+  BKE_ntree_update_tag_all(ma->nodetree);
+  BKE_main_ensure_invariants(*bmain);
+
   DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
   WM_event_add_notifier(C, NC_MATERIAL | ND_SHADING_LINKS, ma);
 
@@ -2848,6 +2853,7 @@ void MATERIAL_OT_paste(wmOperatorType *ot)
 
   /* api callbacks */
   ot->exec = paste_material_exec;
+  ot->poll = object_materials_supported_poll;
 
   /* flags */
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO | OPTYPE_INTERNAL;

@@ -21,13 +21,10 @@
 
 #pragma once
 
-#include "BLI_bitmap.h"
-#include "BLI_vector.hh"
 #include "DNA_light_types.h"
 
 #include "eevee_camera.hh"
 #include "eevee_sampling.hh"
-#include "eevee_shader.hh"
 #include "eevee_shader_shared.hh"
 #include "eevee_sync.hh"
 
@@ -49,7 +46,6 @@ struct Light : public LightData, NonCopyable {
   ShadowDirectional *directional = nullptr;
   ShadowPunctual *punctual = nullptr;
 
- public:
   Light()
   {
     /* Avoid valgrind warning. */
@@ -80,6 +76,7 @@ struct Light : public LightData, NonCopyable {
             float4x4 object_to_world,
             char visibility_flag,
             const ::Light *la,
+            const LightLinking *light_linking,
             float threshold);
 
   void shadow_ensure(ShadowModule &shadows);
@@ -95,7 +92,7 @@ struct Light : public LightData, NonCopyable {
                             const float3 &scale,
                             const float3 &z_axis,
                             float threshold,
-                            bool do_jitter);
+                            bool use_jitter);
   float shape_radiance_get();
   float point_radiance_get();
 };

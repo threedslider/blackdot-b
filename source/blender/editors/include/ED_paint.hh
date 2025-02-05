@@ -10,14 +10,18 @@
 
 #include "DNA_view3d_enums.h"
 
+#include <cstdint>
+
 enum class PaintMode : int8_t;
 struct bContext;
 struct bToolRef;
 struct Depsgraph;
 struct Image;
+struct ImageUndoStep;
 struct ImageUser;
 struct ImBuf;
 struct Main;
+struct Object;
 struct PaintModeSettings;
 struct PaintTileMap;
 struct ReportList;
@@ -38,7 +42,10 @@ void ED_keymap_paint(wmKeyConfig *keyconf);
 void ED_imapaint_clear_partial_redraw();
 void ED_imapaint_dirty_region(
     Image *ima, ImBuf *ibuf, ImageUser *iuser, int x, int y, int w, int h, bool find_old);
-void ED_imapaint_bucket_fill(bContext *C, float color[3], wmOperator *op, const int mouse[2]);
+void ED_imapaint_bucket_fill(bContext *C,
+                             const float color[3],
+                             wmOperator *op,
+                             const int mouse[2]);
 
 /* `paint_image_proj.cc` */
 
@@ -66,7 +73,10 @@ void ED_image_undo_push_begin_with_image(const char *name,
                                          Image *image,
                                          ImBuf *ibuf,
                                          ImageUser *iuser);
-
+void ED_image_undo_push_begin_with_image_all_udims(const char *name,
+                                                   Image *image,
+                                                   ImageUser *iuser);
+void ED_image_undo_push(Image *image, ImBuf *ibuf, ImageUser *iuser, ImageUndoStep *us);
 void ED_image_undo_push_end();
 /**
  * Restore painting image to previous state. Used for anchored and drag-dot style brushes.
@@ -126,10 +136,10 @@ eV3DShadingColorType ED_paint_shading_color_override(bContext *C,
  *
  * When #tref isn't given the active tool from the context is used.
  */
-bool ED_paint_tool_use_canvas(bContext *C, bToolRef *tref);
+bool ED_image_paint_brush_type_use_canvas(bContext *C, bToolRef *tref);
 
 /** Store the last used tool in the sculpt session. */
-void ED_paint_tool_update_sticky_shading_color(bContext *C, Object *ob);
+void ED_image_paint_brush_type_update_sticky_shading_color(bContext *C, Object *ob);
 
 void ED_object_vpaintmode_enter_ex(Main &bmain, Depsgraph &depsgraph, Scene &scene, Object &ob);
 void ED_object_vpaintmode_enter(bContext *C, Depsgraph &depsgraph);

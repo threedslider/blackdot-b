@@ -21,6 +21,7 @@
 #include "BLI_kdtree.h"
 #include "BLI_rect.h"
 
+#include "DNA_brush_types.h"
 #include "DNA_meshdata_types.h"
 
 #include "ED_grease_pencil.hh"
@@ -96,7 +97,7 @@ class WeightPaintOperation : public GreasePencilStrokeOperation {
   /* Set of locked vertex groups (object level). */
   Set<std::string> object_locked_defgroups;
 
-  ~WeightPaintOperation() override {}
+  ~WeightPaintOperation() override = default;
 
   /* Apply a weight to a point under the brush. */
   void apply_weight_to_point(const BrushPoint &point,
@@ -145,8 +146,32 @@ class WeightPaintOperation : public GreasePencilStrokeOperation {
   {
     int object_defgroup_nr = BKE_object_defgroup_active_index_get(this->object) - 1;
     if (object_defgroup_nr == -1) {
-      BKE_object_defgroup_add(this->object);
-      object_defgroup_nr = 0;
+      const ListBase *defbase = BKE_object_defgroup_list(this->object);
+      if (const Object *modob = BKE_modifiers_is_deformed_by_armature(this->object)) {
+        /* This happens on a Bone select, when no vgroup existed yet. */
+        const Bone *actbone = static_cast<bArmature *>(modob->data)->act_bone;
+        if (actbone) {
+          const bPoseChannel *pchan = BKE_pose_channel_find_name(modob->pose, actbone->name);
+
+          if (pchan) {
+            bDeformGroup *dg = BKE_object_defgroup_find_name(this->object, pchan->name);
+            if (dg == nullptr) {
+              dg = BKE_object_defgroup_add_name(this->object, pchan->name);
+              object_defgroup_nr = BLI_findindex(defbase, dg);
+            }
+            else {
+              const int actdef = BLI_findindex(defbase, dg);
+              BLI_assert(actdef >= 0);
+              this->grease_pencil->vertex_group_active_index = actdef + 1;
+              object_defgroup_nr = actdef;
+            }
+          }
+        }
+      }
+      if (BLI_listbase_is_empty(defbase)) {
+        BKE_object_defgroup_add(this->object);
+        object_defgroup_nr = 0;
+      }
     }
     this->object_defgroup = static_cast<bDeformGroup *>(
         BLI_findlink(BKE_object_defgroup_list(this->object), object_defgroup_nr));
@@ -207,7 +232,7 @@ class WeightPaintOperation : public GreasePencilStrokeOperation {
         }
 
         /* Convert stroke points to screen space positions. */
-        const bke::greasepencil::Layer &layer = *this->grease_pencil->layer(
+        const bke::greasepencil::Layer &layer = this->grease_pencil->layer(
             drawing_info.layer_index);
         const float4x4 layer_to_world = layer.to_world_space(*ob_eval);
         const float4x4 projection = ED_view3d_ob_project_mat_get_from_obmat(rv3d, layer_to_world);

@@ -1,9 +1,9 @@
 
 msgid ""
 msgstr ""
-"Project-Id-Version: Blender 4.2.0 Release Candidate (b'988bf2b88f3b')\n"
+"Project-Id-Version: Blender 4.4.0 Alpha (b'5c1749f7b7d3')\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-07-15 07:57+0000\n"
+"POT-Creation-Date: 2025-02-03 14:39+0000\n"
 "PO-Revision-Date: 2024-04-29 13:44+0000\n"
 "Last-Translator: Anonymous <noreply@weblate.org>\n"
 "Language-Team: Greek <https://translate.blender.org/projects/blender-ui/ui/el/>\n"
@@ -35,6 +35,14 @@ msgid "Select"
 msgstr "Επιλογή"
 
 
+msgid "Add"
+msgstr "Προσθήκη"
+
+
+msgid "Subtract"
+msgstr "Αφαίρεση"
+
+
 msgid "On"
 msgstr "Ενεργό"
 
@@ -49,14 +57,6 @@ msgstr "Κεντράρισμα"
 
 msgid "Action"
 msgstr "Δράση"
-
-
-msgid "Add"
-msgstr "Προσθήκη"
-
-
-msgid "Subtract"
-msgstr "Αφαίρεση"
 
 
 msgid "Hold"
@@ -81,10 +81,6 @@ msgstr "Πληροφ"
 
 msgid "Active Bone"
 msgstr "Ενεργό Οστό"
-
-
-msgid "All"
-msgstr "Όλα"
 
 
 msgid "Point"
@@ -147,12 +143,12 @@ msgid "Mode"
 msgstr "Κατάσταση"
 
 
+msgid "All"
+msgstr "Όλα"
+
+
 msgid "Fill"
 msgstr "Συμπλήρωμα"
-
-
-msgid "Draw"
-msgstr "Εμφάνιση"
 
 
 msgid "Crop"
@@ -347,30 +343,6 @@ msgid "Grid"
 msgstr "Πλέγμα"
 
 
-msgid "Edit Mode"
-msgstr "Κατάσταση Επεξεργασίας"
-
-
-msgid "Mirror"
-msgstr "Καθρέφτισμα"
-
-
-msgid "Subdivide"
-msgstr "Υποδιαίρεση"
-
-
-msgid "Lattice"
-msgstr "Πλέγμα"
-
-
-msgid "Shaded"
-msgstr "Με σκίαση"
-
-
-msgid "Merge"
-msgstr "Συγχώνευση"
-
-
 msgid "Repeat"
 msgstr "Repeat"
 
@@ -383,52 +355,20 @@ msgid "Blue"
 msgstr "Μπλε"
 
 
-msgid "Font"
-msgstr "Γραμματοσειρά"
-
-
-msgid "Key"
-msgstr "Κλειδί"
-
-
 msgid "Library"
 msgstr "Βιβλιοθήκη"
-
-
-msgid "Light"
-msgstr "Φως"
-
-
-msgid "Mesh"
-msgstr "Πολύγωνα"
-
-
-msgid "Metaball"
-msgstr "Μετα-σφαίρα"
-
-
-msgid "Sound"
-msgstr "Ήχος"
-
-
-msgid "Text"
-msgstr "Κείμενο"
-
-
-msgid "World"
-msgstr "Κόσμος"
 
 
 msgid "Wire"
 msgstr "Πλέγμα"
 
 
-msgid "Grab"
-msgstr "Μετακίνηση"
-
-
 msgid "Dynamic"
 msgstr "Δυναμικό"
+
+
+msgid "Draw"
+msgstr "Εμφάνιση"
 
 
 msgid "Sequence"
@@ -441,6 +381,10 @@ msgstr "Προεξοχή"
 
 msgid "Path"
 msgstr "Μονοπάτι"
+
+
+msgid "Font"
+msgstr "Γραμματοσειρά"
 
 
 msgid "Shear"
@@ -471,10 +415,6 @@ msgid "Cube"
 msgstr "Κύβος"
 
 
-msgid "Opaque"
-msgstr "Αδιαφανής"
-
-
 msgid "Edges"
 msgstr "Ακμές"
 
@@ -485,6 +425,10 @@ msgstr "Κορυφές"
 
 msgid "Edit"
 msgstr "Επεξεργασία"
+
+
+msgid "Mesh"
+msgstr "Πολύγωνα"
 
 
 msgid "Bounding Box"
@@ -511,12 +455,24 @@ msgid "Circle"
 msgstr "Κύκλος"
 
 
+msgid "Edit Mode"
+msgstr "Κατάσταση Επεξεργασίας"
+
+
 msgid "Vertex Paint"
 msgstr "Χρωματισμός κορυφών"
 
 
 msgid "Weight Paint"
 msgstr "Χρωματισμός Βάρους"
+
+
+msgid "Lattice"
+msgstr "Πλέγμα"
+
+
+msgid "Sound"
+msgstr "Ήχος"
 
 
 msgid "Blend"
@@ -529,10 +485,6 @@ msgstr "Σκληρό"
 
 msgid "Area"
 msgstr "Περιοχή"
-
-
-msgid "Sharp"
-msgstr "Απότομο"
 
 
 msgid "Themes"
@@ -567,20 +519,56 @@ msgid "Keyboard"
 msgstr "Πληκτρολόγιο"
 
 
-msgid "Track"
-msgstr "Ανίχνευση"
+msgid "Metaball"
+msgstr "Μετα-σφαίρα"
 
 
 msgid "Snap"
 msgstr "Προσκόλληση"
 
 
+msgid "Mirror"
+msgstr "Καθρέφτισμα"
+
+
 msgid "Select Linked"
 msgstr "Επιλογή Συνδεδεμένων"
 
 
+msgid "Light"
+msgstr "Φως"
+
+
+msgid "Rigid Body"
+msgstr "Rigid Body"
+
+
 msgid "Apply"
 msgstr "Εφαρμογή"
+
+
+msgid "Track"
+msgstr "Ανίχνευση"
+
+
+msgid "Make Single User"
+msgstr "Ορισμός Ενός Χρήστη"
+
+
+msgid "Merge"
+msgstr "Συγχώνευση"
+
+
+msgid "Text"
+msgstr "Κείμενο"
+
+
+msgid "Key"
+msgstr "Κλειδί"
+
+
+msgid "Import"
+msgstr "Εισαγωγή"
 
 
 msgid "Cache"
@@ -599,20 +587,12 @@ msgid "Export"
 msgstr "Εξαγωγή"
 
 
-msgid "Import"
-msgstr "Εισαγωγή"
-
-
 msgid "Help"
 msgstr "Βοήθεια"
 
 
-msgid "Make Single User"
-msgstr "Ορισμός Ενός Χρήστη"
-
-
-msgid "Rigid Body"
-msgstr "Rigid Body"
+msgid "Sharp"
+msgstr "Απότομο"
 
 
 msgid "Ball"
@@ -627,6 +607,10 @@ msgid "Wireframe"
 msgstr "Πλέγμα"
 
 
+msgid "Subdivide"
+msgstr "Υποδιαίρεση"
+
+
 msgid "Warp"
 msgstr "Δίνη"
 
@@ -637,6 +621,10 @@ msgstr "Κύμα"
 
 msgid "New"
 msgstr "Νέο"
+
+
+msgid "World"
+msgstr "Κόσμος"
 
 
 msgid "Lines"
@@ -744,25 +732,16 @@ msgid "Lamp"
 msgstr "Λάμπα"
 
 
+msgid "Keep Original"
+msgstr "Διατήρηση Αρχικού"
+
+
 msgid "Open"
 msgstr "Άνοιγμα"
 
 
-msgctxt "Operator"
-msgid "Rotate"
-msgstr "Rotate"
-
-
 msgid "Both"
 msgstr "Both"
-
-
-msgid "Join"
-msgstr "Ένωσε"
-
-
-msgid "Remove"
-msgstr "Remove"
 
 
 msgid "Next Keyframe"
@@ -771,6 +750,15 @@ msgstr "Επόμενο Καρέ με Κλειδί"
 
 msgid "Flat"
 msgstr "Επίπεδο"
+
+
+msgid "Join"
+msgstr "Ένωσε"
+
+
+msgctxt "Operator"
+msgid "Merge"
+msgstr "Συγχώνευση"
 
 
 msgctxt "Operator"
@@ -785,11 +773,6 @@ msgstr "Συμπλήρωμα"
 
 msgid "Ring"
 msgstr "Ring"
-
-
-msgctxt "Operator"
-msgid "Merge"
-msgstr "Συγχώνευση"
 
 
 msgid "Merge selected vertices"
@@ -879,10 +862,6 @@ msgid "Paste Pose"
 msgstr "Επικόλληση Στάσης"
 
 
-msgid "Keep Original"
-msgstr "Διατήρηση Αρχικού"
-
-
 msgctxt "Operator"
 msgid "Render"
 msgstr "Render"
@@ -900,6 +879,11 @@ msgstr "Αποθήκευση"
 msgctxt "Operator"
 msgid "Save As"
 msgstr "Αποθήκευση ως"
+
+
+msgctxt "Operator"
+msgid "Rotate"
+msgstr "Rotate"
 
 
 msgctxt "Operator"
@@ -934,6 +918,10 @@ msgid "Pan"
 msgstr "Ολίσθηση προβολής"
 
 
+msgid "Remove"
+msgstr "Remove"
+
+
 msgctxt "Operator"
 msgid "Quit Blender"
 msgstr "Έξοδος"
@@ -951,6 +939,10 @@ msgstr "Φόρτωση εργοστασιακών ρυθμίσεων"
 msgctxt "Operator"
 msgid "Recover Last Session"
 msgstr "Επαναφορά τελευταίας συνεδρίας"
+
+
+msgid "Shaded"
+msgstr "Με σκίαση"
 
 
 msgid "Sub"
@@ -989,16 +981,16 @@ msgid "Sky"
 msgstr "Ουρανός"
 
 
+msgid "Lens"
+msgstr "Φακός"
+
+
 msgid "Alpha Under"
 msgstr "Υποκάλυψη βάσει διαφάνειας"
 
 
 msgid "Gamma Cross"
 msgstr "Μετάβαση Γάμμα"
-
-
-msgid "Lens"
-msgstr "Φακός"
 
 
 msgid "Stencil"
@@ -1022,26 +1014,26 @@ msgid "Clear"
 msgstr "Καθαρισμός"
 
 
-msgid "Layer:"
-msgstr "Στρώμα"
-
-
 msgid "Cancel"
 msgstr "Ακύρωση"
 
 
-msgid "Fields"
-msgstr "Πεδία"
+msgid "Esc"
+msgstr "Esc"
 
 
 msgid "Movie"
 msgstr "Βίντεο"
 
 
+msgid "Fields"
+msgstr "Πεδία"
+
+
 msgid "Life"
 msgstr "Ζωή"
 
 
-msgid "Esc"
-msgstr "Esc"
+msgid "Layer:"
+msgstr "Στρώμα"
 

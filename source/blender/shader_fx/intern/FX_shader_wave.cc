@@ -6,17 +6,10 @@
  * \ingroup shader_fx
  */
 
-#include <cstdio>
-
-#include "DNA_gpencil_legacy_types.h"
-#include "DNA_object_types.h"
-#include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
 
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
-
-#include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
 
@@ -50,10 +43,10 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "orientation", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "amplitude", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "period", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "phase", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "orientation", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "amplitude", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "period", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "phase", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   shaderfx_panel_end(layout, ptr);
 }

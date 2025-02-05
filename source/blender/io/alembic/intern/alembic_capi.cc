@@ -10,14 +10,16 @@
 #include "IO_types.hh"
 
 #include <Alembic/AbcGeom/ILight.h>
+#include <Alembic/AbcGeom/INuPatch.h>
 #include <Alembic/AbcMaterial/IMaterial.h>
 
-#include "abc_axis_conversion.h"
 #include "abc_reader_archive.h"
 #include "abc_reader_camera.h"
 #include "abc_reader_curves.h"
 #include "abc_reader_mesh.h"
-#include "abc_reader_nurbs.h"
+#ifdef USE_NURBS
+#  include "abc_reader_nurbs.h"
+#endif
 #include "abc_reader_points.h"
 #include "abc_reader_transform.h"
 #include "abc_util.h"
@@ -44,7 +46,7 @@
 #include "BLI_compiler_compat.h"
 #include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_sort.hh"
 #include "BLI_span.hh"
 #include "BLI_string.h"
@@ -492,6 +494,7 @@ static void import_file(ImportJobData *data, const char *filepath, float progres
 
   data->archives.append(archive);
   data->settings.cache_file = cache_file;
+  data->settings.blender_archive_version_prior_44 = archive->is_blender_archive_version_prior_44();
 
   *data->do_update = true;
   *data->progress += 0.05f * progress_factor;
@@ -801,19 +804,19 @@ void ABC_get_transform(CacheReader *reader, float r_mat_world[4][4], double time
 
 /* ************************************************************************** */
 
-static AbcObjectReader *get_abc_reader(CacheReader *reader, Object *ob, const char **err_str)
+static AbcObjectReader *get_abc_reader(CacheReader *reader, Object *ob, const char **r_err_str)
 {
   AbcObjectReader *abc_reader = reinterpret_cast<AbcObjectReader *>(reader);
   IObject iobject = abc_reader->iobject();
 
   if (!iobject.valid()) {
-    *err_str = RPT_("Invalid object: verify object path");
+    *r_err_str = RPT_("Invalid object: verify object path");
     return nullptr;
   }
 
   const ObjectHeader &header = iobject.getHeader();
-  if (!abc_reader->accepts_object_type(header, ob, err_str)) {
-    /* err_str is set by acceptsObjectType() */
+  if (!abc_reader->accepts_object_type(header, ob, r_err_str)) {
+    /* r_err_str is set by acceptsObjectType() */
     return nullptr;
   }
 
@@ -831,29 +834,29 @@ void ABC_read_geometry(CacheReader *reader,
                        Object *ob,
                        blender::bke::GeometrySet &geometry_set,
                        const ABCReadParams *params,
-                       const char **err_str)
+                       const char **r_err_str)
 {
-  AbcObjectReader *abc_reader = get_abc_reader(reader, ob, err_str);
+  AbcObjectReader *abc_reader = get_abc_reader(reader, ob, r_err_str);
   if (abc_reader == nullptr) {
     return;
   }
 
   ISampleSelector sample_sel = sample_selector_for_time(params->time);
-  return abc_reader->read_geometry(geometry_set,
-                                   sample_sel,
-                                   params->read_flags,
-                                   params->velocity_name,
-                                   params->velocity_scale,
-                                   err_str);
+  abc_reader->read_geometry(geometry_set,
+                            sample_sel,
+                            params->read_flags,
+                            params->velocity_name,
+                            params->velocity_scale,
+                            r_err_str);
 }
 
 bool ABC_mesh_topology_changed(CacheReader *reader,
                                Object *ob,
                                const Mesh *existing_mesh,
                                const double time,
-                               const char **err_str)
+                               const char **r_err_str)
 {
-  AbcObjectReader *abc_reader = get_abc_reader(reader, ob, err_str);
+  AbcObjectReader *abc_reader = get_abc_reader(reader, ob, r_err_str);
   if (abc_reader == nullptr) {
     return false;
   }
@@ -872,12 +875,6 @@ void ABC_CacheReader_free(CacheReader *reader)
   if (abc_reader->refcount() == 0) {
     delete abc_reader;
   }
-}
-
-void ABC_CacheReader_incref(CacheReader *reader)
-{
-  AbcObjectReader *abc_reader = reinterpret_cast<AbcObjectReader *>(reader);
-  abc_reader->incref();
 }
 
 CacheReader *CacheReader_open_alembic_object(CacheArchiveHandle *handle,
@@ -905,6 +902,7 @@ CacheReader *CacheReader_open_alembic_object(CacheArchiveHandle *handle,
 
   ImportSettings settings;
   settings.is_sequence = is_sequence;
+  settings.blender_archive_version_prior_44 = archive->is_blender_archive_version_prior_44();
   AbcObjectReader *abc_reader = create_reader(iobject, settings);
   if (abc_reader == nullptr) {
     /* This object is not supported */

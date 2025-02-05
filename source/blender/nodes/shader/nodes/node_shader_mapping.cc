@@ -43,7 +43,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_mapping(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "vector_type", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "vector_type", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 }
 
 static const char *gpu_shader_get_name(int mode)
@@ -76,8 +76,8 @@ static int gpu_shader_mapping(GPUMaterial *mat,
 
 static void node_shader_update_mapping(bNodeTree *ntree, bNode *node)
 {
-  bNodeSocket *sock = bke::nodeFindSocket(node, SOCK_IN, "Location");
-  bke::nodeSetSocketAvailability(
+  bNodeSocket *sock = bke::node_find_socket(node, SOCK_IN, "Location");
+  bke::node_set_socket_availability(
       ntree, sock, ELEM(node->custom1, NODE_MAPPING_TYPE_POINT, NODE_MAPPING_TYPE_TEXTURE));
 }
 
@@ -121,12 +121,16 @@ void register_node_type_sh_mapping()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(&ntype, SH_NODE_MAPPING, "Mapping", NODE_CLASS_OP_VECTOR);
+  sh_node_type_base(&ntype, "ShaderNodeMapping", SH_NODE_MAPPING);
+  ntype.ui_name = "Mapping";
+  ntype.ui_description = "Transform the input vector by applying translation, rotation, and scale";
+  ntype.enum_name_legacy = "MAPPING";
+  ntype.nclass = NODE_CLASS_OP_VECTOR;
   ntype.declare = file_ns::node_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_mapping;
   ntype.gpu_fn = file_ns::gpu_shader_mapping;
   ntype.updatefunc = file_ns::node_shader_update_mapping;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

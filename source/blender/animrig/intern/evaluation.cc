@@ -4,14 +4,16 @@
 
 #include "ANIM_evaluation.hh"
 
-#include "RNA_access.hh"
-
 #include "BKE_animsys.h"
 #include "BKE_fcurve.hh"
 
 #include "BLI_map.hh"
 
+#include "CLG_log.h"
+
 #include "evaluation_internal.hh"
+
+static CLG_LogRef LOG = {"animrig.evaluation"};
 
 namespace blender::animrig {
 
@@ -35,10 +37,10 @@ void apply_evaluation_result(const EvaluationResult &evaluation_result,
                              PointerRNA &animated_id_ptr,
                              bool flush_to_original);
 
-static EvaluationResult evaluate_action(PointerRNA &animated_id_ptr,
-                                        Action &action,
-                                        const slot_handle_t slot_handle,
-                                        const AnimationEvalContext &anim_eval_context)
+EvaluationResult evaluate_action(PointerRNA &animated_id_ptr,
+                                 Action &action,
+                                 const slot_handle_t slot_handle,
+                                 const AnimationEvalContext &anim_eval_context)
 {
   EvaluationResult last_result;
 
@@ -49,7 +51,8 @@ static EvaluationResult evaluate_action(PointerRNA &animated_id_ptr,
       continue;
     }
 
-    auto layer_result = evaluate_layer(animated_id_ptr, *layer, slot_handle, anim_eval_context);
+    auto layer_result = evaluate_layer(
+        animated_id_ptr, action, *layer, slot_handle, anim_eval_context);
     if (!layer_result) {
       continue;
     }
@@ -130,12 +133,12 @@ static void animsys_write_orig_anim_rna(PointerRNA *ptr,
   }
 }
 
-static EvaluationResult evaluate_keyframe_strip(PointerRNA &animated_id_ptr,
-                                                KeyframeStrip &key_strip,
-                                                const slot_handle_t slot_handle,
-                                                const AnimationEvalContext &offset_eval_context)
+static EvaluationResult evaluate_keyframe_data(PointerRNA &animated_id_ptr,
+                                               StripKeyframeData &strip_data,
+                                               const slot_handle_t slot_handle,
+                                               const AnimationEvalContext &offset_eval_context)
 {
-  ChannelBag *channelbag_for_slot = key_strip.channelbag_for_slot(slot_handle);
+  Channelbag *channelbag_for_slot = strip_data.channelbag_for_slot(slot_handle);
   if (!channelbag_for_slot) {
     return {};
   }
@@ -152,10 +155,14 @@ static EvaluationResult evaluate_keyframe_strip(PointerRNA &animated_id_ptr,
     if (!BKE_animsys_rna_path_resolve(
             &animated_id_ptr, fcu->rna_path, fcu->array_index, &anim_rna))
     {
-      printf("Cannot resolve RNA path %s[%d] on ID %s\n",
-             fcu->rna_path,
-             fcu->array_index,
-             animated_id_ptr.owner_id->name);
+      /* Log this at quite a high level, because it can get _very_ noisy when playing back
+       * animation. */
+      CLOG_INFO(&LOG,
+                4,
+                "Cannot resolve RNA path %s[%d] on ID %s\n",
+                fcu->rna_path,
+                fcu->array_index,
+                animated_id_ptr.owner_id->name);
       continue;
     }
 
@@ -190,6 +197,7 @@ void apply_evaluation_result(const EvaluationResult &evaluation_result,
 }
 
 static EvaluationResult evaluate_strip(PointerRNA &animated_id_ptr,
+                                       Action &owning_action,
                                        Strip &strip,
                                        const slot_handle_t slot_handle,
                                        const AnimationEvalContext &anim_eval_context)
@@ -201,8 +209,8 @@ static EvaluationResult evaluate_strip(PointerRNA &animated_id_ptr,
 
   switch (strip.type()) {
     case Strip::Type::Keyframe: {
-      KeyframeStrip &key_strip = strip.as<KeyframeStrip>();
-      return evaluate_keyframe_strip(animated_id_ptr, key_strip, slot_handle, offset_eval_context);
+      StripKeyframeData &strip_data = strip.data<StripKeyframeData>(owning_action);
+      return evaluate_keyframe_data(animated_id_ptr, strip_data, slot_handle, offset_eval_context);
     }
   }
 
@@ -260,6 +268,7 @@ EvaluationResult blend_layer_results(const EvaluationResult &last_result,
 namespace internal {
 
 EvaluationResult evaluate_layer(PointerRNA &animated_id_ptr,
+                                Action &owning_action,
                                 Layer &layer,
                                 const slot_handle_t slot_handle,
                                 const AnimationEvalContext &anim_eval_context)
@@ -278,7 +287,7 @@ EvaluationResult evaluate_layer(PointerRNA &animated_id_ptr,
     }
 
     const EvaluationResult strip_result = evaluate_strip(
-        animated_id_ptr, *strip, slot_handle, anim_eval_context);
+        animated_id_ptr, owning_action, *strip, slot_handle, anim_eval_context);
     if (!strip_result) {
       continue;
     }

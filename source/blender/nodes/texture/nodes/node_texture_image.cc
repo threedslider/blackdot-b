@@ -6,7 +6,7 @@
  * \ingroup texnodes
  */
 
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BLI_math_vector.h"
 #include "BLI_threads.h"
 #include "IMB_imbuf.hh"
@@ -96,7 +96,10 @@ void register_node_type_tex_image()
 {
   static blender::bke::bNodeType ntype;
 
-  tex_node_type_base(&ntype, TEX_NODE_IMAGE, "Image", NODE_CLASS_INPUT);
+  tex_node_type_base(&ntype, "TextureNodeImage", TEX_NODE_IMAGE);
+  ntype.ui_name = "Image";
+  ntype.enum_name_legacy = "IMAGE";
+  ntype.nclass = NODE_CLASS_INPUT;
   blender::bke::node_type_socket_templates(&ntype, nullptr, outputs);
   ntype.initfunc = init;
   blender::bke::node_type_storage(
@@ -105,5 +108,5 @@ void register_node_type_tex_image()
   ntype.labelfunc = node_image_label;
   ntype.flag |= NODE_PREVIEW;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

@@ -14,13 +14,11 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_array_utils.h"
-#include "BLI_color.hh"
 #include "BLI_color_mix.hh"
+#include "BLI_enumerable_thread_specific.hh"
 #include "BLI_listbase.h"
 #include "BLI_math_base.hh"
 #include "BLI_rect.h"
-#include "BLI_string.h"
-#include "BLI_task.h"
 #include "BLI_task.hh"
 #include "BLI_vector.hh"
 
@@ -40,7 +38,6 @@
 #include "BKE_editmesh.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.hh"
-#include "BKE_mesh_mapping.hh"
 #include "BKE_object.hh"
 #include "BKE_object_deform.h"
 #include "BKE_paint.hh"
@@ -63,10 +60,13 @@
 /* For IMB_BlendMode only. */
 #include "IMB_imbuf.hh"
 
-#include "BKE_ccg.hh"
 #include "bmesh.hh"
 
+#include "RNA_define.hh"
+
+#include "mesh_brush_common.hh"
 #include "paint_intern.hh" /* own include */
+#include "sculpt_automask.hh"
 #include "sculpt_intern.hh"
 
 using namespace blender;
@@ -123,7 +123,7 @@ struct WPaintData : public PaintModeData {
   float *precomputed_weight;
   bool precomputed_weight_ready;
 
-  ~WPaintData()
+  ~WPaintData() override
   {
     MEM_SAFE_FREE(defbase_sel);
     MEM_SAFE_FREE(vgroup_validmap);
@@ -620,7 +620,7 @@ static void do_weight_paint_vertex_single(const VPaint &wp,
   }
 
   if (!vwpaint::brush_use_accumulate(wp)) {
-    MDeformVert *dvert_prev = ob.sculpt->mode.wpaint.dvert_prev;
+    MDeformVert *dvert_prev = ob.sculpt->mode.wpaint.dvert_prev.data();
     MDeformVert *dv_prev = defweight_prev_init(dvert_prev, wpi.dvert.data(), index);
     if (index_mirr != -1) {
       defweight_prev_init(dvert_prev, wpi.dvert.data(), index_mirr);
@@ -768,7 +768,7 @@ static void do_weight_paint_vertex_multi(const VPaint &wp,
   }
 
   if (!vwpaint::brush_use_accumulate(wp)) {
-    MDeformVert *dvert_prev = ob.sculpt->mode.wpaint.dvert_prev;
+    MDeformVert *dvert_prev = ob.sculpt->mode.wpaint.dvert_prev.data();
     MDeformVert *dv_prev = defweight_prev_init(dvert_prev, wpi.dvert.data(), index);
     if (index_mirr != -1) {
       defweight_prev_init(dvert_prev, wpi.dvert.data(), index_mirr);
@@ -999,12 +999,12 @@ static bool wpaint_stroke_test_start(bContext *C, wmOperator *op, const float mo
 
   /* Brush may have changed after initialization. */
   brush = BKE_paint_brush(&vp.paint);
-  if (ELEM(brush->weightpaint_tool, WPAINT_TOOL_SMEAR, WPAINT_TOOL_BLUR)) {
+  if (ELEM(brush->weight_brush_type, WPAINT_BRUSH_TYPE_SMEAR, WPAINT_BRUSH_TYPE_BLUR)) {
     wpd->precomputed_weight = (float *)MEM_mallocN(sizeof(float) * mesh.verts_num, __func__);
   }
 
-  if (ob.sculpt->mode.wpaint.dvert_prev != nullptr) {
-    MDeformVert *dv = ob.sculpt->mode.wpaint.dvert_prev;
+  if (!ob.sculpt->mode.wpaint.dvert_prev.is_empty()) {
+    MDeformVert *dv = ob.sculpt->mode.wpaint.dvert_prev.data();
     for (int i = 0; i < mesh.verts_num; i++, dv++) {
       /* Use to show this isn't initialized, never apply to the mesh data. */
       dv->flag = 1;
@@ -1062,32 +1062,47 @@ static void precompute_weight_values(
  * \{ */
 
 static void parallel_nodes_loop_with_mirror_check(const Mesh &mesh,
-                                                  const Span<PBVHNode *> nodes,
+                                                  const IndexMask &node_mask,
                                                   FunctionRef<void(IndexRange)> fn)
 {
   /* NOTE: current mirroring code cannot be run in parallel */
   if (ME_USING_MIRROR_X_VERTEX_GROUPS(&mesh)) {
-    fn(nodes.index_range());
+    fn(node_mask.index_range());
   }
   else {
-    threading::parallel_for(nodes.index_range(), 1, [&](const IndexRange range) { fn(range); });
+    threading::parallel_for(
+        node_mask.index_range(), 1, [&](const IndexRange range) { fn(range); });
   }
 }
 
-static void do_wpaint_brush_blur(const Scene &scene,
+static void filter_factors_with_selection(const Span<bool> select_vert,
+                                          const Span<int> verts,
+                                          const MutableSpan<float> factors)
+{
+  BLI_assert(verts.size() == factors.size());
+
+  for (const int i : verts.index_range()) {
+    if (!select_vert[verts[i]]) {
+      factors[i] = 0.0f;
+    }
+  }
+}
+
+static void do_wpaint_brush_blur(const Depsgraph &depsgraph,
+                                 const Scene &scene,
                                  Object &ob,
                                  const Brush &brush,
                                  VPaint &vp,
                                  WPaintData &wpd,
                                  const WeightPaintInfo &wpi,
                                  Mesh &mesh,
-                                 const Span<PBVHNode *> nodes)
+                                 const IndexMask &node_mask)
 {
   using namespace blender;
   SculptSession &ss = *ob.sculpt;
+  MutableSpan<bke::pbvh::MeshNode> nodes = bke::object::pbvh_get(ob)->nodes<bke::pbvh::MeshNode>();
+  const StrokeCache &cache = *ss.cache;
   const GroupedSpan<int> vert_to_face = mesh.vert_to_face_map();
-
-  const StrokeCache *cache = ss.cache;
 
   float brush_size_pressure, brush_alpha_value, brush_alpha_pressure;
   vwpaint::get_brush_alpha_data(
@@ -1096,16 +1111,13 @@ static void do_wpaint_brush_blur(const Scene &scene,
   const bool use_face_sel = (mesh.editflag & ME_EDIT_PAINT_FACE_SEL) != 0;
   const bool use_vert_sel = (mesh.editflag & ME_EDIT_PAINT_VERT_SEL) != 0;
 
-  SculptBrushTest test_init;
-  SculptBrushTestFn sculpt_brush_test_sq_fn = SCULPT_brush_test_init_with_falloff_shape(
-      ss, test_init, brush.falloff_shape);
   const float *sculpt_normal_frontface = SCULPT_brush_frontface_normal_from_falloff_shape(
       ss, brush.falloff_shape);
 
-  const Span<float3> vert_positions = BKE_pbvh_get_vert_positions(*ss.pbvh);
+  const Span<float3> vert_positions = bke::pbvh::vert_positions_eval(depsgraph, ob);
   const OffsetIndices faces = mesh.faces();
   const Span<int> corner_verts = mesh.corner_verts();
-  const Span<float3> vert_normals = BKE_pbvh_get_vert_normals(*ss.pbvh);
+  const Span<float3> vert_normals = bke::pbvh::vert_normals_eval(depsgraph, ob);
   const bke::AttributeAccessor attributes = mesh.attributes();
   const VArraySpan hide_vert = *attributes.lookup<bool>(".hide_vert", bke::AttrDomain::Point);
   VArraySpan<bool> select_vert;
@@ -1113,17 +1125,32 @@ static void do_wpaint_brush_blur(const Scene &scene,
     select_vert = *attributes.lookup<bool>(".select_vert", bke::AttrDomain::Point);
   }
 
-  parallel_nodes_loop_with_mirror_check(mesh, nodes, [&](const IndexRange range) {
-    SculptBrushTest test = test_init;
-    for (const int i : range) {
-      for (const int vert : bke::pbvh::node_unique_verts(*nodes[i])) {
-        if (!hide_vert.is_empty() && hide_vert[vert]) {
-          continue;
-        }
-        if (!select_vert.is_empty() && !select_vert[vert]) {
-          continue;
-        }
-        if (!sculpt_brush_test_sq_fn(test, vert_positions[vert])) {
+  struct LocalData {
+    Vector<float> factors;
+    Vector<float> distances;
+  };
+  threading::EnumerableThreadSpecific<LocalData> all_tls;
+  parallel_nodes_loop_with_mirror_check(mesh, node_mask, [&](const IndexRange range) {
+    LocalData &tls = all_tls.local();
+    node_mask.slice(range).foreach_index([&](const int i) {
+      const Span<int> verts = nodes[i].verts();
+      tls.factors.resize(verts.size());
+      const MutableSpan<float> factors = tls.factors;
+      fill_factor_from_hide(hide_vert, verts, factors);
+      if (!select_vert.is_empty()) {
+        filter_factors_with_selection(select_vert, verts, factors);
+      }
+
+      tls.distances.resize(verts.size());
+      const MutableSpan<float> distances = tls.distances;
+      calc_brush_distances(
+          ss, vert_positions, verts, eBrushFalloffShape(brush.falloff_shape), distances);
+      filter_distances_with_radius(cache.radius, distances, factors);
+      calc_brush_strength_factors(cache, brush, distances, factors);
+
+      for (const int i : verts.index_range()) {
+        const int vert = verts[i];
+        if (factors[i] == 0.0f) {
           continue;
         }
 
@@ -1141,7 +1168,7 @@ static void do_wpaint_brush_blur(const Scene &scene,
           continue;
         }
 
-        float brush_strength = cache->bstrength;
+        float brush_strength = cache.bstrength;
         const float angle_cos = use_normal ?
                                     dot_v3v3(sculpt_normal_frontface, vert_normals[vert]) :
                                     1.0f;
@@ -1151,8 +1178,7 @@ static void do_wpaint_brush_blur(const Scene &scene,
           continue;
         }
 
-        const float brush_fade = BKE_brush_curve_strength(&brush, sqrtf(test.dist), cache->radius);
-        const float final_alpha = brush_fade * brush_strength * brush_alpha_pressure;
+        const float final_alpha = factors[i] * brush_strength * brush_alpha_pressure;
 
         if ((brush.flag & BRUSH_ACCUMULATE) == 0) {
           if (ss.mode.wpaint.alpha_weight[vert] < final_alpha) {
@@ -1166,24 +1192,26 @@ static void do_wpaint_brush_blur(const Scene &scene,
         weight_final /= total_hit_loops;
         do_weight_paint_vertex(vp, ob, wpi, vert, final_alpha, weight_final);
       }
-    }
+    });
   });
 }
 
-static void do_wpaint_brush_smear(const Scene &scene,
+static void do_wpaint_brush_smear(const Depsgraph &depsgraph,
+                                  const Scene &scene,
                                   Object &ob,
                                   const Brush &brush,
                                   VPaint &vp,
                                   WPaintData &wpd,
                                   const WeightPaintInfo &wpi,
                                   Mesh &mesh,
-                                  const Span<PBVHNode *> nodes)
+                                  const IndexMask &node_mask)
 {
   using namespace blender;
   SculptSession &ss = *ob.sculpt;
+  MutableSpan<bke::pbvh::MeshNode> nodes = bke::object::pbvh_get(ob)->nodes<bke::pbvh::MeshNode>();
   const GroupedSpan<int> vert_to_face = mesh.vert_to_face_map();
-  const StrokeCache *cache = ss.cache;
-  if (!cache->is_last_valid) {
+  const StrokeCache &cache = *ss.cache;
+  if (!cache.is_last_valid) {
     return;
   }
 
@@ -1195,16 +1223,16 @@ static void do_wpaint_brush_smear(const Scene &scene,
   const bool use_vert_sel = (mesh.editflag & ME_EDIT_PAINT_VERT_SEL) != 0;
   float brush_dir[3];
 
-  sub_v3_v3v3(brush_dir, cache->location, cache->last_location);
-  project_plane_v3_v3v3(brush_dir, brush_dir, cache->view_normal);
+  sub_v3_v3v3(brush_dir, cache.location_symm, cache.last_location_symm);
+  project_plane_v3_v3v3(brush_dir, brush_dir, cache.view_normal_symm);
   if (normalize_v3(brush_dir) == 0.0f) {
     return;
   }
 
-  const Span<float3> vert_positions = BKE_pbvh_get_vert_positions(*ss.pbvh);
+  const Span<float3> vert_positions = bke::pbvh::vert_positions_eval(depsgraph, ob);
   const OffsetIndices faces = mesh.faces();
   const Span<int> corner_verts = mesh.corner_verts();
-  const Span<float3> vert_normals = BKE_pbvh_get_vert_normals(*ss.pbvh);
+  const Span<float3> vert_normals = bke::pbvh::vert_normals_eval(depsgraph, ob);
   const bke::AttributeAccessor attributes = mesh.attributes();
   const VArraySpan hide_vert = *attributes.lookup<bool>(".hide_vert", bke::AttrDomain::Point);
   VArraySpan<bool> select_vert;
@@ -1212,27 +1240,39 @@ static void do_wpaint_brush_smear(const Scene &scene,
     select_vert = *attributes.lookup<bool>(".select_vert", bke::AttrDomain::Point);
   }
 
-  SculptBrushTest test_init;
-  SculptBrushTestFn sculpt_brush_test_sq_fn = SCULPT_brush_test_init_with_falloff_shape(
-      ss, test_init, brush.falloff_shape);
   const float *sculpt_normal_frontface = SCULPT_brush_frontface_normal_from_falloff_shape(
       ss, brush.falloff_shape);
 
-  parallel_nodes_loop_with_mirror_check(mesh, nodes, [&](const IndexRange range) {
-    SculptBrushTest test = test_init;
-    for (const int i : range) {
-      for (const int vert : bke::pbvh::node_unique_verts(*nodes[i])) {
-        if (!hide_vert.is_empty() && hide_vert[vert]) {
-          continue;
-        }
-        if (!select_vert.is_empty() && !select_vert[vert]) {
-          continue;
-        }
-        if (!sculpt_brush_test_sq_fn(test, vert_positions[vert])) {
+  struct LocalData {
+    Vector<float> factors;
+    Vector<float> distances;
+  };
+  threading::EnumerableThreadSpecific<LocalData> all_tls;
+  parallel_nodes_loop_with_mirror_check(mesh, node_mask, [&](const IndexRange range) {
+    LocalData &tls = all_tls.local();
+    node_mask.slice(range).foreach_index([&](const int i) {
+      const Span<int> verts = nodes[i].verts();
+      tls.factors.resize(verts.size());
+      const MutableSpan<float> factors = tls.factors;
+      fill_factor_from_hide(hide_vert, verts, factors);
+      if (!select_vert.is_empty()) {
+        filter_factors_with_selection(select_vert, verts, factors);
+      }
+
+      tls.distances.resize(verts.size());
+      const MutableSpan<float> distances = tls.distances;
+      calc_brush_distances(
+          ss, vert_positions, verts, eBrushFalloffShape(brush.falloff_shape), distances);
+      filter_distances_with_radius(cache.radius, distances, factors);
+      calc_brush_strength_factors(cache, brush, distances, factors);
+
+      for (const int i : verts.index_range()) {
+        const int vert = verts[i];
+        if (factors[i] == 0.0f) {
           continue;
         }
 
-        float brush_strength = cache->bstrength;
+        float brush_strength = cache.bstrength;
         const float angle_cos = use_normal ?
                                     dot_v3v3(sculpt_normal_frontface, vert_normals[vert]) :
                                     1.0f;
@@ -1259,7 +1299,7 @@ static void do_wpaint_brush_smear(const Scene &scene,
             /* Get the direction from the selected vert to the neighbor. */
             float other_dir[3];
             sub_v3_v3v3(other_dir, vert_positions[vert], vert_positions[vert_other]);
-            project_plane_v3_v3v3(other_dir, other_dir, cache->view_normal);
+            project_plane_v3_v3v3(other_dir, other_dir, cache.view_normal_symm);
 
             normalize_v3(other_dir);
 
@@ -1274,22 +1314,16 @@ static void do_wpaint_brush_smear(const Scene &scene,
           if (!do_color) {
             continue;
           }
-          const float brush_fade = BKE_brush_curve_strength(
-              &brush, sqrtf(test.dist), cache->radius);
-          const float final_alpha = brush_fade * brush_strength * brush_alpha_pressure;
-
-          if (final_alpha <= 0.0f) {
-            continue;
-          }
-
-          do_weight_paint_vertex(vp, ob, wpi, vert, final_alpha, float(weight_final));
+          const float final_alpha = factors[i] * brush_strength * brush_alpha_pressure;
+          do_weight_paint_vertex(vp, ob, wpi, vert, final_alpha, weight_final);
         }
       }
-    }
+    });
   });
 }
 
-static void do_wpaint_brush_draw(const Scene &scene,
+static void do_wpaint_brush_draw(const Depsgraph &depsgraph,
+                                 const Scene &scene,
                                  Object &ob,
                                  const Brush &brush,
                                  VPaint &vp,
@@ -1297,12 +1331,13 @@ static void do_wpaint_brush_draw(const Scene &scene,
                                  const WeightPaintInfo &wpi,
                                  Mesh &mesh,
                                  const float strength,
-                                 const Span<PBVHNode *> nodes)
+                                 const IndexMask &node_mask)
 {
   using namespace blender;
   SculptSession &ss = *ob.sculpt;
+  MutableSpan<bke::pbvh::MeshNode> nodes = bke::object::pbvh_get(ob)->nodes<bke::pbvh::MeshNode>();
 
-  const StrokeCache *cache = ss.cache;
+  const StrokeCache &cache = *ss.cache;
   /* NOTE: normally `BKE_brush_weight_get(scene, brush)` is used,
    * however in this case we calculate a new weight each time. */
   const float paintweight = strength;
@@ -1313,14 +1348,11 @@ static void do_wpaint_brush_draw(const Scene &scene,
   const bool use_face_sel = (mesh.editflag & ME_EDIT_PAINT_FACE_SEL) != 0;
   const bool use_vert_sel = (mesh.editflag & ME_EDIT_PAINT_VERT_SEL) != 0;
 
-  SculptBrushTest test_init;
-  SculptBrushTestFn sculpt_brush_test_sq_fn = SCULPT_brush_test_init_with_falloff_shape(
-      ss, test_init, brush.falloff_shape);
   const float *sculpt_normal_frontface = SCULPT_brush_frontface_normal_from_falloff_shape(
       ss, brush.falloff_shape);
 
-  const Span<float3> vert_positions = BKE_pbvh_get_vert_positions(*ss.pbvh);
-  const Span<float3> vert_normals = BKE_pbvh_get_vert_normals(*ss.pbvh);
+  const Span<float3> vert_positions = bke::pbvh::vert_positions_eval(depsgraph, ob);
+  const Span<float3> vert_normals = bke::pbvh::vert_normals_eval(depsgraph, ob);
   const bke::AttributeAccessor attributes = mesh.attributes();
   const VArraySpan hide_vert = *attributes.lookup<bool>(".hide_vert", bke::AttrDomain::Point);
   VArraySpan<bool> select_vert;
@@ -1328,20 +1360,35 @@ static void do_wpaint_brush_draw(const Scene &scene,
     select_vert = *attributes.lookup<bool>(".select_vert", bke::AttrDomain::Point);
   }
 
-  parallel_nodes_loop_with_mirror_check(mesh, nodes, [&](const IndexRange range) {
-    SculptBrushTest test = test_init;
-    for (const int i : range) {
-      for (const int vert : bke::pbvh::node_unique_verts(*nodes[i])) {
-        if (!hide_vert.is_empty() && hide_vert[vert]) {
+  struct LocalData {
+    Vector<float> factors;
+    Vector<float> distances;
+  };
+  threading::EnumerableThreadSpecific<LocalData> all_tls;
+  parallel_nodes_loop_with_mirror_check(mesh, node_mask, [&](const IndexRange range) {
+    LocalData &tls = all_tls.local();
+    node_mask.slice(range).foreach_index([&](const int i) {
+      const Span<int> verts = nodes[i].verts();
+      tls.factors.resize(verts.size());
+      const MutableSpan<float> factors = tls.factors;
+      fill_factor_from_hide(hide_vert, verts, factors);
+      if (!select_vert.is_empty()) {
+        filter_factors_with_selection(select_vert, verts, factors);
+      }
+
+      tls.distances.resize(verts.size());
+      const MutableSpan<float> distances = tls.distances;
+      calc_brush_distances(
+          ss, vert_positions, verts, eBrushFalloffShape(brush.falloff_shape), distances);
+      filter_distances_with_radius(cache.radius, distances, factors);
+      calc_brush_strength_factors(cache, brush, distances, factors);
+
+      for (const int i : verts.index_range()) {
+        const int vert = verts[i];
+        if (factors[i] == 0.0f) {
           continue;
         }
-        if (!select_vert.is_empty() && !select_vert[vert]) {
-          continue;
-        }
-        if (!sculpt_brush_test_sq_fn(test, vert_positions[vert])) {
-          continue;
-        }
-        float brush_strength = cache->bstrength;
+        float brush_strength = cache.bstrength;
         const float angle_cos = use_normal ?
                                     dot_v3v3(sculpt_normal_frontface, vert_normals[vert]) :
                                     1.0f;
@@ -1350,8 +1397,7 @@ static void do_wpaint_brush_draw(const Scene &scene,
         {
           continue;
         }
-        const float brush_fade = BKE_brush_curve_strength(&brush, sqrtf(test.dist), cache->radius);
-        const float final_alpha = brush_fade * brush_strength * brush_alpha_pressure;
+        const float final_alpha = factors[i] * brush_strength * brush_alpha_pressure;
 
         if ((brush.flag & BRUSH_ACCUMULATE) == 0) {
           if (ss.mode.wpaint.alpha_weight[vert] < final_alpha) {
@@ -1364,33 +1410,32 @@ static void do_wpaint_brush_draw(const Scene &scene,
 
         do_weight_paint_vertex(vp, ob, wpi, vert, final_alpha, paintweight);
       }
-    }
+    });
   });
 }
 
-static float calculate_average_weight(Object &ob,
+static float calculate_average_weight(const Depsgraph &depsgraph,
+                                      Object &ob,
                                       const Mesh &mesh,
                                       const Brush &brush,
                                       const VPaint &vp,
                                       WeightPaintInfo &wpi,
-                                      const Span<PBVHNode *> nodes)
+                                      const IndexMask &node_mask)
 {
   using namespace blender;
   SculptSession &ss = *ob.sculpt;
-  StrokeCache *cache = ss.cache;
+  MutableSpan<bke::pbvh::MeshNode> nodes = bke::object::pbvh_get(ob)->nodes<bke::pbvh::MeshNode>();
+  const StrokeCache &cache = *ss.cache;
 
   const bool use_normal = vwpaint::use_normal(vp);
   const bool use_face_sel = (mesh.editflag & ME_EDIT_PAINT_FACE_SEL) != 0;
   const bool use_vert_sel = (mesh.editflag & ME_EDIT_PAINT_VERT_SEL) != 0;
 
-  SculptBrushTest test;
-  SculptBrushTestFn sculpt_brush_test_sq_fn = SCULPT_brush_test_init_with_falloff_shape(
-      ss, test, brush.falloff_shape);
   const float *sculpt_normal_frontface = SCULPT_brush_frontface_normal_from_falloff_shape(
       ss, brush.falloff_shape);
 
-  const Span<float3> vert_positions = BKE_pbvh_get_vert_positions(*ss.pbvh);
-  const Span<float3> vert_normals = BKE_pbvh_get_vert_normals(*ss.pbvh);
+  const Span<float3> vert_positions = bke::pbvh::vert_positions_eval(depsgraph, ob);
+  const Span<float3> vert_normals = bke::pbvh::vert_normals_eval(depsgraph, ob);
   const bke::AttributeAccessor attributes = mesh.attributes();
   const VArraySpan hide_vert = *attributes.lookup<bool>(".hide_vert", bke::AttrDomain::Point);
   VArraySpan<bool> select_vert;
@@ -1398,37 +1443,49 @@ static float calculate_average_weight(Object &ob,
     select_vert = *attributes.lookup<bool>(".select_vert", bke::AttrDomain::Point);
   }
 
+  struct LocalData {
+    Vector<float> factors;
+    Vector<float> distances;
+  };
+  threading::EnumerableThreadSpecific<LocalData> all_tls;
   const WPaintAverageAccum value = threading::parallel_reduce(
-      nodes.index_range(),
+      node_mask.index_range(),
       1,
       WPaintAverageAccum{},
       [&](const IndexRange range, WPaintAverageAccum accum) {
-        for (const int i : range) {
-          for (const int vert : bke::pbvh::node_unique_verts(*nodes[i])) {
-            if (!hide_vert.is_empty() && hide_vert[vert]) {
-              continue;
-            }
-            if (!select_vert.is_empty() && !select_vert[vert]) {
-              continue;
-            }
-            if (!sculpt_brush_test_sq_fn(test, vert_positions[vert])) {
-              continue;
-            }
+        LocalData &tls = all_tls.local();
+        node_mask.slice(range).foreach_index([&](const int i) {
+          const Span<int> verts = nodes[i].verts();
+          tls.factors.resize(verts.size());
+          const MutableSpan<float> factors = tls.factors;
+          fill_factor_from_hide(hide_vert, verts, factors);
+          if (!select_vert.is_empty()) {
+            filter_factors_with_selection(select_vert, verts, factors);
+          }
 
+          tls.distances.resize(verts.size());
+          const MutableSpan<float> distances = tls.distances;
+          calc_brush_distances(
+              ss, vert_positions, verts, eBrushFalloffShape(brush.falloff_shape), distances);
+          filter_distances_with_radius(cache.radius, distances, factors);
+          calc_brush_strength_factors(cache, brush, distances, factors);
+
+          for (const int i : verts.index_range()) {
+            const int vert = verts[i];
+            if (factors[i] == 0.0f) {
+              continue;
+            }
             const float angle_cos = use_normal ?
                                         dot_v3v3(sculpt_normal_frontface, vert_normals[vert]) :
                                         1.0f;
-            if (angle_cos <= 0.0f ||
-                BKE_brush_curve_strength(&brush, sqrtf(test.dist), cache->radius) <= 0.0f)
-            {
+            if (angle_cos <= 0.0f) {
               continue;
             }
-
             const MDeformVert &dv = wpi.dvert[vert];
             accum.len++;
             accum.value += wpaint_get_active_weight(dv, wpi);
           }
-        }
+        });
         return accum;
       },
       [](const WPaintAverageAccum &a, const WPaintAverageAccum &b) {
@@ -1443,33 +1500,44 @@ static void wpaint_paint_leaves(bContext *C,
                                 WPaintData &wpd,
                                 WeightPaintInfo &wpi,
                                 Mesh &mesh,
-                                const Span<PBVHNode *> nodes)
+                                const IndexMask &node_mask)
 {
   const Scene &scene = *CTX_data_scene(C);
   const Brush &brush = *ob.sculpt->cache->brush;
+  const Depsgraph &depsgraph = *CTX_data_depsgraph_pointer(C);
 
-  switch ((eBrushWeightPaintTool)brush.weightpaint_tool) {
-    case WPAINT_TOOL_AVERAGE: {
-      do_wpaint_brush_draw(scene,
+  switch ((eBrushWeightPaintType)brush.weight_brush_type) {
+    case WPAINT_BRUSH_TYPE_AVERAGE: {
+      do_wpaint_brush_draw(
+          depsgraph,
+          scene,
+          ob,
+          brush,
+          vp,
+          wpd,
+          wpi,
+          mesh,
+          calculate_average_weight(depsgraph, ob, mesh, brush, vp, wpi, node_mask),
+          node_mask);
+      break;
+    }
+    case WPAINT_BRUSH_TYPE_SMEAR:
+      do_wpaint_brush_smear(depsgraph, scene, ob, brush, vp, wpd, wpi, mesh, node_mask);
+      break;
+    case WPAINT_BRUSH_TYPE_BLUR:
+      do_wpaint_brush_blur(depsgraph, scene, ob, brush, vp, wpd, wpi, mesh, node_mask);
+      break;
+    case WPAINT_BRUSH_TYPE_DRAW:
+      do_wpaint_brush_draw(depsgraph,
+                           scene,
                            ob,
                            brush,
                            vp,
                            wpd,
                            wpi,
                            mesh,
-                           calculate_average_weight(ob, mesh, brush, vp, wpi, nodes),
-                           nodes);
-      break;
-    }
-    case WPAINT_TOOL_SMEAR:
-      do_wpaint_brush_smear(scene, ob, brush, vp, wpd, wpi, mesh, nodes);
-      break;
-    case WPAINT_TOOL_BLUR:
-      do_wpaint_brush_blur(scene, ob, brush, vp, wpd, wpi, mesh, nodes);
-      break;
-    case WPAINT_TOOL_DRAW:
-      do_wpaint_brush_draw(
-          scene, ob, brush, vp, wpd, wpi, mesh, BKE_brush_weight_get(&scene, &brush), nodes);
+                           BKE_brush_weight_get(&scene, &brush),
+                           node_mask);
       break;
   }
 }
@@ -1632,13 +1700,15 @@ static void wpaint_do_paint(bContext *C,
                             const int i,
                             const float angle)
 {
+  const Depsgraph &depsgraph = *CTX_data_depsgraph_pointer(C);
   SculptSession &ss = *ob.sculpt;
   ss.cache->radial_symmetry_pass = i;
   SCULPT_cache_calc_brushdata_symm(*ss.cache, symm, axis, angle);
 
-  Vector<PBVHNode *> nodes = vwpaint::pbvh_gather_generic(ob, wp, brush);
+  IndexMaskMemory memory;
+  const IndexMask node_mask = vwpaint::pbvh_gather_generic(depsgraph, ob, wp, brush, memory);
 
-  wpaint_paint_leaves(C, ob, wp, wpd, wpi, mesh, nodes);
+  wpaint_paint_leaves(C, ob, wp, wpd, wpi, mesh, node_mask);
 }
 
 static void wpaint_do_radial_symmetry(bContext *C,
@@ -1680,7 +1750,7 @@ static void wpaint_do_symmetrical_brush_actions(
 
   if (mesh.editflag & ME_EDIT_MIRROR_VERTEX_GROUPS) {
     /* We don't do any symmetry strokes when mirroring vertex groups. */
-    copy_v3_v3(cache.true_last_location, cache.true_location);
+    copy_v3_v3(cache.last_location, cache.location);
     cache.is_last_valid = true;
     return;
   }
@@ -1708,12 +1778,12 @@ static void wpaint_do_symmetrical_brush_actions(
       }
     }
   }
-  copy_v3_v3(cache.true_last_location, cache.true_location);
+  copy_v3_v3(cache.last_location, cache.location);
   cache.is_last_valid = true;
 }
 
 static void wpaint_stroke_update_step(bContext *C,
-                                      wmOperator * /*op*/,
+                                      wmOperator *op,
                                       PaintStroke *stroke,
                                       PointerRNA *itemptr)
 {
@@ -1746,7 +1816,7 @@ static void wpaint_stroke_update_step(bContext *C,
   vc = &wpd->vc;
   ob = vc->obact;
 
-  view3d_operator_needs_opengl(C);
+  view3d_operator_needs_gpu(C);
   ED_view3d_init_mats_rv3d(ob, vc->rv3d);
 
   mul_m4_m4m4(mat, vc->rv3d->persmat, ob->object_to_world().ptr());
@@ -1767,7 +1837,7 @@ static void wpaint_stroke_update_step(bContext *C,
   wpi.vgroup_validmap = wpd->vgroup_validmap;
   wpi.vgroup_locked = wpd->vgroup_locked;
   wpi.vgroup_unlocked = wpd->vgroup_unlocked;
-  wpi.do_flip = RNA_boolean_get(itemptr, "pen_flip") || ss.cache->invert;
+  wpi.do_flip = RNA_boolean_get(op->ptr, "pen_flip") || ss.cache->invert;
   wpi.do_multipaint = wpd->do_multipaint;
   wpi.do_auto_normalize = ((ts.auto_normalize != 0) && (wpi.vgroup_validmap != nullptr) &&
                            (wpi.do_multipaint || wpi.vgroup_validmap[wpi.active.index]));
@@ -1786,7 +1856,7 @@ static void wpaint_stroke_update_step(bContext *C,
   /* Calculate pivot for rotation around selection if needed.
    * also needed for "Frame Selected" on last stroke. */
   float loc_world[3];
-  mul_v3_m4v3(loc_world, ob->object_to_world().ptr(), ss.cache->true_location);
+  mul_v3_m4v3(loc_world, ob->object_to_world().ptr(), ss.cache->location);
   vwpaint::last_stroke_update(scene, loc_world);
 
   BKE_mesh_batch_cache_dirty_tag(&mesh, BKE_MESH_BATCH_DIRTY_ALL);
@@ -1918,6 +1988,14 @@ void PAINT_OT_weight_paint(wmOperatorType *ot)
   ot->flag = OPTYPE_UNDO | OPTYPE_BLOCKING;
 
   paint_stroke_operator_properties(ot);
+  PropertyRNA *prop = RNA_def_boolean(
+      ot->srna,
+      "override_location",
+      false,
+      "Override Location",
+      "Override the given `location` array by recalculating object space positions from the "
+      "provided `mouse_event` positions");
+  RNA_def_property_flag(prop, PropertyFlag(PROP_HIDDEN | PROP_SKIP_SAVE));
 }
 
 /** \} */

@@ -4,10 +4,10 @@
 
 #pragma once
 
-#include <optional>
 #include <type_traits>
 #include <utility>
 
+#include "BLI_build_config.h"
 #include "BLI_utildefines.h"
 
 /** \file
@@ -67,8 +67,6 @@
  *   some_function([]() { return 0; });
  */
 
-#include "BLI_memory_utils.hh"
-
 namespace blender {
 
 template<typename Function> class FunctionRef;
@@ -119,6 +117,27 @@ template<typename Ret, typename... Params> class FunctionRef<Ret(Params...)> {
       : callback_(callback_fn<typename std::remove_reference_t<Callable>>),
         callable_(intptr_t(&callable))
   {
+    if constexpr (std::is_constructible_v<bool, Callable>) {
+      /* For some types, the compiler can be sure that the callable is always truthy. Good!
+       * Then the entire check can be optimized away. */
+#if COMPILER_CLANG || COMPILER_GCC
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Waddress"
+#  if COMPILER_GCC
+#    pragma GCC diagnostic ignored "-Wnonnull-compare"
+#  endif
+#endif
+      /* Make sure the #FunctionRef is falsy if the callback is falsy.
+       * That can happen when passing in null or empty std::function. */
+      const bool is_truthy = bool(callable);
+      if (!is_truthy) {
+        callback_ = nullptr;
+        callable_ = 0;
+      }
+#if COMPILER_CLANG || COMPILER_GCC
+#  pragma GCC diagnostic pop
+#endif
+    }
   }
 
   /**
@@ -130,29 +149,6 @@ template<typename Ret, typename... Params> class FunctionRef<Ret(Params...)> {
   {
     BLI_assert(callback_ != nullptr);
     return callback_(callable_, std::forward<Params>(params)...);
-  }
-
-  using OptionalReturnValue = std::conditional_t<std::is_void_v<Ret>, void, std::optional<Ret>>;
-
-  /**
-   * Calls the referenced function if it is available.
-   * The return value is of type `std::optional<Ret>` if `Ret` is not `void`.
-   * Otherwise the return type is `void`.
-   */
-  OptionalReturnValue call_safe(Params... params) const
-  {
-    if constexpr (std::is_void_v<Ret>) {
-      if (callback_ == nullptr) {
-        return;
-      }
-      callback_(callable_, std::forward<Params>(params)...);
-    }
-    else {
-      if (callback_ == nullptr) {
-        return {};
-      }
-      return callback_(callable_, std::forward<Params>(params)...);
-    }
   }
 
   /**

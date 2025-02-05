@@ -7,11 +7,9 @@
  */
 #pragma once
 
-#include "BLI_sys_types.h"
-
 #include "GHOST_Types.h"
 
-#include "GPU_context.hh"
+#include "GPU_platform_backend_enum.h"
 
 struct bContext;
 
@@ -31,3 +29,4 @@ void WM_ghost_show_message_box(const char *title,
 GHOST_TDrawingContextType wm_ghost_drawing_context_type(const eGPUBackendType gpu_backend);
 
 void wm_test_opengl_deprecation_warning(bContext *C);
+void wm_test_gpu_backend_fallback(bContext *C);

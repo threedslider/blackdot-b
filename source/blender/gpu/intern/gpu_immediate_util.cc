@@ -8,7 +8,6 @@
  * GPU immediate mode drawing utilities
  */
 
-#include <cstdio>
 #include <cstring>
 
 #include "BLI_math_rotation.h"
@@ -674,7 +673,7 @@ void imm_draw_cylinder_fill_3d(
 }
 
 /* Circle Drawing - Tables for Optimized Drawing Speed */
-#define CIRCLE_RESOL 32
+constexpr static int CIRCLE_RESOL = 32;
 
 static void circball_array_fill(const float verts[CIRCLE_RESOL][3],
                                 const float cent[3],

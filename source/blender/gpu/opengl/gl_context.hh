@@ -47,7 +47,6 @@ class GLContext : public Context {
 
   /** Extensions. */
 
-  static bool clear_texture_support;
   static bool debug_layer_support;
   static bool direct_state_access_support;
   static bool explicit_location_support;
@@ -67,12 +66,11 @@ class GLContext : public Context {
   static bool debug_layer_workaround;
   static bool unused_fb_slot_workaround;
   static bool generate_mipmap_workaround;
-  static float derivative_signs[2];
 
   /** VBO for missing vertex attribute binding. Avoid undefined behavior on some implementation. */
   GLuint default_attr_vbo_;
 
-  /** Used for debugging purpose. Bitflags of all bound slots. */
+  /** Used for debugging purpose. Bit-flags of all bound slots. */
   uint16_t bound_ubo_slots;
   uint16_t bound_ssbo_slots;
 

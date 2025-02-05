@@ -64,19 +64,18 @@ static void node_geo_exec(GeoNodeExecParams params)
   const AttrDomain domain = AttrDomain(storage.domain);
   const GeometryNodeDeleteGeometryMode mode = (GeometryNodeDeleteGeometryMode)storage.mode;
 
-  const AnonymousAttributePropagationInfo &propagation_info = params.get_output_propagation_info(
-      "Geometry");
+  const NodeAttributeFilter &attribute_filter = params.get_attribute_filter("Geometry");
 
   if (domain == AttrDomain::Instance) {
     bool is_error;
-    geometry::separate_geometry(geometry_set, domain, mode, selection, propagation_info, is_error);
+    geometry::separate_geometry(geometry_set, domain, mode, selection, attribute_filter, is_error);
   }
   else {
     geometry_set.modify_geometry_sets([&](GeometrySet &geometry_set) {
       bool is_error;
       /* Invert here because we want to keep the things not in the selection. */
       geometry::separate_geometry(
-          geometry_set, domain, mode, selection, propagation_info, is_error);
+          geometry_set, domain, mode, selection, attribute_filter, is_error);
     });
   }
 
@@ -113,8 +112,11 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_DELETE_GEOMETRY, "Delete Geometry", NODE_CLASS_GEOMETRY);
-
+  geo_node_type_base(&ntype, "GeometryNodeDeleteGeometry", GEO_NODE_DELETE_GEOMETRY);
+  ntype.ui_name = "Delete Geometry";
+  ntype.ui_description = "Remove selected elements of a geometry";
+  ntype.enum_name_legacy = "DELETE_GEOMETRY";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   blender::bke::node_type_storage(&ntype,
                                   "NodeGeometryDeleteGeometry",
                                   node_free_standard_storage,
@@ -124,7 +126,7 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

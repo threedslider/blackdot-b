@@ -21,7 +21,7 @@
 #include "BKE_context.hh"
 #include "BKE_customdata.hh"
 #include "BKE_editmesh.hh"
-#include "BKE_editmesh_bvh.h"
+#include "BKE_editmesh_bvh.hh"
 #include "BKE_layer.hh"
 #include "BKE_mesh.hh"
 #include "BKE_mesh_mapping.hh"
@@ -260,6 +260,25 @@ bool EDBM_op_call_silentf(BMEditMesh *em, const char *fmt, ...)
  * Make/Clear/Free functions.
  * \{ */
 
+/**
+ * Return a 1-based index compatible with #Object::shapenr,
+ * ensuring the "Basis" index is *always* returned when the mesh has any shape keys.
+ *
+ * In this case it's important entering and exiting edit-mode both behave
+ * as if the basis shape key is active, see: #42360, #43998.
+ *
+ * \note While this could be handled by versioning, there is still the potential for
+ * the value to become zero at run-time, so clamp it at the point of toggling edit-mode.
+ */
+static int object_shapenr_basis_index_ensured(const Object *ob)
+{
+  const Mesh *mesh = static_cast<const Mesh *>(ob->data);
+  if (UNLIKELY((ob->shapenr == 0) && (mesh->key && !BLI_listbase_is_empty(&mesh->key->block)))) {
+    return 1;
+  }
+  return ob->shapenr;
+}
+
 void EDBM_mesh_make(Object *ob, const int select_mode, const bool add_key_index)
 {
   Mesh *mesh = static_cast<Mesh *>(ob->data);
@@ -274,7 +293,10 @@ void EDBM_mesh_make_from_mesh(Object *ob,
   Mesh *mesh = static_cast<Mesh *>(ob->data);
   BMeshCreateParams create_params{};
   create_params.use_toolflags = true;
-  BMesh *bm = BKE_mesh_to_bmesh(src_mesh, ob, add_key_index, &create_params);
+  /* Clamp the index, so the behavior of enter & exit edit-mode matches, see #43998. */
+  const int shapenr = object_shapenr_basis_index_ensured(ob);
+
+  BMesh *bm = BKE_mesh_to_bmesh(src_mesh, shapenr, add_key_index, &create_params);
 
   if (mesh->runtime->edit_mesh) {
     /* this happens when switching shape keys */
@@ -301,7 +323,7 @@ void EDBM_mesh_load_ex(Main *bmain, Object *ob, bool free_data)
 
   /* Workaround for #42360, 'ob->shapenr' should be 1 in this case.
    * however this isn't synchronized between objects at the moment. */
-  if (UNLIKELY((ob->shapenr == 0) && (mesh->key && !BLI_listbase_is_empty(&mesh->key->block)))) {
+  if (UNLIKELY((ob->shapenr == 0) && (object_shapenr_basis_index_ensured(ob) > 0))) {
     bm->shapenr = 1;
   }
 
@@ -1825,7 +1847,7 @@ BMElem *EDBM_elem_from_index_any_multi(const Scene *scene,
  * \{ */
 
 static BMFace *edge_ray_cast(
-    BMBVHTree *tree, const float co[3], const float dir[3], float *r_hitout, BMEdge *e)
+    const BMBVHTree *tree, const float co[3], const float dir[3], float *r_hitout, const BMEdge *e)
 {
   BMFace *f = BKE_bmbvh_ray_cast(tree, co, dir, 0.0f, nullptr, r_hitout, nullptr);
 
@@ -1843,8 +1865,12 @@ static void scale_point(float c1[3], const float p[3], const float s)
   add_v3_v3(c1, p);
 }
 
-bool BMBVH_EdgeVisible(
-    BMBVHTree *tree, BMEdge *e, Depsgraph *depsgraph, ARegion *region, View3D *v3d, Object *obedit)
+bool BMBVH_EdgeVisible(const BMBVHTree *tree,
+                       const BMEdge *e,
+                       const Depsgraph *depsgraph,
+                       const ARegion *region,
+                       const View3D *v3d,
+                       const Object *obedit)
 {
   BMFace *f;
   float co1[3], co2[3], co3[3], dir1[3], dir2[3], dir3[3];
@@ -1939,7 +1965,7 @@ void EDBM_project_snap_verts(
         SnapObjectParams params{};
         params.snap_target_select = target_op;
         params.edit_mode_type = SNAP_GEOM_FINAL;
-        params.use_occlusion_test = true;
+        params.occlusion_test = SNAP_OCCLUSION_AS_SEEM;
         if (ED_transform_snap_object_project_view3d(snap_context,
                                                     depsgraph,
                                                     region,

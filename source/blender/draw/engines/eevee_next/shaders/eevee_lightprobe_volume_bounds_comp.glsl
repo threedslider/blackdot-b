@@ -9,20 +9,24 @@
  * - capture_info_buf
  */
 
-#pragma BLENDER_REQUIRE(gpu_shader_utildefines_lib.glsl)
-#pragma BLENDER_REQUIRE(draw_intersect_lib.glsl)
-#pragma BLENDER_REQUIRE(eevee_shadow_tilemap_lib.glsl)
-#pragma BLENDER_REQUIRE(eevee_light_iter_lib.glsl)
+#include "infos/eevee_lightprobe_volume_info.hh"
+
+COMPUTE_SHADER_CREATE_INFO(eevee_lightprobe_volume_bounds)
+
+#include "draw_intersect_lib.glsl"
+#include "eevee_light_iter_lib.glsl"
+#include "eevee_shadow_tilemap_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 void main()
 {
   uint index = gl_GlobalInvocationID.x;
-  if (index >= resource_len) {
+  if (index >= uint(resource_len)) {
     return;
   }
 
   ObjectBounds bounds = bounds_buf[index];
-  if (!drw_bounds_are_valid(bounds) || bounds._inner_sphere_radius <= 0.0) {
+  if (!drw_bounds_are_valid(bounds)) {
     return;
   }
 

@@ -161,14 +161,6 @@ Class mix-in example:
 
    bpy.utils.register_class(SimpleOperator)
 
-Notice these classes don't define an ``__init__(self)`` function.
-While ``__init__()`` and ``__del__()`` will be called if defined,
-the class instances lifetime only spans the execution.
-So a panel for example will have a new instance for every redraw,
-for this reason there is rarely a cause to store variables in the panel instance.
-Instead, persistent variables should be stored in Blender's data
-so that the state can be restored when Blender is restarted.
-
 .. note::
 
    Modal operators are an exception, keeping their instance variable as Blender runs, see modal operator template.
@@ -184,6 +176,86 @@ To run operators you can call them through the operator API, e.g:
 
 User interface classes are given a context in which to draw, buttons, window, file header, toolbar, etc.,
 then they are drawn when that area is displayed so they are never called by Python scripts directly.
+
+
+.. _info_overview_class_construction_destruction:
+
+Construction & Destruction
+--------------------------
+
+In the examples above, the classes don't define an ``__init__(self)`` function.
+In general, defining custom constructors or destructors should not be needed, and is not recommended.
+
+The lifetime of class instances is usually very short (also see the
+:ref:`dedicated section <blender_py_objects_life_time>`), a panel for example will
+have a new instance for every redraw.
+Some other types, like :class:`bpy.types.Operator`, have an even more complex internal handling,
+which can lead to several instantiations for a single operator execution.
+
+There are a few cases where defining ``__init__()`` does make sense, e.g. when sub-classing a
+:class:`bpy.types.RenderEngine`. When doing so, the parent matching function must always be called,
+otherwise Blender's internal initialization won't happen properly:
+
+.. code-block:: python
+
+   import bpy
+   class AwesomeRaytracer(bpy.types.RenderEngine):
+      def __init__(self, *args, **kwargs):
+         super().__init__(*args, **kwargs)
+         ...
+
+.. warning::
+
+   Calling the parent's ``__init__()`` function is a hard requirement since Blender 4.4.
+   The 'generic' signature is the recommended one here, as Blender internal BPY code is typically
+   the only caller of these functions. The actual arguments passed to the constructor are fully
+   internal data, and may change depending on the implementation.
+
+   Unfortunately, the error message, generated in case the expected constructor is not called, can
+   be fairly cryptic and unhelping. Generally they should be about failure to create a (python)
+   object:
+
+      MemoryError: couldn't create bpy_struct object\_
+
+   With Operators, it might be something like that:
+
+      RuntimeError: could not create instance of <OPERATOR_OT_identifier> to call callback function execute
+
+.. note::
+
+   In case you are using complex/multi-inheritance, ``super()`` may not work. It is best then to
+   explicitly invoke the Blender-defined parent class constructor. For example:
+
+   .. code-block:: python
+
+      import bpy
+      class FancyRaytracer(AwesomeRaytracer, bpy.types.RenderEngine):
+         def __init__(self, *args, **kwargs):
+            bpy.types.RenderEngine.__init__(self, *args, **kwargs)
+            ...
+
+.. note::
+
+   Defining a custom ``__new__()`` function is strongly discouraged, not tested, and not considered
+   as supported currently.
+   Doing so presents a very high risk of crashes or otherwise corruption of Blender internal data.
+   But if defined, it must take the same two generic positional and keyword arguments,
+   and call the parent's ``__new__()`` with them if actually creating a new object.
+
+.. note::
+
+   Due to internal
+   `CPython implementation details <https://discuss.python.org/t/cpython-usage-of-tp-finalize/64100>`__,
+   C++-defined Blender types do not define or use a ``__del__()`` (aka ``tp_finalize()``) destructor
+   currently.
+   As this function
+   `does not exist if not explicitly defined <https://stackoverflow.com/questions/36722390/python-3-super-del>`__,
+   that means that calling ``super().__del__()`` in the ``__del__()`` function of a sub-class will
+   fail with the following error:
+   ``AttributeError: 'super' object has no attribute '__del__'``.
+   If a call to the MRO 'parent' destructor is needed for some reason, the caller code must ensure
+   that the destructor does exist, e.g. using something like that:
+   ``getattr(super(), "__del__", lambda self: None)(self)``
 
 
 .. _info_overview_registration:
@@ -377,17 +449,18 @@ and it may be useful to define them as types and remove them on the fly.
 .. code-block:: python
 
    for i in range(10):
-       idname = "object.operator_%d" % i
+       idname = "object.operator_{:d}".format(i)
 
        def func(self, context):
            print("Hello World", self.bl_idname)
            return {'FINISHED'}
 
-       opclass = type("DynOp%d" % i,
-                      (bpy.types.Operator, ),
-                      {"bl_idname": idname, "bl_label": "Test", "execute": func},
-                      )
-       bpy.utils.register_class(opclass)
+       op_class = type(
+           "DynOp{:d}".format(i),
+           (bpy.types.Operator, ),
+           {"bl_idname": idname, "bl_label": "Test", "execute": func},
+       )
+       bpy.utils.register_class(op_class)
 
 .. note::
 

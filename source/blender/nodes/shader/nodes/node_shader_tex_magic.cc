@@ -31,7 +31,7 @@ static void sh_node_tex_magic_declare(NodeDeclarationBuilder &b)
 
 static void node_shader_buts_tex_magic(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "turbulence_depth", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "turbulence_depth", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 }
 
 static void node_shader_init_tex_magic(bNodeTree * /*ntree*/, bNode *node)
@@ -183,7 +183,11 @@ void register_node_type_sh_tex_magic()
 
   static blender::bke::bNodeType ntype;
 
-  sh_fn_node_type_base(&ntype, SH_NODE_TEX_MAGIC, "Magic Texture", NODE_CLASS_TEXTURE);
+  sh_fn_node_type_base(&ntype, "ShaderNodeTexMagic", SH_NODE_TEX_MAGIC);
+  ntype.ui_name = "Magic Texture";
+  ntype.ui_description = "Generate a psychedelic color texture";
+  ntype.enum_name_legacy = "TEX_MAGIC";
+  ntype.nclass = NODE_CLASS_TEXTURE;
   ntype.declare = file_ns::sh_node_tex_magic_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_tex_magic;
   ntype.initfunc = file_ns::node_shader_init_tex_magic;
@@ -192,5 +196,5 @@ void register_node_type_sh_tex_magic()
   ntype.gpu_fn = file_ns::node_shader_gpu_tex_magic;
   ntype.build_multi_function = file_ns::sh_node_magic_tex_build_multi_function;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

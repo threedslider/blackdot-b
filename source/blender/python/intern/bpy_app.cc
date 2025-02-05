@@ -12,28 +12,28 @@
 
 #include <Python.h>
 
-#include "bpy_app.h"
+#include "bpy_app.hh"
 
-#include "bpy_app_alembic.h"
-#include "bpy_app_build_options.h"
-#include "bpy_app_ffmpeg.h"
-#include "bpy_app_ocio.h"
-#include "bpy_app_oiio.h"
-#include "bpy_app_opensubdiv.h"
-#include "bpy_app_openvdb.h"
-#include "bpy_app_sdl.h"
-#include "bpy_app_usd.h"
+#include "bpy_app_alembic.hh"
+#include "bpy_app_build_options.hh"
+#include "bpy_app_ffmpeg.hh"
+#include "bpy_app_ocio.hh"
+#include "bpy_app_oiio.hh"
+#include "bpy_app_opensubdiv.hh"
+#include "bpy_app_openvdb.hh"
+#include "bpy_app_sdl.hh"
+#include "bpy_app_usd.hh"
 
-#include "bpy_app_translations.h"
+#include "bpy_app_translations.hh"
 
-#include "bpy_app_handlers.h"
-#include "bpy_driver.h"
+#include "bpy_app_handlers.hh"
+#include "bpy_driver.hh"
 
-#include "BPY_extern_python.h" /* For #BPY_python_app_help_text_fn. */
+#include "BPY_extern_python.hh" /* For #BPY_python_app_help_text_fn. */
 
 /* modules */
-#include "bpy_app_icons.h"
-#include "bpy_app_timers.h"
+#include "bpy_app_icons.hh"
+#include "bpy_app_timers.hh"
 
 #include "BLI_utildefines.h"
 
@@ -41,8 +41,6 @@
 #include "BKE_blender_version.h"
 #include "BKE_global.hh"
 #include "BKE_main.hh"
-
-#include "DNA_ID.h"
 
 #include "UI_interface_icons.hh"
 
@@ -54,10 +52,9 @@
 #include "WM_api.hh"
 #include "WM_types.hh"
 
-#include "../generic/py_capi_rna.h"
-#include "../generic/py_capi_utils.h"
-#include "../generic/python_compat.h"
-#include "../generic/python_utildefines.h"
+#include "../generic/py_capi_rna.hh"
+#include "../generic/py_capi_utils.hh"
+#include "../generic/python_compat.hh"
 
 #ifdef BUILD_DATE
 extern "C" char build_date[];
@@ -78,16 +75,22 @@ extern "C" char build_system[];
 static PyTypeObject BlenderAppType;
 
 static PyStructSequence_Field app_info_fields[] = {
-    {"version", "The Blender version as a tuple of 3 numbers. eg. (2, 83, 1)"},
+    {"version",
+     "The Blender version as a tuple of 3 numbers (major, minor, micro). eg. (4, 3, 1)"},
     {"version_file",
-     "The Blender version, as a tuple, last used to save a .blend file, compatible with "
-     "``bpy.data.version``. This value should be used for handling compatibility changes between "
-     "Blender versions"},
+     "The Blender File version, as a tuple of 3 numbers (major, minor, file sub-version), that "
+     "will be used to save a .blend file. The last item in this tuple indicates the file "
+     "sub-version, which is different from the release micro version (the last item of the "
+     "`bpy.app.version` tuple). The file sub-version can be incremented multiple times while a "
+     "Blender version is under development. This value is, and should be, used for handling "
+     "compatibility changes between Blender versions"},
     {"version_string", "The Blender version formatted as a string"},
     {"version_cycle", "The release status of this build alpha/beta/rc/release"},
     {"background",
      "Boolean, True when blender is running without a user interface (started with -b)"},
+    {"module", "Boolean, True when running Blender as a python module"},
     {"factory_startup", "Boolean, True when blender is running with --factory-startup)"},
+    {"portable", "Boolean, True unless blender was built to reference absolute paths (on UNIX)."},
 
     /* buildinfo */
     {"build_date", "The date this blender instance was built"},
@@ -129,10 +132,10 @@ PyDoc_STRVAR(
     "This module contains application values that remain unchanged during runtime.");
 
 static PyStructSequence_Desc app_info_desc = {
-    "bpy.app",       /* name */
-    bpy_app_doc,     /* doc */
-    app_info_fields, /* fields */
-    ARRAY_SIZE(app_info_fields) - 1,
+    /*name*/ "bpy.app",
+    /*doc*/ bpy_app_doc,
+    /*fields*/ app_info_fields,
+    /*n_in_sequence*/ ARRAY_SIZE(app_info_fields) - 1,
 };
 
 static PyObject *make_app_info()
@@ -157,7 +160,18 @@ static PyObject *make_app_info()
 
   SetStrItem(STRINGIFY(BLENDER_VERSION_CYCLE));
   SetObjItem(PyBool_FromLong(G.background));
+#ifdef WITH_PYTHON_MODULE
+  SetObjItem(Py_NewRef(Py_True));
+#else
+  SetObjItem(Py_NewRef(Py_False));
+#endif
   SetObjItem(PyBool_FromLong(G.factory_startup));
+
+#ifdef WITH_INSTALL_PORTABLE
+  SetObjItem(Py_NewRef(Py_True));
+#else
+  SetObjItem(Py_NewRef(Py_False));
+#endif
 
 /* build info, use bytes since we can't assume _any_ encoding:
  * see patch #30154 for issue */
@@ -353,7 +367,7 @@ static PyObject *bpy_app_driver_dict_get(PyObject * /*self*/, void * /*closure*/
     }
   }
 
-  return Py_INCREF_RET(bpy_pydriver_Dict);
+  return Py_NewRef(bpy_pydriver_Dict);
 }
 
 PyDoc_STRVAR(
@@ -369,6 +383,23 @@ static PyObject *bpy_app_preview_render_size_get(PyObject * /*self*/, void *clos
 static PyObject *bpy_app_autoexec_fail_message_get(PyObject * /*self*/, void * /*closure*/)
 {
   return PyC_UnicodeFromBytes(G.autoexec_fail);
+}
+
+PyDoc_STRVAR(
+    /* Wrap. */
+    bpy_app_python_args_doc,
+    "Leading arguments to use when calling Python directly (via ``sys.executable``). "
+    "These arguments match settings Blender uses to "
+    "ensure Python runs with a compatible environment (read-only).");
+static PyObject *bpy_app_python_args_get(PyObject * /*self*/, void * /*closure*/)
+{
+  const char *args[1];
+  int args_num = 0;
+  if (!BPY_python_use_system_env_get()) {
+    /* Isolated Python environment. */
+    args[args_num++] = "-I";
+  }
+  return PyC_Tuple_PackArray_String(args, args_num);
 }
 
 PyDoc_STRVAR(
@@ -519,6 +550,8 @@ static PyGetSetDef bpy_app_getsets[] = {
      nullptr,
      (void *)G_FLAG_SCRIPT_AUTOEXEC_FAIL_QUIET},
     {"autoexec_fail_message", bpy_app_autoexec_fail_message_get, nullptr, nullptr, nullptr},
+
+    {"python_args", bpy_app_python_args_get, nullptr, bpy_app_python_args_doc, nullptr},
 
     /* Support script authors setting the Blender binary path to use, otherwise this value
      * is not known when built as a Python module. */

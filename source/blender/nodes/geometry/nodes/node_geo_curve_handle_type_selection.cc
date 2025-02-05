@@ -20,7 +20,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   uiItemR(layout, ptr, "handle_type", UI_ITEM_NONE, "", ICON_NONE);
 }
 
@@ -135,7 +135,11 @@ static void node_register()
   static blender::bke::bNodeType ntype;
 
   geo_node_type_base(
-      &ntype, GEO_NODE_CURVE_HANDLE_TYPE_SELECTION, "Handle Type Selection", NODE_CLASS_INPUT);
+      &ntype, "GeometryNodeCurveHandleTypeSelection", GEO_NODE_CURVE_HANDLE_TYPE_SELECTION);
+  ntype.ui_name = "Handle Type Selection";
+  ntype.ui_description = "Provide a selection based on the handle types of Bézier control points";
+  ntype.enum_name_legacy = "CURVE_HANDLE_TYPE_SELECTION";
+  ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.initfunc = node_init;
@@ -145,7 +149,7 @@ static void node_register()
                                   node_copy_standard_storage);
   ntype.draw_buttons = node_layout;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

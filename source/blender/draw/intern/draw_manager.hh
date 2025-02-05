@@ -22,7 +22,7 @@
 #include "draw_resource.hh"
 #include "draw_view.hh"
 
-#include <string>
+#include <atomic>
 
 namespace blender::draw {
 
@@ -106,6 +106,12 @@ class Manager {
   Vector<GPUTexture *> acquired_textures;
 
  private:
+  /** Number of sync done by managers. Used for fingerprint. */
+  static std::atomic<uint32_t> global_sync_counter_;
+
+  /* Local sync counter. Used for fingerprint. Must never be null. */
+  uint32_t sync_counter_ = 1;
+
   /** Number of resource handle recorded. */
   uint resource_len_ = 0;
   /** Number of object attribute recorded. */
@@ -118,14 +124,20 @@ class Manager {
   ~Manager();
 
   /**
+   * Create a unique resource handle for the given object.
+   * Returns the existing handle if it exists.
+   */
+  ResourceHandleRange unique_handle(const ObjectRef &ref);
+  /**
    * Create a new resource handle for the given object.
    */
-  ResourceHandle resource_handle(const ObjectRef ref, float inflate_bounds = 0.0f);
+  /* WORKAROUND: Instead of breaking const correctness everywhere, we only break it for this. */
+  ResourceHandleRange resource_handle(const ObjectRef &ref, float inflate_bounds = 0.0f);
   /**
    * Create a new resource handle for the given object, but optionally override model matrix and
    * bounds.
    */
-  ResourceHandle resource_handle(const ObjectRef ref,
+  ResourceHandle resource_handle(const ObjectRef &ref,
                                  const float4x4 *model_matrix,
                                  const float3 *bounds_center,
                                  const float3 *bounds_half_extent);
@@ -146,11 +158,13 @@ class Manager {
    * Get resource id for particle system. The draw-calls for this resource won't be culled. The
    * associated object info will contain the info from its parent object.
    */
-  ResourceHandle resource_handle_for_psys(const ObjectRef ref, const float4x4 &model_matrix);
+  ResourceHandle resource_handle_for_psys(const ObjectRef &ref, const float4x4 &model_matrix);
+
+  ResourceHandleRange resource_handle_for_sculpt(const ObjectRef &ref);
 
   /** Update the bounds of an already created handle. */
   void update_handle_bounds(ResourceHandle handle,
-                            const ObjectRef ref,
+                            const ObjectRef &ref,
                             float inflate_bounds = 0.0f);
   /** Update the bounds of an already created handle. */
   void update_handle_bounds(ResourceHandle handle,
@@ -174,8 +188,77 @@ class Manager {
   void register_layer_attributes(GPUMaterial *material);
 
   /**
+   * Compute <-> Graphic queue transition is quite slow on some backend. To avoid unnecessary
+   * switching, it is better to dispatch all visibility computation as soon as possible before any
+   * graphic work.
+   *
+   * Grouping the calls to `compute_visibility()` together is also beneficial for PSO switching
+   * overhead. Same thing applies to `generate_commands()`.
+   *
+   * IMPORTANT: Generated commands are stored inside #PassMain and overrides commands generated for
+   * a previous view.
+   *
+   * Before:
+   * \code{.cpp}
+   * manager.submit(pass1, view1);
+   * manager.submit(pass2, view1);
+   * manager.submit(pass1, view2);
+   * manager.submit(pass2, view2);
+   * \endcode
+   *
+   * After:
+   * \code{.cpp}
+   * manager.compute_visibility(view1);
+   * manager.compute_visibility(view2);
+   *
+   * manager.generate_commands(pass1, view1);
+   * manager.generate_commands(pass2, view1);
+   *
+   * manager.submit(pass1, view1);
+   * manager.submit(pass2, view1);
+   *
+   * manager.generate_commands(pass1, view2);
+   * manager.generate_commands(pass2, view2);
+   *
+   * manager.submit(pass1, view2);
+   * manager.submit(pass2, view2);
+   * \endcode
+   */
+
+  /**
+   * Compute visibility of #ResourceHandle for the given #View.
+   * The commands needs to be regenerated for any change inside the #Manager or in the #View.
+   * Avoids just in time computation of visibility.
+   */
+  void compute_visibility(View &view);
+  /**
+   * Same as compute_visibility but only do it if needed.
+   */
+  void ensure_visibility(View &view);
+  /**
+   * Generate commands for #ResourceHandle for the given #View and #PassMain.
+   * The commands needs to be regenerated for any change inside the #Manager, the #PassMain or in
+   * the #View. Avoids just in time command generation.
+   *
+   * IMPORTANT: Generated commands are stored inside #PassMain and overrides commands previously
+   * generated for a previous view.
+   */
+  void generate_commands(PassMain &pass, View &view);
+  void generate_commands(PassSortable &pass, View &view);
+  /**
+   * Generate commands on CPU. Doesn't have the GPU compute dispatch overhead.
+   */
+  void generate_commands(PassSimple &pass);
+
+  /**
    * Submit a pass for drawing. All resource reference will be dereferenced and commands will be
-   * sent to GPU.
+   * sent to GPU. Visibility and command generation **must** have already been done explicitly
+   * using `compute_visibility` and `generate_commands`.
+   */
+  void submit_only(PassMain &pass, View &view);
+  /**
+   * Submit a pass for drawing. All resource reference will be dereferenced and commands will be
+   * sent to GPU. Visibility and command generation are run JIT if needed.
    */
   void submit(PassSimple &pass, View &view);
   void submit(PassMain &pass, View &view);
@@ -183,7 +266,7 @@ class Manager {
   /**
    * Variant without any view. Must not contain any shader using `draw_view` create info.
    */
-  void submit(PassSimple &pass);
+  void submit(PassSimple &pass, bool inverted_view = false);
 
   /**
    * Submit a pass for drawing but read back all data buffers for inspection.
@@ -223,9 +306,22 @@ class Manager {
 
  private:
   void sync_layer_attributes();
+
+  /* Fingerprint of the manager in a certain state. Assured to not be 0.
+   * Not reliable enough for general update detection. Only to be used for debugging assertion. */
+  uint64_t fingerprint_get();
 };
 
-inline ResourceHandle Manager::resource_handle(const ObjectRef ref, float inflate_bounds)
+inline ResourceHandleRange Manager::unique_handle(const ObjectRef &ref)
+{
+  if (ref.handle.handle_first.raw == 0) {
+    /* WORKAROUND: Instead of breaking const correctness everywhere, we only break it for this. */
+    const_cast<ObjectRef &>(ref).handle = resource_handle(ref);
+  }
+  return ref.handle;
+}
+
+inline ResourceHandleRange Manager::resource_handle(const ObjectRef &ref, float inflate_bounds)
 {
   bool is_active_object = (ref.dupli_object ? ref.dupli_parent : ref.object) == object_active;
   matrix_buf.current().get_or_resize(resource_len_).sync(*ref.object);
@@ -234,7 +330,7 @@ inline ResourceHandle Manager::resource_handle(const ObjectRef ref, float inflat
   return ResourceHandle(resource_len_++, (ref.object->transflag & OB_NEG_SCALE) != 0);
 }
 
-inline ResourceHandle Manager::resource_handle(const ObjectRef ref,
+inline ResourceHandle Manager::resource_handle(const ObjectRef &ref,
                                                const float4x4 *model_matrix,
                                                const float3 *bounds_center,
                                                const float3 *bounds_half_extent)
@@ -274,7 +370,7 @@ inline ResourceHandle Manager::resource_handle(const float4x4 &model_matrix,
   return ResourceHandle(resource_len_++, false);
 }
 
-inline ResourceHandle Manager::resource_handle_for_psys(const ObjectRef ref,
+inline ResourceHandle Manager::resource_handle_for_psys(const ObjectRef &ref,
                                                         const float4x4 &model_matrix)
 {
   bool is_active_object = (ref.dupli_object ? ref.dupli_parent : ref.object) == object_active;
@@ -285,7 +381,7 @@ inline ResourceHandle Manager::resource_handle_for_psys(const ObjectRef ref,
 }
 
 inline void Manager::update_handle_bounds(ResourceHandle handle,
-                                          const ObjectRef ref,
+                                          const ObjectRef &ref,
                                           float inflate_bounds)
 {
   bounds_buf.current()[handle.resource_index()].sync(*ref.object, inflate_bounds);

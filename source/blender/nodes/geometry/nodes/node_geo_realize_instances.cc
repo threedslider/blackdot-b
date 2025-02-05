@@ -8,7 +8,7 @@
 
 #include "GEO_realize_instances.hh"
 
-#include "UI_resources.hh"
+#include "FN_multi_function_builder.hh"
 
 namespace blender::nodes::node_geo_realize_instances_cc {
 
@@ -76,7 +76,8 @@ static void node_geo_exec(GeoNodeExecParams params)
   geometry::RealizeInstancesOptions options;
   options.keep_original_ids = false;
   options.realize_instance_attributes = true;
-  options.propagation_info = params.get_output_propagation_info("Geometry");
+  const NodeAttributeFilter attribute_filter = params.get_attribute_filter("Geometry");
+  options.attribute_filter = attribute_filter;
   GeometrySet new_geometry_set = geometry::realize_instances(
       geometry_set, options, varied_depth_option);
   new_geometry_set.name = geometry_set.name;
@@ -87,10 +88,14 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_REALIZE_INSTANCES, "Realize Instances", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeRealizeInstances", GEO_NODE_REALIZE_INSTANCES);
+  ntype.ui_name = "Realize Instances";
+  ntype.ui_description = "Convert instances into real geometry data";
+  ntype.enum_name_legacy = "REALIZE_INSTANCES";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

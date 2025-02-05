@@ -10,8 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "BLI_path_util.h" /* For assertions. */
-#include "BLI_utildefines.h"
+#include "BLI_path_utils.hh" /* For assertions. */
 
 #include "IMB_colormanagement.hh"
 #include "IMB_filetype.hh"

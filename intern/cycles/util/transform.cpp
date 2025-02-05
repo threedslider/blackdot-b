@@ -12,109 +12,9 @@ CCL_NAMESPACE_BEGIN
 
 /* Transform Inverse */
 
-static bool projection_matrix4_inverse(float R[][4], float M[][4])
-{
-  /* SPDX-License-Identifier: BSD-3-Clause
-   * Adapted from code:
-   * Copyright (c) 2002, Industrial Light & Magic, a division of Lucas
-   * Digital Ltd. LLC. All rights reserved. */
-
-  /* forward elimination */
-  for (int i = 0; i < 4; i++) {
-    int pivot = i;
-    float pivotsize = M[i][i];
-
-    if (pivotsize < 0) {
-      pivotsize = -pivotsize;
-    }
-
-    for (int j = i + 1; j < 4; j++) {
-      float tmp = M[j][i];
-
-      if (tmp < 0) {
-        tmp = -tmp;
-      }
-
-      if (tmp > pivotsize) {
-        pivot = j;
-        pivotsize = tmp;
-      }
-    }
-
-    if (UNLIKELY(pivotsize == 0.0f)) {
-      return false;
-    }
-
-    if (pivot != i) {
-      for (int j = 0; j < 4; j++) {
-        float tmp;
-
-        tmp = M[i][j];
-        M[i][j] = M[pivot][j];
-        M[pivot][j] = tmp;
-
-        tmp = R[i][j];
-        R[i][j] = R[pivot][j];
-        R[pivot][j] = tmp;
-      }
-    }
-
-    for (int j = i + 1; j < 4; j++) {
-      float f = M[j][i] / M[i][i];
-
-      for (int k = 0; k < 4; k++) {
-        M[j][k] -= f * M[i][k];
-        R[j][k] -= f * R[i][k];
-      }
-    }
-  }
-
-  /* backward substitution */
-  for (int i = 3; i >= 0; --i) {
-    float f;
-
-    if (UNLIKELY((f = M[i][i]) == 0.0f)) {
-      return false;
-    }
-
-    for (int j = 0; j < 4; j++) {
-      M[i][j] /= f;
-      R[i][j] /= f;
-    }
-
-    for (int j = 0; j < i; j++) {
-      f = M[j][i];
-
-      for (int k = 0; k < 4; k++) {
-        M[j][k] -= f * M[i][k];
-        R[j][k] -= f * R[i][k];
-      }
-    }
-  }
-
-  return true;
-}
-
-ProjectionTransform projection_inverse(const ProjectionTransform &tfm)
-{
-  ProjectionTransform tfmR = projection_identity();
-  float M[4][4], R[4][4];
-
-  memcpy(R, &tfmR, sizeof(R));
-  memcpy(M, &tfm, sizeof(M));
-
-  if (UNLIKELY(!projection_matrix4_inverse(R, M))) {
-    return projection_identity();
-  }
-
-  memcpy(&tfmR.x[0], R, sizeof(R));
-
-  return tfmR;
-}
-
 Transform transform_transposed_inverse(const Transform &tfm)
 {
-  ProjectionTransform iprojection(transform_inverse(tfm));
+  const ProjectionTransform iprojection(transform_inverse(tfm));
   return projection_to_transform(projection_transpose(iprojection));
 }
 
@@ -122,7 +22,7 @@ Transform transform_transposed_inverse(const Transform &tfm)
 
 float4 transform_to_quat(const Transform &tfm)
 {
-  double trace = (double)(tfm[0][0] + tfm[1][1] + tfm[2][2]);
+  const double trace = (double)(tfm[0][0] + tfm[1][1] + tfm[2][2]);
   float4 qt;
 
   if (trace > 0.0) {
@@ -145,8 +45,8 @@ float4 transform_to_quat(const Transform &tfm)
       i = 2;
     }
 
-    int j = (i + 1) % 3;
-    int k = (j + 1) % 3;
+    const int j = (i + 1) % 3;
+    const int k = (j + 1) % 3;
 
     double s = sqrt((double)(tfm[i][i] - (tfm[j][j] + tfm[k][k])) + 1.0);
 
@@ -156,7 +56,7 @@ float4 transform_to_quat(const Transform &tfm)
       s = 0.5 / s;
     }
 
-    double w = (double)(tfm[k][j] - tfm[j][k]) * s;
+    const double w = (double)(tfm[k][j] - tfm[j][k]) * s;
     q[j] = (double)(tfm[j][i] + tfm[i][j]) * s;
     q[k] = (double)(tfm[k][i] + tfm[i][k]) * s;
 
@@ -220,7 +120,8 @@ static void transform_decompose(DecomposedTransform *decomp, const Transform *tf
   float3 colz = transform_get_column(&M, 2);
 
   /* extract scale and shear first */
-  float3 scale, shear;
+  float3 scale;
+  float3 shear;
   scale.x = len(colx);
   colx = safe_divide(colx, scale.x);
   shear.z = dot(colx, coly);
@@ -251,7 +152,9 @@ static void transform_decompose(DecomposedTransform *decomp, const Transform *tf
 #endif
 }
 
-void transform_motion_decompose(DecomposedTransform *decomp, const Transform *motion, size_t size)
+void transform_motion_decompose(DecomposedTransform *decomp,
+                                const Transform *motion,
+                                const size_t size)
 {
   /* Decompose and correct rotation. */
   for (size_t i = 0; i < size; i++) {

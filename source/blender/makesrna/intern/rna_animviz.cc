@@ -9,12 +9,7 @@
 #include <cstdlib>
 
 #include "DNA_action_types.h"
-#include "DNA_anim_types.h"
 #include "DNA_scene_types.h"
-
-#include "BLI_utildefines.h"
-
-#include "MEM_guardedalloc.h"
 
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
@@ -68,7 +63,7 @@ const EnumPropertyItem rna_enum_motionpath_range_items[] = {
 
 static PointerRNA rna_AnimViz_motion_paths_get(PointerRNA *ptr)
 {
-  return rna_pointer_inherit_refine(ptr, &RNA_AnimVizMotionPaths, ptr->data);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_AnimVizMotionPaths, ptr->data);
 }
 
 static void rna_AnimViz_path_start_frame_set(PointerRNA *ptr, int value)
@@ -329,7 +324,7 @@ static void rna_def_animviz_paths(BlenderRNA *brna)
       "Bake to active Camera",
       "Motion path points will be baked into the camera space of the active camera. This means "
       "they will only look right when looking through that camera. Switching cameras using "
-      "markers is not supported");
+      "markers is not supported.");
 
   RNA_define_lib_overridable(false);
 }

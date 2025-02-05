@@ -6,6 +6,7 @@
  * \ingroup bke
  */
 
+#include <algorithm>
 #include <cstdio>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -20,27 +21,38 @@
 
 #include "DNA_ID.h"
 #include "DNA_image_types.h"
+#include "DNA_modifier_types.h"
 #include "DNA_packedFile_types.h"
 #include "DNA_sound_types.h"
 #include "DNA_vfont_types.h"
 #include "DNA_volume_types.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_path_utils.hh"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
-#include "BKE_image.h"
-#include "BKE_image_format.h"
+#include "BKE_bake_geometry_nodes_modifier.hh"
+#include "BKE_bake_geometry_nodes_modifier_pack.hh"
+#include "BKE_image.hh"
+#include "BKE_image_format.hh"
 #include "BKE_main.hh"
-#include "BKE_packedFile.h"
+#include "BKE_packedFile.hh"
 #include "BKE_report.hh"
 #include "BKE_sound.h"
 #include "BKE_vfont.hh"
 #include "BKE_volume.hh"
 
+#include "DEG_depsgraph.hh"
+
 #include "IMB_imbuf.hh"
-#include "IMB_imbuf_types.hh"
 
 #include "BLO_read_write.hh"
+
+#include "CLG_log.h"
+
+static CLG_LogRef LOG = {"bke.packedfile"};
+
+using namespace blender;
 
 int BKE_packedfile_seek(PackedFile *pf, int offset, int whence)
 {
@@ -102,26 +114,27 @@ int BKE_packedfile_read(PackedFile *pf, void *data, int size)
   return size;
 }
 
-int BKE_packedfile_count_all(Main *bmain)
+PackedFileCount BKE_packedfile_count_all(Main *bmain)
 {
   Image *ima;
   VFont *vf;
   bSound *sound;
   Volume *volume;
-  int count = 0;
+
+  PackedFileCount count;
 
   /* let's check if there are packed files... */
   for (ima = static_cast<Image *>(bmain->images.first); ima;
        ima = static_cast<Image *>(ima->id.next))
   {
     if (BKE_image_has_packedfile(ima) && !ID_IS_LINKED(ima)) {
-      count++;
+      count.individual_files++;
     }
   }
 
   for (vf = static_cast<VFont *>(bmain->fonts.first); vf; vf = static_cast<VFont *>(vf->id.next)) {
     if (vf->packedfile && !ID_IS_LINKED(vf)) {
-      count++;
+      count.individual_files++;
     }
   }
 
@@ -129,7 +142,7 @@ int BKE_packedfile_count_all(Main *bmain)
        sound = static_cast<bSound *>(sound->id.next))
   {
     if (sound->packedfile && !ID_IS_LINKED(sound)) {
-      count++;
+      count.individual_files++;
     }
   }
 
@@ -137,7 +150,23 @@ int BKE_packedfile_count_all(Main *bmain)
        volume = static_cast<Volume *>(volume->id.next))
   {
     if (volume->packedfile && !ID_IS_LINKED(volume)) {
-      count++;
+      count.individual_files++;
+    }
+  }
+
+  LISTBASE_FOREACH (Object *, object, &bmain->objects) {
+    if (ID_IS_LINKED(object)) {
+      continue;
+    }
+    LISTBASE_FOREACH (ModifierData *, md, &object->modifiers) {
+      if (md->type == eModifierType_Nodes) {
+        NodesModifierData *nmd = reinterpret_cast<NodesModifierData *>(md);
+        for (const NodesModifierBake &bake : blender::Span{nmd->bakes, nmd->bakes_num}) {
+          if (bake.packed) {
+            count.bakes++;
+          }
+        }
+      }
     }
   }
 
@@ -171,14 +200,20 @@ PackedFile *BKE_packedfile_duplicate(const PackedFile *pf_src)
   return pf_dst;
 }
 
-PackedFile *BKE_packedfile_new_from_memory(void *mem, int memlen)
+PackedFile *BKE_packedfile_new_from_memory(const void *mem,
+                                           int memlen,
+                                           const blender::ImplicitSharingInfo *sharing_info)
 {
   BLI_assert(mem != nullptr);
+  if (!sharing_info) {
+    /* Assume we are the only owner of that memory currently. */
+    sharing_info = blender::implicit_sharing::info_for_mem_free(const_cast<void *>(mem));
+  }
 
   PackedFile *pf = static_cast<PackedFile *>(MEM_callocN(sizeof(*pf), "PackedFile"));
   pf->data = mem;
   pf->size = memlen;
-  pf->sharing_info = blender::implicit_sharing::info_for_mem_free(mem);
+  pf->sharing_info = sharing_info;
 
   return pf;
 }
@@ -293,6 +328,20 @@ void BKE_packedfile_pack_all(Main *bmain, ReportList *reports, bool verbose)
     }
   }
 
+  LISTBASE_FOREACH (Object *, object, &bmain->objects) {
+    if (ID_IS_LINKED(object)) {
+      continue;
+    }
+    LISTBASE_FOREACH (ModifierData *, md, &object->modifiers) {
+      if (md->type == eModifierType_Nodes) {
+        NodesModifierData *nmd = reinterpret_cast<NodesModifierData *>(md);
+        for (NodesModifierBake &bake : blender::MutableSpan{nmd->bakes, nmd->bakes_num}) {
+          blender::bke::bake::pack_geometry_nodes_bake(*bmain, reports, *object, *nmd, bake);
+        }
+      }
+    }
+  }
+
   if (tot > 0) {
     BKE_reportf(reports, RPT_INFO, "Packed %d file(s)", tot);
   }
@@ -397,9 +446,7 @@ enum ePF_FileCompare BKE_packedfile_compare_to_file(const char *ref_file_name,
 
       for (int i = 0; i < pf->size; i += sizeof(buf)) {
         int len = pf->size - i;
-        if (len > sizeof(buf)) {
-          len = sizeof(buf);
-        }
+        len = std::min<unsigned long>(len, sizeof(buf));
 
         if (BLI_read(file, buf, len) != len) {
           /* read error ... */
@@ -810,6 +857,21 @@ void BKE_packedfile_unpack_all(Main *bmain, ReportList *reports, enum ePF_FileSt
       BKE_packedfile_unpack_volume(bmain, reports, volume, how);
     }
   }
+
+  LISTBASE_FOREACH (Object *, object, &bmain->objects) {
+    if (ID_IS_LINKED(object)) {
+      continue;
+    }
+    LISTBASE_FOREACH (ModifierData *, md, &object->modifiers) {
+      if (md->type == eModifierType_Nodes) {
+        NodesModifierData *nmd = reinterpret_cast<NodesModifierData *>(md);
+        for (NodesModifierBake &bake : blender::MutableSpan{nmd->bakes, nmd->bakes_num}) {
+          blender::bke::bake::unpack_geometry_nodes_bake(
+              *bmain, reports, *object, *nmd, bake, how);
+        }
+      }
+    }
+  }
 }
 
 bool BKE_packedfile_id_check(const ID *id)
@@ -898,21 +960,28 @@ void BKE_packedfile_blend_write(BlendWriter *writer, const PackedFile *pf)
   });
 }
 
-void BKE_packedfile_blend_read(BlendDataReader *reader, PackedFile **pf_p)
+void BKE_packedfile_blend_read(BlendDataReader *reader, PackedFile **pf_p, StringRefNull filepath)
 {
   BLO_read_struct(reader, PackedFile, pf_p);
   PackedFile *pf = *pf_p;
   if (pf == nullptr) {
     return;
   }
+  /* NOTE: there is no way to handle endianness switch here. */
   pf->sharing_info = BLO_read_shared(reader, &pf->data, [&]() {
     BLO_read_data_address(reader, &pf->data);
-    return blender::implicit_sharing::info_for_mem_free(const_cast<void *>(pf->data));
+    /* Do not create an implicit sharing if read data pointer is `nullptr`. */
+    return pf->data ? blender::implicit_sharing::info_for_mem_free(const_cast<void *>(pf->data)) :
+                      nullptr;
   });
   if (pf->data == nullptr) {
-    /* We cannot allow a PackedFile with a nullptr data field,
+    /* We cannot allow a #PackedFile with a nullptr data field,
      * the whole code assumes this is not possible. See #70315. */
-    printf("%s: nullptr packedfile data, cleaning up...\n", __func__);
-    MEM_SAFE_FREE(pf);
+    CLOG_WARN(&LOG,
+              "%s: nullptr packedfile data (source: '%s'), cleaning up...",
+              __func__,
+              filepath.c_str());
+    BLI_assert(pf->sharing_info == nullptr);
+    MEM_SAFE_FREE(*pf_p);
   }
 }

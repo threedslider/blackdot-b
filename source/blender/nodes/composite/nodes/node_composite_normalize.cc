@@ -26,7 +26,7 @@ static void cmp_node_normalize_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Float>("Value");
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class NormalizeOperation : public NodeOperation {
  private:
@@ -42,28 +42,38 @@ class NormalizeOperation : public NodeOperation {
 
   void execute() override
   {
-    Result &input_image = get_input("Value");
-    Result &output_image = get_result("Value");
+    Result &input_image = this->get_input("Value");
+    Result &output_image = this->get_result("Value");
     if (input_image.is_single_value()) {
       input_image.pass_through(output_image);
       return;
     }
 
-    const float maximum = maximum_float_in_range(
-        context(), input_image.texture(), -range_, range_);
-    const float minimum = minimum_float_in_range(
-        context(), input_image.texture(), -range_, range_);
+    const float maximum = maximum_float_in_range(context(), input_image, -range_, range_);
+    const float minimum = minimum_float_in_range(context(), input_image, -range_, range_);
     const float scale = (maximum != minimum) ? (1.0f / (maximum - minimum)) : 0.0f;
 
-    GPUShader *shader = context().get_shader("compositor_normalize");
+    if (context().use_gpu()) {
+      this->execute_gpu(minimum, scale);
+    }
+    else {
+      this->execute_cpu(minimum, scale);
+    }
+  }
+
+  void execute_gpu(const float minimum, const float scale)
+  {
+    GPUShader *shader = this->context().get_shader("compositor_normalize");
     GPU_shader_bind(shader);
 
     GPU_shader_uniform_1f(shader, "minimum", minimum);
     GPU_shader_uniform_1f(shader, "scale", scale);
 
+    Result &input_image = this->get_input("Value");
     input_image.bind_as_texture(shader, "input_tx");
 
-    const Domain domain = compute_domain();
+    const Domain domain = this->compute_domain();
+    Result &output_image = this->get_result("Value");
     output_image.allocate_texture(domain);
     output_image.bind_as_image(shader, "output_img");
 
@@ -72,6 +82,22 @@ class NormalizeOperation : public NodeOperation {
     GPU_shader_unbind();
     output_image.unbind_as_image();
     input_image.unbind_as_texture();
+  }
+
+  void execute_cpu(const float minimum, const float scale)
+  {
+    Result &image = this->get_input("Value");
+
+    const Domain domain = this->compute_domain();
+    Result &output = this->get_result("Value");
+    output.allocate_texture(domain);
+
+    parallel_for(domain.size, [&](const int2 texel) {
+      const float value = image.load_pixel<float>(texel);
+      const float normalized_value = (value - minimum) * scale;
+      const float clamped_value = math::clamp(normalized_value, 0.0f, 1.0f);
+      output.store_pixel(texel, clamped_value);
+    });
   }
 };
 
@@ -88,9 +114,14 @@ void register_node_type_cmp_normalize()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(&ntype, CMP_NODE_NORMALIZE, "Normalize", NODE_CLASS_OP_VECTOR);
+  cmp_node_type_base(&ntype, "CompositorNodeNormalize", CMP_NODE_NORMALIZE);
+  ntype.ui_name = "Normalize";
+  ntype.ui_description =
+      "Map values to 0 to 1 range, based on the minimum and maximum pixel values";
+  ntype.enum_name_legacy = "NORMALIZE";
+  ntype.nclass = NODE_CLASS_OP_VECTOR;
   ntype.declare = file_ns::cmp_node_normalize_declare;
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

@@ -8,8 +8,6 @@
 
 #pragma once
 
-#include <string>
-
 #include "BLI_function_ref.hh"
 
 struct AssetHandle;
@@ -40,14 +38,23 @@ asset_system::AssetLibrary *library_get_once_available(
     const AssetLibraryReference &library_reference);
 
 /** Can return false to stop iterating. */
-using AssetListHandleIterFn = FunctionRef<bool(AssetHandle)>;
 using AssetListIterFn = FunctionRef<bool(asset_system::AssetRepresentation &)>;
+using AssetListIndexIterFn =
+    FunctionRef<bool(asset_system::AssetRepresentation &, int asset_index)>;
 
 /**
  * \warning Never keep the asset handle passed to \a fn outside of \a fn's scope. While iterating,
  * the file data wrapped by the asset handle can be freed, since the file cache has a maximum size.
+ * \note It is recommended to prefilter assets using \a prefilter_fn, which avoids populating the
+ * file cache with files that will not end up being relevant. With 1000s of assets that can make a
+ * difference, since often only a small subset needs to be displayed.
  */
-void iterate(const AssetLibraryReference &library_reference, AssetListHandleIterFn fn);
+void iterate(const AssetLibraryReference &library_reference, AssetListIndexIterFn fn);
+/**
+ * \note This override avoids the file caching system, so it's more performant and avoids pitfalls
+ * from the other override. Prefer this when access to #AssetRepresentation is enough, and no
+ * #AssetHandle is needed.
+ */
 void iterate(const AssetLibraryReference &library_reference, AssetListIterFn fn);
 
 /**
@@ -59,8 +66,18 @@ void iterate(const AssetLibraryReference &library_reference, AssetListIterFn fn)
  */
 void storage_fetch(const AssetLibraryReference *library_reference, const bContext *C);
 bool is_loaded(const AssetLibraryReference *library_reference);
-void ensure_previews_job(const AssetLibraryReference *library_reference, const bContext *C);
+/**
+ * Clears this asset library and the "All" asset library for reload in both the static asset list
+ * storage, as well as for all open asset browsers. Call this whenever the content of the given
+ * asset library changed in a way that a reload is necessary.
+ */
 void clear(const AssetLibraryReference *library_reference, const bContext *C);
+/**
+ * Clears the all asset library for reload in both the static asset list storage, as well as for
+ * all open asset browsers. Call this whenever any asset library content changed in a way that a
+ * reload is necessary.
+ */
+void clear_all_library(const bContext *C);
 bool storage_has_list_for_library(const AssetLibraryReference *library_reference);
 /**
  * Tag all asset lists in the storage that show main data as needing an update (re-fetch).
@@ -85,10 +102,6 @@ AssetHandle asset_handle_get_by_index(const AssetLibraryReference *library_refer
                                       int asset_index);
 asset_system::AssetRepresentation *asset_get_by_index(
     const AssetLibraryReference &library_reference, int asset_index);
-
-bool asset_image_is_loading(const AssetLibraryReference *library_reference,
-                            const AssetHandle *asset_handle);
-ImBuf *asset_image_get(const AssetHandle *asset_handle);
 
 /**
  * \return True if the region needs a UI redraw.

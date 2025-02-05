@@ -6,6 +6,7 @@
  * \ingroup spgraph
  */
 
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
@@ -23,7 +24,7 @@
 #include "BKE_anim_data.hh"
 #include "BKE_curve.hh"
 #include "BKE_fcurve.hh"
-#include "BKE_nla.h"
+#include "BKE_nla.hh"
 
 #include "GPU_immediate.hh"
 #include "GPU_matrix.hh"
@@ -80,11 +81,12 @@ static blender::IndexRange get_bounding_bezt_index_range(const FCurve *fcu,
 
 /* TODO: draw a shaded poly showing the region of influence too!!! */
 /**
- * \param adt_nla_remap: Send nullptr if no NLA remapping necessary.
+ * \param ale_nla_remap: the anim list element of the fcurve that this modifier
+ * is on. This is used to do NLA time remapping, as appropriate.
  */
 static void draw_fcurve_modifier_controls_envelope(FModifier *fcm,
                                                    View2D *v2d,
-                                                   AnimData *adt_nla_remap)
+                                                   bAnimListElem *ale_nla_remap)
 {
   FMod_Envelope *env = (FMod_Envelope *)fcm->data;
   FCM_EnvelopeData *fed;
@@ -131,8 +133,8 @@ static void draw_fcurve_modifier_controls_envelope(FModifier *fcm,
     immBeginAtMost(GPU_PRIM_POINTS, env->totvert * 2);
 
     for (i = 0, fed = env->data; i < env->totvert; i++, fed++) {
-      const float env_scene_time = BKE_nla_tweakedit_remap(
-          adt_nla_remap, fed->time, NLATIME_CONVERT_MAP);
+      const float env_scene_time = ANIM_nla_tweakedit_remap(
+          ale_nla_remap, fed->time, NLATIME_CONVERT_MAP);
 
       /* only draw if visible
        * - min/max here are fixed, not relative
@@ -443,8 +445,7 @@ static void draw_fcurve_handles(SpaceGraph *sipo, ARegion *region, const FCurve 
 
   GPUVertFormat *format = immVertexFormat();
   uint pos = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 2, GPU_FETCH_FLOAT);
-  uint color = GPU_vertformat_attr_add(
-      format, "color", GPU_COMP_U8, 4, GPU_FETCH_INT_TO_FLOAT_UNIT);
+  uint color = GPU_vertformat_attr_add(format, "color", GPU_COMP_F32, 4, GPU_FETCH_FLOAT);
   immBindBuiltinProgram(GPU_SHADER_3D_FLAT_COLOR);
   if (U.animation_flag & USER_ANIM_HIGH_QUALITY_DRAWING) {
     GPU_line_smooth(true);
@@ -461,7 +462,7 @@ static void draw_fcurve_handles(SpaceGraph *sipo, ARegion *region, const FCurve 
    */
   for (int sel = 0; sel < 2; sel++) {
     int basecol = (sel) ? TH_HANDLE_SEL_FREE : TH_HANDLE_FREE;
-    uchar col[4];
+    float col[4];
 
     BezTriple *prevbezt = nullptr;
     for (const int i : index_range) {
@@ -482,21 +483,21 @@ static void draw_fcurve_handles(SpaceGraph *sipo, ARegion *region, const FCurve 
         if ((!prevbezt && (bezt->ipo == BEZT_IPO_BEZ)) ||
             (prevbezt && (prevbezt->ipo == BEZT_IPO_BEZ)))
         {
-          UI_GetThemeColor3ubv(basecol + bezt->h1, col);
-          col[3] = fcurve_display_alpha(fcu) * 255;
-          immAttr4ubv(color, col);
+          UI_GetThemeColor3fv(basecol + bezt->h1, col);
+          col[3] = fcurve_display_alpha(fcu);
+          immAttr4fv(color, col);
           immVertex2fv(pos, bezt->vec[0]);
-          immAttr4ubv(color, col);
+          immAttr4fv(color, col);
           immVertex2fv(pos, bezt->vec[1]);
         }
 
         /* only draw second handle if this segment is bezier */
         if (bezt->ipo == BEZT_IPO_BEZ) {
-          UI_GetThemeColor3ubv(basecol + bezt->h2, col);
-          col[3] = fcurve_display_alpha(fcu) * 255;
-          immAttr4ubv(color, col);
+          UI_GetThemeColor3fv(basecol + bezt->h2, col);
+          col[3] = fcurve_display_alpha(fcu);
+          immAttr4fv(color, col);
           immVertex2fv(pos, bezt->vec[1]);
-          immAttr4ubv(color, col);
+          immAttr4fv(color, col);
           immVertex2fv(pos, bezt->vec[2]);
         }
       }
@@ -505,21 +506,21 @@ static void draw_fcurve_handles(SpaceGraph *sipo, ARegion *region, const FCurve 
         if (((bezt->f1 & SELECT) == sel) && ((!prevbezt && (bezt->ipo == BEZT_IPO_BEZ)) ||
                                              (prevbezt && (prevbezt->ipo == BEZT_IPO_BEZ))))
         {
-          UI_GetThemeColor3ubv(basecol + bezt->h1, col);
-          col[3] = fcurve_display_alpha(fcu) * 255;
-          immAttr4ubv(color, col);
+          UI_GetThemeColor3fv(basecol + bezt->h1, col);
+          col[3] = fcurve_display_alpha(fcu);
+          immAttr4fv(color, col);
           immVertex2fv(pos, bezt->vec[0]);
-          immAttr4ubv(color, col);
+          immAttr4fv(color, col);
           immVertex2fv(pos, bezt->vec[1]);
         }
 
         /* only draw second handle if this segment is bezier, and selection is ok */
         if (((bezt->f3 & SELECT) == sel) && (bezt->ipo == BEZT_IPO_BEZ)) {
-          UI_GetThemeColor3ubv(basecol + bezt->h2, col);
-          col[3] = fcurve_display_alpha(fcu) * 255;
-          immAttr4ubv(color, col);
+          UI_GetThemeColor3fv(basecol + bezt->h2, col);
+          col[3] = fcurve_display_alpha(fcu);
+          immAttr4fv(color, col);
           immVertex2fv(pos, bezt->vec[1]);
-          immAttr4ubv(color, col);
+          immAttr4fv(color, col);
           immVertex2fv(pos, bezt->vec[2]);
         }
       }
@@ -636,15 +637,11 @@ static void draw_fcurve_curve(bAnimContext *ac,
      * This one still amounts to 10 sample-frames for each 1-frame interval
      * which should be quite a decent approximation in many situations.
      */
-    if (samplefreq < 0.1f) {
-      samplefreq = 0.1f;
-    }
+    samplefreq = std::max(samplefreq, 0.1f);
   }
   else {
     /* "Higher Precision" but slower - especially on larger windows (e.g. #40372) */
-    if (samplefreq < 0.00001f) {
-      samplefreq = 0.00001f;
-    }
+    samplefreq = std::max(samplefreq, 0.00001f);
   }
 
   /* the start/end times are simply the horizontal extents of the 'cur' rect */
@@ -702,9 +699,7 @@ static void draw_fcurve_curve(bAnimContext *ac,
      * eval_start + total_samples * eval_freq > eval_end
      * due to floating point problems.
      */
-    if (eval_time > eval_end) {
-      eval_time = eval_end;
-    }
+    eval_time = std::min(eval_time, eval_end);
 
     immVertex2f(pos, ctime, (evaluate_fcurve(&fcurve_for_draw, eval_time) + offset) * unitFac);
   }
@@ -1049,7 +1044,7 @@ static void draw_fcurve_curve_keys(
 
   BezTriple *first_key = &fcu->bezt[index_range.first()];
   rctf key_bounds = {
-      first_key->vec[1][0], first_key->vec[1][1], first_key->vec[1][0], first_key->vec[1][1]};
+      first_key->vec[1][0], first_key->vec[1][0], first_key->vec[1][1], first_key->vec[1][1]};
   /* Used when skipping keys. */
   bool has_skipped_keys = false;
   const float min_pixel_distance = 3.0f;
@@ -1069,7 +1064,7 @@ static void draw_fcurve_curve_keys(
       curve_vertices.append({BLI_rctf_cent_x(&key_bounds), BLI_rctf_cent_y(&key_bounds)});
       has_skipped_keys = false;
       key_bounds = {
-          prevbezt->vec[1][0], prevbezt->vec[1][1], prevbezt->vec[1][0], prevbezt->vec[1][1]};
+          prevbezt->vec[1][0], prevbezt->vec[1][0], prevbezt->vec[1][1], prevbezt->vec[1][1]};
       expand_key_bounds(prevbezt, bezt, key_bounds);
       /* Calculate again based on the new prevbezt. */
       pixel_distance = calculate_pixel_distance(key_bounds, pixels_per_unit);
@@ -1143,10 +1138,9 @@ static void draw_fcurve(bAnimContext *ac, SpaceGraph *sipo, ARegion *region, bAn
 {
   FCurve *fcu = (FCurve *)ale->key_data;
   FModifier *fcm = find_active_fmodifier(&fcu->modifiers);
-  AnimData *adt = ANIM_nla_mapping_get(ac, ale);
 
   /* map keyframes for drawing if scaled F-Curve */
-  ANIM_nla_mapping_apply_fcurve(adt, static_cast<FCurve *>(ale->key_data), false, false);
+  ANIM_nla_mapping_apply_if_needed_fcurve(ale, static_cast<FCurve *>(ale->key_data), false, false);
 
   /* draw curve:
    * - curve line may be result of one or more destructive modifiers or just the raw data,
@@ -1213,20 +1207,23 @@ static void draw_fcurve(bAnimContext *ac, SpaceGraph *sipo, ARegion *region, bAn
       /* draw a curve affected by modifiers or only allowed to have integer values
        * by sampling it at various small-intervals over the visible region
        */
-      if (adt) {
-        /* We have to do this mapping dance since the keyframes were remapped but the F-modifier
-         * evaluations are not.
-         *
-         * So we undo the keyframe remapping and instead remap the evaluation time when drawing the
-         * curve itself. Afterward, we go back and redo the keyframe remapping so the controls are
-         * drawn properly. */
-        ANIM_nla_mapping_apply_fcurve(adt, static_cast<FCurve *>(ale->key_data), true, false);
-        draw_fcurve_curve(ac, ale->id, fcu, &region->v2d, shdr_pos, true, draw_extrapolation);
-        ANIM_nla_mapping_apply_fcurve(adt, static_cast<FCurve *>(ale->key_data), false, false);
-      }
-      else {
-        draw_fcurve_curve(ac, ale->id, fcu, &region->v2d, shdr_pos, false, draw_extrapolation);
-      }
+      /* We have to do this mapping dance since the keyframes were remapped but the F-modifier
+       * evaluations are not.
+       *
+       * So we undo the keyframe remapping and instead remap the evaluation time when drawing
+       * the curve itself. Afterward, we go back and redo the keyframe remapping so the controls
+       * are drawn properly. */
+      ANIM_nla_mapping_apply_if_needed_fcurve(
+          ale, static_cast<FCurve *>(ale->key_data), true, false);
+      draw_fcurve_curve(ac,
+                        ale->id,
+                        fcu,
+                        &region->v2d,
+                        shdr_pos,
+                        ANIM_nla_mapping_allowed(ale),
+                        draw_extrapolation);
+      ANIM_nla_mapping_apply_if_needed_fcurve(
+          ale, static_cast<FCurve *>(ale->key_data), false, false);
     }
     else if (((fcu->bezt) || (fcu->fpt)) && (fcu->totvert)) {
       /* just draw curve based on defined data (i.e. no modifiers) */
@@ -1258,7 +1255,7 @@ static void draw_fcurve(bAnimContext *ac, SpaceGraph *sipo, ARegion *region, bAn
       if ((fcu->flag & FCURVE_ACTIVE) && (fcm)) {
         switch (fcm->type) {
           case FMODIFIER_TYPE_ENVELOPE: /* envelope */
-            draw_fcurve_modifier_controls_envelope(fcm, &region->v2d, adt);
+            draw_fcurve_modifier_controls_envelope(fcm, &region->v2d, ale);
             break;
         }
       }
@@ -1303,9 +1300,7 @@ static void draw_fcurve(bAnimContext *ac, SpaceGraph *sipo, ARegion *region, bAn
   }
 
   /* undo mapping of keyframes for drawing if scaled F-Curve */
-  if (adt) {
-    ANIM_nla_mapping_apply_fcurve(adt, static_cast<FCurve *>(ale->key_data), true, false);
-  }
+  ANIM_nla_mapping_apply_if_needed_fcurve(ale, static_cast<FCurve *>(ale->key_data), true, false);
 }
 
 /* Debugging -------------------------------- */
@@ -1521,7 +1516,7 @@ void graph_draw_curves(bAnimContext *ac, SpaceGraph *sipo, ARegion *region, shor
 void graph_draw_channel_names(bContext *C,
                               bAnimContext *ac,
                               ARegion *region,
-                              const ListBase /* bAnimListElem */ &anim_data)
+                              const ListBase /*bAnimListElem*/ &anim_data)
 {
   bAnimListElem *ale;
 

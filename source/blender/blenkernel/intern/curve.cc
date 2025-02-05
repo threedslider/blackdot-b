@@ -6,6 +6,7 @@
  * \ingroup bke
  */
 
+#include <algorithm>
 #include <cmath> /* floor */
 #include <cstdlib>
 #include <cstring>
@@ -13,8 +14,6 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
-#include "BLI_endian_switch.h"
 #include "BLI_ghash.h"
 #include "BLI_index_range.hh"
 #include "BLI_math_base_safe.h"
@@ -25,6 +24,7 @@
 #include "BLI_math_vector.h"
 #include "BLI_math_vector_types.hh"
 #include "BLI_string.h"
+#include "BLI_string_utf8.h"
 #include "BLI_utildefines.h"
 #include "BLT_translation.hh"
 
@@ -175,7 +175,7 @@ static void curve_blend_write(BlendWriter *writer, ID *id, const void *id_addres
   BLO_write_pointer_array(writer, cu->totcol, cu->mat);
 
   if (cu->vfont) {
-    BLO_write_raw(writer, cu->len + 1, cu->str);
+    BLO_write_string(writer, cu->str);
     BLO_write_struct_array(writer, CharInfo, cu->len_char32 + 1, cu->strinfo);
     BLO_write_struct_array(writer, TextBox, cu->totbox, cu->tb);
   }
@@ -212,7 +212,7 @@ static void curve_blend_read_data(BlendDataReader *reader, ID *id)
   /* Protect against integer overflow vulnerability. */
   CLAMP(cu->len_char32, 0, INT_MAX - 4);
 
-  BLO_read_pointer_array(reader, (void **)&cu->mat);
+  BLO_read_pointer_array(reader, cu->totcol, (void **)&cu->mat);
 
   BLO_read_string(reader, &cu->str);
   BLO_read_struct_array(reader, CharInfo, cu->len_char32 + 1, &cu->strinfo);
@@ -352,7 +352,7 @@ void BKE_curve_init(Curve *cu, const short curve_type)
 
   if (cu->type == OB_FONT) {
     cu->flag |= CU_FRONT | CU_BACK;
-    cu->vfont = cu->vfontb = cu->vfonti = cu->vfontbi = BKE_vfont_builtin_get();
+    cu->vfont = cu->vfontb = cu->vfonti = cu->vfontbi = BKE_vfont_builtin_ensure();
     cu->vfont->id.us += 4;
 
     const char *str = DATA_("Text");
@@ -588,7 +588,6 @@ void BKE_nurb_free(Nurb *nu)
     MEM_freeN(nu->knotsv);
   }
   nu->knotsv = nullptr;
-  // if (nu->trim.first) freeNurblist(&(nu->trim));
 
   MEM_freeN(nu);
 }
@@ -1211,9 +1210,7 @@ static void basisNurb(
     if (knots[i] != knots[i + 1] && t >= knots[i] && t <= knots[i + 1]) {
       basis[i] = 1.0;
       i1 = i - o2;
-      if (i1 < 0) {
-        i1 = 0;
-      }
+      i1 = std::max(i1, 0);
       i2 = i;
       i++;
       while (i < opp2) {
@@ -3147,12 +3144,8 @@ static void calchandleNurb_intern(BezTriple *bezt,
       bool leftviolate = false, rightviolate = false;
 
       if (!is_fcurve || fcurve_smoothing == FCURVE_SMOOTH_NONE) {
-        if (len_a > 5.0f * len_b) {
-          len_a = 5.0f * len_b;
-        }
-        if (len_b > 5.0f * len_a) {
-          len_b = 5.0f * len_a;
-        }
+        len_a = std::min(len_a, 5.0f * len_b);
+        len_b = std::min(len_b, 5.0f * len_a);
       }
 
       if (ELEM(bezt->h1, HD_AUTO, HD_AUTO_ANIM)) {
@@ -5485,6 +5478,18 @@ void BKE_curve_correct_bezpart(const float v1[2], float v2[2], float v3[2], cons
     v3[0] = (v4[0] - fac * h2[0]);
     v3[1] = (v4[1] - fac * h2[1]);
   }
+}
+
+std::optional<int> Curve::material_index_max() const
+{
+  if (BLI_listbase_is_empty(&this->nurb)) {
+    return std::nullopt;
+  }
+  int max_index = 0;
+  LISTBASE_FOREACH (const Nurb *, nurb, &this->nurb) {
+    max_index = std::max<int>(max_index, nurb->mat_nr);
+  }
+  return max_index;
 }
 
 /* **** Depsgraph evaluation **** */

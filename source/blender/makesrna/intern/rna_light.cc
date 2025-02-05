@@ -8,9 +8,7 @@
 
 #include <cstdlib>
 
-#include "BLI_math_base.h"
 #include "BLI_math_rotation.h"
-#include "BLI_sys_types.h"
 
 #include "BLT_translation.hh"
 
@@ -19,8 +17,6 @@
 #include "rna_internal.hh"
 
 #include "DNA_light_types.h"
-#include "DNA_material_types.h"
-#include "DNA_texture_types.h"
 
 #ifdef RNA_RUNTIME
 
@@ -197,6 +193,7 @@ static void rna_def_light_energy(StructRNA *srna, const short light_type)
       RNA_def_property_ui_range(prop, 0.0f, 10.0f, 1, 3);
       RNA_def_property_ui_text(
           prop, "Strength", "Sunlight strength in watts per meter squared (W/m²)");
+      RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_ID_LIGHT);
       RNA_def_property_update(prop, 0, "rna_Light_draw_update");
       break;
     }
@@ -242,19 +239,6 @@ static void rna_def_light_shadow(StructRNA *srna, bool sun)
                            "Shadow map clip start, below which objects will not generate shadows");
   RNA_def_property_update(prop, 0, "rna_Light_draw_update");
 
-  prop = RNA_def_property(srna, "shadow_buffer_bias", PROP_FLOAT, PROP_NONE);
-  RNA_def_property_float_sdna(prop, nullptr, "bias");
-  RNA_def_property_range(prop, 0.0f, FLT_MAX);
-  RNA_def_property_ui_range(prop, 0.001f, 5.0f, 1.0, 3);
-  RNA_def_property_ui_text(prop, "Shadow Buffer Bias", "Bias for reducing self shadowing");
-  RNA_def_property_update(prop, 0, "rna_Light_update");
-
-  prop = RNA_def_property(srna, "shadow_color", PROP_FLOAT, PROP_COLOR);
-  RNA_def_property_float_sdna(prop, nullptr, "shdwr");
-  RNA_def_property_array(prop, 3);
-  RNA_def_property_ui_text(prop, "Shadow Color", "Color of shadows cast by the light");
-  RNA_def_property_update(prop, 0, "rna_Light_update");
-
   prop = RNA_def_property(srna, "shadow_soft_size", PROP_FLOAT, PROP_DISTANCE);
   RNA_def_property_float_sdna(prop, nullptr, "radius");
   RNA_def_property_range(prop, 0.0f, FLT_MAX);
@@ -264,39 +248,6 @@ static void rna_def_light_shadow(StructRNA *srna, bool sun)
   RNA_def_property_update(prop, 0, "rna_Light_draw_update");
 
   /* Eevee */
-  prop = RNA_def_property(srna, "use_contact_shadow", PROP_BOOLEAN, PROP_NONE);
-  RNA_def_property_boolean_sdna(prop, nullptr, "mode", LA_SHAD_CONTACT);
-  RNA_def_property_ui_text(prop,
-                           "Contact Shadow",
-                           "Use screen space ray-tracing to have correct shadowing "
-                           "near occluder, or for small features that does not appear "
-                           "in shadow maps");
-  RNA_def_property_update(prop, 0, "rna_Light_update");
-
-  prop = RNA_def_property(srna, "contact_shadow_distance", PROP_FLOAT, PROP_DISTANCE);
-  RNA_def_property_float_sdna(prop, nullptr, "contact_dist");
-  RNA_def_property_range(prop, 0.0f, 9999.0f);
-  RNA_def_property_ui_text(prop,
-                           "Contact Shadow Distance",
-                           "World space distance in which to search for "
-                           "screen space occluder");
-  RNA_def_property_update(prop, 0, "rna_Light_update");
-
-  prop = RNA_def_property(srna, "contact_shadow_bias", PROP_FLOAT, PROP_NONE);
-  RNA_def_property_float_sdna(prop, nullptr, "contact_bias");
-  RNA_def_property_range(prop, 0.001f, 9999.0f);
-  RNA_def_property_ui_range(prop, 0.001f, 5.0f, 1.0, 3);
-  RNA_def_property_ui_text(prop, "Contact Shadow Bias", "Bias to avoid self shadowing");
-  RNA_def_property_update(prop, 0, "rna_Light_update");
-
-  prop = RNA_def_property(srna, "contact_shadow_thickness", PROP_FLOAT, PROP_DISTANCE);
-  RNA_def_property_float_sdna(prop, nullptr, "contact_thickness");
-  RNA_def_property_range(prop, 0.0f, 9999.0f);
-  RNA_def_property_ui_range(prop, 0, 100, 0.1, 3);
-  RNA_def_property_ui_text(
-      prop, "Contact Shadow Thickness", "Pixel thickness used to detect occlusion");
-  RNA_def_property_update(prop, 0, "rna_Light_update");
-
   prop = RNA_def_property(srna, "shadow_filter_radius", PROP_FLOAT, PROP_NONE);
   RNA_def_property_range(prop, 0.0f, FLT_MAX);
   RNA_def_property_ui_range(prop, 0.0f, 5.0f, 1.0f, 2);
@@ -311,7 +262,7 @@ static void rna_def_light_shadow(StructRNA *srna, bool sun)
   RNA_def_property_ui_text(prop,
                            "Shadows Resolution Limit",
                            "Minimum size of a shadow map pixel. Higher values use less memory at "
-                           "the cost of shadow quality");
+                           "the cost of shadow quality.");
   RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
   RNA_def_property_update(prop, 0, "rna_Light_update");
 
@@ -321,7 +272,7 @@ static void rna_def_light_shadow(StructRNA *srna, bool sun)
       prop,
       "Shadow Jitter",
       "Enable jittered soft shadows to increase shadow precision (disabled in viewport unless "
-      "enabled in the render settings). Has a high performance impact");
+      "enabled in the render settings). Has a high performance impact.");
   RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
   RNA_def_property_update(prop, 0, "rna_Light_update");
 

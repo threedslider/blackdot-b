@@ -6,7 +6,6 @@
  * \ingroup spnla
  */
 
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -15,13 +14,11 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
-#include "BLI_utildefines.h"
-
 #include "BKE_anim_data.hh"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
 #include "BKE_layer.hh"
-#include "BKE_nla.h"
+#include "BKE_nla.hh"
 #include "BKE_report.hh"
 
 #include "ANIM_action.hh"
@@ -373,7 +370,7 @@ static int nlatracks_pushdown_exec(bContext *C, wmOperator *op)
 
   /* get anim-channel to use (or more specifically, the animdata block behind it) */
   if (track_index == -1) {
-    PointerRNA adt_ptr = {nullptr};
+    PointerRNA adt_ptr = {};
 
     /* active animdata block */
     if (nla_panel_context(C, &adt_ptr, nullptr, nullptr) == 0 || (adt_ptr.data == nullptr)) {
@@ -432,30 +429,22 @@ static int nlatracks_pushdown_exec(bContext *C, wmOperator *op)
                "Cannot push down actions while tweaking a strip's action, exit tweak mode first");
     return OPERATOR_CANCELLED;
   }
-  if (adt->action == nullptr) {
+
+  bAction *action_to_push_down = adt->action;
+  if (!action_to_push_down) {
     BKE_report(op->reports, RPT_WARNING, "No active action to push down");
     return OPERATOR_CANCELLED;
   }
 
-#ifdef WITH_ANIM_BAKLAVA
-  /* Reject layered Actions, until the NLA knows how to handle them.
-   * Ideally this would happen in the poll function, but the way it's determined which Action to
-   * push down is a bit convoluted (see code above). */
-  if (!adt->action->wrap().is_action_legacy()) {
-    BKE_report(op->reports, RPT_ERROR, "Layered Actions cannot be used as NLA strips");
-    return OPERATOR_CANCELLED;
-  }
-#endif  // WITH_ANIM_BAKLAVA
-
   /* 'push-down' action - only usable when not in Tweak-mode. */
-  BKE_nla_action_pushdown(adt, ID_IS_OVERRIDE_LIBRARY(id));
+  BKE_nla_action_pushdown({*id, *adt}, ID_IS_OVERRIDE_LIBRARY(id));
 
   Main *bmain = CTX_data_main(C);
   DEG_id_tag_update_ex(bmain, id, ID_RECALC_ANIMATION);
 
   /* The action needs updating too, as FCurve modifiers are to be reevaluated. They won't extend
    * beyond the NLA strip after pushing down to the NLA. */
-  DEG_id_tag_update_ex(bmain, &adt->action->id, ID_RECALC_ANIMATION);
+  DEG_id_tag_update_ex(bmain, &action_to_push_down->id, ID_RECALC_ANIMATION);
 
   /* set notifier that things have changed */
   WM_event_add_notifier(C, NC_ANIMATION | ND_NLA_ACTCHANGE, nullptr);

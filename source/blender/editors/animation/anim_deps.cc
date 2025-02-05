@@ -21,11 +21,11 @@
 #include "DNA_space_types.h"
 #include "DNA_windowmanager_types.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_set.hh"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_anim_data.hh"
 #include "BKE_context.hh"
 #include "BKE_fcurve.hh"
@@ -182,23 +182,23 @@ static void animchan_sync_fcurve_scene(bAnimListElem *ale)
   BLI_assert(GS(owner_id->name) == ID_SCE);
   Scene *scene = (Scene *)owner_id;
   FCurve *fcu = (FCurve *)ale->data;
-  Sequence *seq = nullptr;
+  Strip *strip = nullptr;
 
-  /* Only affect if F-Curve involves sequence_editor.sequences. */
-  char seq_name[sizeof(seq->name)];
-  if (!BLI_str_quoted_substr(fcu->rna_path, "sequences_all[", seq_name, sizeof(seq_name))) {
+  /* Only affect if F-Curve involves sequence_editor.strips. */
+  char strip_name[sizeof(strip->name)];
+  if (!BLI_str_quoted_substr(fcu->rna_path, "strips_all[", strip_name, sizeof(strip_name))) {
     return;
   }
 
   /* Check if this strip is selected. */
   Editing *ed = SEQ_editing_get(scene);
-  seq = SEQ_get_sequence_by_name(ed->seqbasep, seq_name, false);
-  if (seq == nullptr) {
+  strip = SEQ_get_sequence_by_name(ed->seqbasep, strip_name, false);
+  if (strip == nullptr) {
     return;
   }
 
   /* update selection status */
-  if (seq->flag & SELECT) {
+  if (strip->flag & SELECT) {
     fcu->flag |= FCURVE_SELECTED;
   }
   else {
@@ -499,18 +499,8 @@ void ANIM_deselect_keys_in_animation_editors(bContext *C)
         continue;
       }
       ListBase anim_data = {nullptr, nullptr};
-      int filter = 0;
-      if (ac.spacetype == SPACE_GRAPH) {
-        SpaceGraph *graph_editor = (SpaceGraph *)ac.sl;
-        filter = graph_editor->ads->filterflag;
-      }
-      else {
-        BLI_assert(ac.spacetype == SPACE_ACTION);
-        SpaceAction *action_editor = (SpaceAction *)ac.sl;
-        filter = action_editor->ads.filterflag;
-      }
-      ANIM_animdata_filter(
-          &ac, &anim_data, eAnimFilter_Flags(filter), ac.data, eAnimCont_Types(ac.datatype));
+      eAnimFilter_Flags filter = (ANIMFILTER_DATA_VISIBLE | ANIMFILTER_FCURVESONLY);
+      ANIM_animdata_filter(&ac, &anim_data, filter, ac.data, eAnimCont_Types(ac.datatype));
       LISTBASE_FOREACH (bAnimListElem *, ale, &anim_data) {
         if (!ale->adt || !ale->adt->action) {
           continue;

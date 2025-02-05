@@ -173,7 +173,7 @@ bool MTLFrameBuffer::check(char err_out[256])
   for (int col_att = 0; col_att < this->get_attachment_count(); col_att++) {
     MTLAttachment att = this->get_color_attachment(col_att);
     if (att.used) {
-      if (att.texture->gpu_image_usage_flags_ & GPU_TEXTURE_USAGE_ATTACHMENT) {
+      if (att.texture->internal_gpu_image_usage_flags_ & GPU_TEXTURE_USAGE_ATTACHMENT) {
         if (first) {
           dim_x = att.texture->width_get();
           dim_y = att.texture->height_get();
@@ -217,7 +217,7 @@ bool MTLFrameBuffer::check(char err_out[256])
       dim_x = depth_att.texture->width_get();
       dim_y = depth_att.texture->height_get();
       first = false;
-      valid = (depth_att.texture->gpu_image_usage_flags_ & GPU_TEXTURE_USAGE_ATTACHMENT);
+      valid = (depth_att.texture->internal_gpu_image_usage_flags_ & GPU_TEXTURE_USAGE_ATTACHMENT);
 
       if (!valid) {
         const char *format =
@@ -254,7 +254,8 @@ bool MTLFrameBuffer::check(char err_out[256])
       dim_x = stencil_att.texture->width_get();
       dim_y = stencil_att.texture->height_get();
       first = false;
-      valid = (stencil_att.texture->gpu_image_usage_flags_ & GPU_TEXTURE_USAGE_ATTACHMENT);
+      valid = (stencil_att.texture->internal_gpu_image_usage_flags_ &
+               GPU_TEXTURE_USAGE_ATTACHMENT);
       if (!valid) {
         const char *format =
             "Framebuffer %s: Stencil attachment does not have usage "
@@ -475,8 +476,7 @@ void MTLFrameBuffer::clear_attachment(GPUAttachmentType type,
 void MTLFrameBuffer::subpass_transition_impl(const GPUAttachmentState /*depth_attachment_state*/,
                                              Span<GPUAttachmentState> color_attachment_states)
 {
-  const bool is_tile_based_arch = (GPU_platform_architecture() == GPU_ARCHITECTURE_TBDR);
-  if (!is_tile_based_arch) {
+  if (!MTLBackend::capabilities.supports_native_tile_inputs) {
     /* Break render-pass if tile memory is unsupported to ensure current frame-buffer results are
      * stored. */
     context_->main_command_buffer.end_active_command_encoder();
@@ -841,6 +841,7 @@ bool MTLFrameBuffer::add_color_attachment(gpu::MTLTexture *texture,
 {
   BLI_assert(this);
   BLI_assert(slot >= 0 && slot < this->get_attachment_limit());
+  set_color_attachment_bit(GPU_FB_COLOR_ATTACHMENT0 + int(slot), true);
 
   if (texture) {
     if (miplevel < 0 || miplevel >= MTL_MAX_MIPMAP_COUNT) {
@@ -1202,6 +1203,7 @@ bool MTLFrameBuffer::remove_color_attachment(uint slot)
 {
   BLI_assert(this);
   BLI_assert(slot >= 0 && slot < this->get_attachment_limit());
+  set_color_attachment_bit(GPU_FB_COLOR_ATTACHMENT0 + int(slot), false);
 
   if (this->has_attachment_at_slot(slot)) {
     colour_attachment_count_ -= (mtl_color_attachments_[slot].used) ? 1 : 0;
@@ -1305,11 +1307,16 @@ bool MTLFrameBuffer::set_color_attachment_clear_color(uint slot, const float cle
 
   /* Only mark as dirty if values have changed. */
   bool changed = mtl_color_attachments_[slot].load_action != GPU_LOADACTION_CLEAR;
-  changed = changed || (memcmp(mtl_color_attachments_[slot].clear_value.color,
-                               clear_color,
-                               sizeof(float) * 4) != 0);
+  float *attachment_clear_color = mtl_color_attachments_[slot].clear_value.color;
+  changed = changed || (attachment_clear_color[0] != clear_color[0] ||
+                        attachment_clear_color[1] != clear_color[1] ||
+                        attachment_clear_color[2] != clear_color[2] ||
+                        attachment_clear_color[3] != clear_color[3]);
   if (changed) {
-    memcpy(mtl_color_attachments_[slot].clear_value.color, clear_color, sizeof(float) * 4);
+    attachment_clear_color[0] = clear_color[0];
+    attachment_clear_color[1] = clear_color[1];
+    attachment_clear_color[2] = clear_color[2];
+    attachment_clear_color[3] = clear_color[3];
   }
   mtl_color_attachments_[slot].load_action = GPU_LOADACTION_CLEAR;
 
@@ -1542,7 +1549,7 @@ MTLRenderPassDescriptor *MTLFrameBuffer::bake_render_pass_descriptor(bool load_c
 
   /* If Frame-buffer has been modified, regenerate descriptor. */
   if (is_dirty_) {
-    /* Clear all configs. */
+    /* Clear all configurations. */
     for (int config = 0; config < 3; config++) {
       descriptor_dirty_[config] = true;
     }

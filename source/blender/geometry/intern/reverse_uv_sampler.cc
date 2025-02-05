@@ -9,13 +9,12 @@
 
 #include "BLI_bounds.hh"
 #include "BLI_enumerable_thread_specific.hh"
-#include "BLI_index_mask.hh"
 #include "BLI_linear_allocator_chunked_list.hh"
+#include "BLI_map.hh"
 #include "BLI_math_geom.h"
 #include "BLI_math_vector.hh"
 #include "BLI_offset_indices.hh"
 #include "BLI_task.hh"
-#include "BLI_timeit.hh"
 
 namespace blender::geometry {
 
@@ -23,7 +22,10 @@ struct Row {
   /** The min and max horizontal cell index that is used in this row. */
   int x_min = 0;
   int x_max = 0;
-  /** Offsets into the array of indices below. Also see #OffsetIndices. */
+  /**
+   * Offsets into the array of indices below. Also see #OffsetIndices. May be empty if there are
+   * no triangles in this row.
+   */
   Array<int> offsets;
   /** A flat array containing the triangle indices contained in each cell. */
   Array<int> tri_indices;
@@ -218,6 +220,9 @@ static Span<int> lookup_tris_in_cell(const int2 cell,
     return {};
   }
   if (cell.x > row.x_max) {
+    return {};
+  }
+  if (row.tri_indices.is_empty()) {
     return {};
   }
   const int offset = row.offsets[cell.x - row.x_min];

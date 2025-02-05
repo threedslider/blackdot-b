@@ -23,9 +23,9 @@
  * to be relatively fast by default in all cases. However, it also offers many customization
  * points that allow it to be optimized for a specific use case.
  *
- * A rudimentary benchmark can be found in BLI_set_test.cc. The results of that benchmark are
- * there as well. The numbers show that in this specific case blender::Set outperforms
- * std::unordered_set consistently by a good amount.
+ * A rudimentary benchmark can be found in `BLI_set_test.cc`. The results of that benchmark are
+ * there as well. The numbers show that in this specific case #blender::Set outperforms
+ * #std::unordered_set consistently by a good amount.
  *
  * Some noteworthy information:
  * - Key must be a movable type.
@@ -527,9 +527,22 @@ class Set {
   }
 
   /**
-   * Remove all elements from the set.
+   * Remove all elements. Under some circumstances #clear_and_keep_capacity may be more efficient.
    */
   void clear()
+  {
+    std::destroy_at(this);
+    new (this) Set(NoExceptConstructor{});
+  }
+
+  /**
+   * Remove all elements, but don't free the underlying memory.
+   *
+   * This can be more efficient than using #clear if approximately the same or more elements are
+   * added again afterwards. If way fewer elements are added instead, the cost of maintaining a
+   * large hash table can lead to very bad worst-case performance.
+   */
+  void clear_and_keep_capacity()
   {
     for (Slot &slot : slots_) {
       slot.~Slot();
@@ -538,15 +551,6 @@ class Set {
 
     removed_slots_ = 0;
     occupied_and_removed_slots_ = 0;
-  }
-
-  /**
-   * Removes all keys from the set and frees any allocated memory.
-   */
-  void clear_and_shrink()
-  {
-    std::destroy_at(this);
-    new (this) Set(NoExceptConstructor{});
   }
 
   /**

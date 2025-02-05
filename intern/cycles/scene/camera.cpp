@@ -2,6 +2,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0 */
 
+#include <algorithm>
+
 #include "scene/camera.h"
 #include "scene/mesh.h"
 #include "scene/object.h"
@@ -11,17 +13,11 @@
 
 #include "device/device.h"
 
-#include "util/foreach.h"
-#include "util/function.h"
 #include "util/log.h"
 #include "util/math_cdf.h"
-#include "util/task.h"
+#include "util/tbb.h"
 #include "util/time.h"
 #include "util/vector.h"
-
-/* needed for calculating differentials */
-#include "kernel/device/cpu/compat.h"
-#include "kernel/device/cpu/globals.h"
 
 #include "kernel/camera/camera.h"
 
@@ -34,14 +30,12 @@ static float shutter_curve_eval(float x, array<float> &shutter_curve)
   }
 
   x = saturatef(x) * shutter_curve.size() - 1;
-  int index = (int)x;
-  float frac = x - index;
+  const int index = (int)x;
+  const float frac = x - index;
   if (index < shutter_curve.size() - 1) {
     return mix(shutter_curve[index], shutter_curve[index + 1], frac);
   }
-  else {
-    return shutter_curve[shutter_curve.size() - 1];
-  }
+  return shutter_curve[shutter_curve.size() - 1];
 }
 
 NODE_DEFINE(Camera)
@@ -90,6 +84,7 @@ NODE_DEFINE(Camera)
   panorama_type_enum.insert("fisheye_equidistant", PANORAMA_FISHEYE_EQUIDISTANT);
   panorama_type_enum.insert("fisheye_equisolid", PANORAMA_FISHEYE_EQUISOLID);
   panorama_type_enum.insert("fisheye_lens_polynomial", PANORAMA_FISHEYE_LENS_POLYNOMIAL);
+  panorama_type_enum.insert("panorama_central_cylindrical", PANORAMA_CENTRAL_CYLINDRICAL);
   SOCKET_ENUM(panorama_type, "Panorama Type", panorama_type_enum, PANORAMA_EQUIRECTANGULAR);
 
   SOCKET_FLOAT(fisheye_fov, "Fisheye FOV", M_PI_F);
@@ -107,6 +102,11 @@ NODE_DEFINE(Camera)
   SOCKET_FLOAT(fisheye_polynomial_k2, "Fisheye Polynomial K2", 0.0f);
   SOCKET_FLOAT(fisheye_polynomial_k3, "Fisheye Polynomial K3", 0.0f);
   SOCKET_FLOAT(fisheye_polynomial_k4, "Fisheye Polynomial K4", 0.0f);
+
+  SOCKET_FLOAT(central_cylindrical_range_u_min, "Central Cylindrical Range U Min", -M_PI_F);
+  SOCKET_FLOAT(central_cylindrical_range_u_max, "Central Cylindrical Range U Max", M_PI_F);
+  SOCKET_FLOAT(central_cylindrical_range_v_min, "Central Cylindrical Range V Min", -1.0f);
+  SOCKET_FLOAT(central_cylindrical_range_v_max, "Central Cylindrical Range V Max", 1.0f);
 
   static NodeEnum stereo_eye_enum;
   stereo_eye_enum.insert("none", STEREO_NONE);
@@ -189,7 +189,7 @@ Camera::Camera() : Node(get_node_type())
   memset((void *)&kernel_camera, 0, sizeof(kernel_camera));
 }
 
-Camera::~Camera() {}
+Camera::~Camera() = default;
 
 void Camera::compute_auto_viewplane()
 {
@@ -200,7 +200,7 @@ void Camera::compute_auto_viewplane()
     viewplane.top = 1.0f;
   }
   else {
-    float aspect = (float)full_width / (float)full_height;
+    const float aspect = (float)full_width / (float)full_height;
     if (full_width >= full_height) {
       viewplane.left = -aspect;
       viewplane.right = aspect;
@@ -218,7 +218,7 @@ void Camera::compute_auto_viewplane()
 
 void Camera::update(Scene *scene)
 {
-  Scene::MotionType need_motion = scene->need_motion();
+  const Scene::MotionType need_motion = scene->need_motion();
 
   if (previous_need_motion != need_motion) {
     /* scene's motion model could have been changed since previous device
@@ -231,27 +231,27 @@ void Camera::update(Scene *scene)
     return;
   }
 
-  scoped_callback_timer timer([scene](double time) {
+  const scoped_callback_timer timer([scene](double time) {
     if (scene->update_stats) {
       scene->update_stats->camera.times.add_entry({"update", time});
     }
   });
 
   /* Full viewport to camera border in the viewport. */
-  Transform fulltoborder = transform_from_viewplane(viewport_camera_border);
-  Transform bordertofull = transform_inverse(fulltoborder);
+  const Transform fulltoborder = transform_from_viewplane(viewport_camera_border);
+  const Transform bordertofull = transform_inverse(fulltoborder);
 
   /* NDC to raster. */
-  Transform ndctoraster = transform_scale(width, height, 1.0f) * bordertofull;
-  Transform full_ndctoraster = transform_scale(full_width, full_height, 1.0f) * bordertofull;
+  const Transform ndctoraster = transform_scale(width, height, 1.0f) * bordertofull;
+  const Transform full_ndctoraster = transform_scale(full_width, full_height, 1.0f) * bordertofull;
 
   /* Raster to screen. */
-  Transform screentondc = fulltoborder * transform_from_viewplane(viewplane);
+  const Transform screentondc = fulltoborder * transform_from_viewplane(viewplane);
 
-  Transform screentoraster = ndctoraster * screentondc;
-  Transform rastertoscreen = transform_inverse(screentoraster);
-  Transform full_screentoraster = full_ndctoraster * screentondc;
-  Transform full_rastertoscreen = transform_inverse(full_screentoraster);
+  const Transform screentoraster = ndctoraster * screentondc;
+  const Transform rastertoscreen = transform_inverse(screentoraster);
+  const Transform full_screentoraster = full_ndctoraster * screentondc;
+  const Transform full_rastertoscreen = transform_inverse(full_screentoraster);
 
   /* Screen to camera. */
   ProjectionTransform cameratoscreen;
@@ -265,11 +265,10 @@ void Camera::update(Scene *scene)
     cameratoscreen = projection_identity();
   }
 
-  ProjectionTransform screentocamera = projection_inverse(cameratoscreen);
+  const ProjectionTransform screentocamera = projection_inverse(cameratoscreen);
 
   rastertocamera = screentocamera * rastertoscreen;
   full_rastertocamera = screentocamera * full_rastertoscreen;
-  cameratoraster = screentoraster * cameratoscreen;
 
   cameratoworld = matrix;
   screentoworld = cameratoworld * screentocamera;
@@ -348,7 +347,6 @@ void Camera::update(Scene *scene)
   }
 
   if (need_motion == Scene::MOTION_PASS) {
-    /* TODO(sergey): Support perspective (zoom, fov) motion. */
     if (camera_type == CAMERA_PANORAMA) {
       if (have_motion) {
         kcam->motion_pass_pre = transform_inverse(motion[0]);
@@ -360,9 +358,19 @@ void Camera::update(Scene *scene)
       }
     }
     else {
-      if (have_motion) {
-        kcam->perspective_pre = cameratoraster * transform_inverse(motion[0]);
-        kcam->perspective_post = cameratoraster * transform_inverse(motion[motion.size() - 1]);
+      if (have_motion || fov != fov_pre || fov != fov_post) {
+        /* Note the values for perspective_pre/perspective_post calculated for MOTION_PASS are
+         * different to those calculated for MOTION_BLUR below, so the code has not been combined.
+         */
+        const ProjectionTransform cameratoscreen_pre = projection_perspective(
+            fov_pre, nearclip, farclip);
+        const ProjectionTransform cameratoscreen_post = projection_perspective(
+            fov_post, nearclip, farclip);
+        const ProjectionTransform cameratoraster_pre = screentoraster * cameratoscreen_pre;
+        const ProjectionTransform cameratoraster_post = screentoraster * cameratoscreen_post;
+        kcam->perspective_pre = cameratoraster_pre * transform_inverse(motion[0]);
+        kcam->perspective_post = cameratoraster_post *
+                                 transform_inverse(motion[motion.size() - 1]);
       }
       else {
         kcam->perspective_pre = worldtoraster;
@@ -379,12 +387,9 @@ void Camera::update(Scene *scene)
 
     /* TODO(sergey): Support other types of camera. */
     if (use_perspective_motion && camera_type == CAMERA_PERSPECTIVE) {
-      /* TODO(sergey): Move to an utility function and de-duplicate with
-       * calculation above.
-       */
-      ProjectionTransform screentocamera_pre = projection_inverse(
+      const ProjectionTransform screentocamera_pre = projection_inverse(
           projection_perspective(fov_pre, nearclip, farclip));
-      ProjectionTransform screentocamera_post = projection_inverse(
+      const ProjectionTransform screentocamera_post = projection_inverse(
           projection_perspective(fov_post, nearclip, farclip));
 
       kcam->perspective_pre = screentocamera_pre * rastertoscreen;
@@ -420,6 +425,10 @@ void Camera::update(Scene *scene)
   kcam->fisheye_lens_polynomial_bias = fisheye_polynomial_k0;
   kcam->fisheye_lens_polynomial_coefficients = make_float4(
       fisheye_polynomial_k1, fisheye_polynomial_k2, fisheye_polynomial_k3, fisheye_polynomial_k4);
+  kcam->central_cylindrical_range = make_float4(-central_cylindrical_range_u_min,
+                                                -central_cylindrical_range_u_max,
+                                                central_cylindrical_range_v_min,
+                                                central_cylindrical_range_v_max);
 
   switch (stereo_eye) {
     case STEREO_LEFT:
@@ -453,8 +462,8 @@ void Camera::update(Scene *scene)
   kcam->height = height;
 
   /* store differentials */
-  kcam->dx = float3_to_float4(dx);
-  kcam->dy = float3_to_float4(dy);
+  kcam->dx = make_float4(dx);
+  kcam->dy = make_float4(dy);
 
   /* clipping */
   kcam->nearclip = nearclip;
@@ -474,7 +483,7 @@ void Camera::update(Scene *scene)
   previous_need_motion = need_motion;
 }
 
-void Camera::device_update(Device * /* device */, DeviceScene *dscene, Scene *scene)
+void Camera::device_update(Device * /*device*/, DeviceScene *dscene, Scene *scene)
 {
   update(scene);
 
@@ -482,7 +491,7 @@ void Camera::device_update(Device * /* device */, DeviceScene *dscene, Scene *sc
     return;
   }
 
-  scoped_callback_timer timer([scene](double time) {
+  const scoped_callback_timer timer([scene](double time) {
     if (scene->update_stats) {
       scene->update_stats->camera.times.add_entry({"device_update", time});
     }
@@ -491,22 +500,23 @@ void Camera::device_update(Device * /* device */, DeviceScene *dscene, Scene *sc
   scene->lookup_tables->remove_table(&shutter_table_offset);
   if (kernel_camera.shuttertime != -1.0f) {
     vector<float> shutter_table;
-    util_cdf_inverted(SHUTTER_TABLE_SIZE,
-                      0.0f,
-                      1.0f,
-                      function_bind(shutter_curve_eval, _1, shutter_curve),
-                      false,
-                      shutter_table);
+    util_cdf_inverted(
+        SHUTTER_TABLE_SIZE,
+        0.0f,
+        1.0f,
+        [this](const float x) { return shutter_curve_eval(x, shutter_curve); },
+        false,
+        shutter_table);
     shutter_table_offset = scene->lookup_tables->add_table(dscene, shutter_table);
     kernel_camera.shutter_table_offset = (int)shutter_table_offset;
   }
 
   dscene->data.cam = kernel_camera;
 
-  size_t num_motion_steps = kernel_camera_motion.size();
+  const size_t num_motion_steps = kernel_camera_motion.size();
   if (num_motion_steps) {
     DecomposedTransform *camera_motion = dscene->camera_motion.alloc(num_motion_steps);
-    memcpy(camera_motion, kernel_camera_motion.data(), sizeof(*camera_motion) * num_motion_steps);
+    std::copy_n(kernel_camera_motion.data(), num_motion_steps, camera_motion);
     dscene->camera_motion.copy_to_device();
   }
   else {
@@ -558,12 +568,13 @@ void Camera::device_free(Device * /*device*/, DeviceScene *dscene, Scene *scene)
   dscene->camera_motion.free();
 }
 
-float3 Camera::transform_raster_to_world(float raster_x, float raster_y)
+float3 Camera::transform_raster_to_world(const float raster_x, const float raster_y)
 {
-  float3 D, P;
+  float3 D;
+  float3 P;
   if (camera_type == CAMERA_PERSPECTIVE) {
     D = transform_perspective(&rastertocamera, make_float3(raster_x, raster_y, 0.0f));
-    float3 Pclip = normalize(D);
+    const float3 Pclip = normalize(D);
     P = zero_float3();
     /* TODO(sergey): Aperture support? */
     P = transform_point(&cameratoworld, P);
@@ -602,7 +613,7 @@ BoundBox Camera::viewplane_bounds_get()
       bounds.grow(make_float3(cameratoworld.x.w, cameratoworld.y.w, cameratoworld.z.w), extend);
     }
     else {
-      float half_eye_distance = interocular_distance * 0.5f;
+      const float half_eye_distance = interocular_distance * 0.5f;
 
       bounds.grow(
           make_float3(cameratoworld.x.w + half_eye_distance, cameratoworld.y.w, cameratoworld.z.w),
@@ -662,7 +673,7 @@ BoundBox Camera::viewplane_bounds_get()
   return bounds;
 }
 
-float Camera::world_to_raster_size(float3 P)
+float Camera::world_to_raster_size(const float3 P)
 {
   float res = 1.0f;
 
@@ -670,10 +681,10 @@ float Camera::world_to_raster_size(float3 P)
     res = min(len(full_dx), len(full_dy));
 
     if (offscreen_dicing_scale > 1.0f) {
-      float3 p = transform_point(&worldtocamera, P);
-      float3 v1 = transform_perspective(&full_rastertocamera,
-                                        make_float3(full_width, full_height, 0.0f));
-      float3 v2 = transform_perspective(&full_rastertocamera, zero_float3());
+      const float3 p = transform_point(&worldtocamera, P);
+      const float3 v1 = transform_perspective(&full_rastertocamera,
+                                              make_float3(full_width, full_height, 0.0f));
+      const float3 v2 = transform_perspective(&full_rastertocamera, zero_float3());
 
       /* Create point clamped to frustum */
       float3 c;
@@ -694,17 +705,17 @@ float Camera::world_to_raster_size(float3 P)
   }
   else if (camera_type == CAMERA_PERSPECTIVE) {
     /* Calculate as if point is directly ahead of the camera. */
-    float3 raster = make_float3(0.5f * full_width, 0.5f * full_height, 0.0f);
-    float3 Pcamera = transform_perspective(&full_rastertocamera, raster);
+    const float3 raster = make_float3(0.5f * full_width, 0.5f * full_height, 0.0f);
+    const float3 Pcamera = transform_perspective(&full_rastertocamera, raster);
 
     /* dDdx */
-    float3 Ddiff = transform_direction(&cameratoworld, Pcamera);
-    float3 dx = len_squared(full_dx) < len_squared(full_dy) ? full_dx : full_dy;
-    float3 dDdx = normalize(Ddiff + dx) - normalize(Ddiff);
+    const float3 Ddiff = transform_direction(&cameratoworld, Pcamera);
+    const float3 dx = len_squared(full_dx) < len_squared(full_dy) ? full_dx : full_dy;
+    const float3 dDdx = normalize(Ddiff + dx) - normalize(Ddiff);
 
     /* dPdx */
-    float dist = len(transform_point(&worldtocamera, P));
-    float3 D = normalize(Ddiff);
+    const float dist = len(transform_point(&worldtocamera, P));
+    const float3 D = normalize(Ddiff);
     res = len(dist * dDdx - dot(dist * dDdx, D) * D);
 
     /* Decent approx distance to frustum
@@ -712,13 +723,13 @@ float Camera::world_to_raster_size(float3 P)
     float f_dist = 0.0f;
 
     if (offscreen_dicing_scale > 1.0f) {
-      float3 p = transform_point(&worldtocamera, P);
+      const float3 p = transform_point(&worldtocamera, P);
 
       /* Distance from the four planes */
-      float r = dot(p, frustum_right_normal);
-      float t = dot(p, frustum_top_normal);
-      float l = dot(p, frustum_left_normal);
-      float b = dot(p, frustum_bottom_normal);
+      const float r = dot(p, frustum_right_normal);
+      const float t = dot(p, frustum_top_normal);
+      const float l = dot(p, frustum_left_normal);
+      const float b = dot(p, frustum_bottom_normal);
 
       if (r <= 0.0f && l <= 0.0f && t <= 0.0f && b <= 0.0f) {
         /* Point is inside frustum */
@@ -730,10 +741,12 @@ float Camera::world_to_raster_size(float3 P)
       }
       else {
         /* Point may be behind or off to the side, need to check */
-        float3 along_right = make_float3(-frustum_right_normal.z, 0.0f, frustum_right_normal.x);
-        float3 along_left = make_float3(frustum_left_normal.z, 0.0f, -frustum_left_normal.x);
-        float3 along_top = make_float3(0.0f, -frustum_top_normal.z, frustum_top_normal.y);
-        float3 along_bottom = make_float3(0.0f, frustum_bottom_normal.z, -frustum_bottom_normal.y);
+        const float3 along_right = make_float3(
+            -frustum_right_normal.z, 0.0f, frustum_right_normal.x);
+        const float3 along_left = make_float3(frustum_left_normal.z, 0.0f, -frustum_left_normal.x);
+        const float3 along_top = make_float3(0.0f, -frustum_top_normal.z, frustum_top_normal.y);
+        const float3 along_bottom = make_float3(
+            0.0f, frustum_bottom_normal.z, -frustum_bottom_normal.y);
 
         float dist[] = {r, l, t, b};
         float3 along[] = {along_right, along_left, along_top, along_bottom};
@@ -768,11 +781,10 @@ float Camera::world_to_raster_size(float3 P)
     }
   }
   else if (camera_type == CAMERA_PANORAMA) {
-    float3 D = transform_point(&worldtocamera, P);
-    float dist = len(D);
+    const float3 D = transform_point(&worldtocamera, P);
+    const float dist = len(D);
 
-    Ray ray;
-    memset(&ray, 0, sizeof(ray));
+    Ray ray = {};
 
     /* Distortion can become so great that the results become meaningless, there
      * may be a better way to do this, but calculating differentials from the
@@ -812,7 +824,7 @@ bool Camera::use_motion() const
   return motion.size() > 1;
 }
 
-void Camera::set_screen_size(int width_, int height_)
+void Camera::set_screen_size(const int width_, int height_)
 {
   if (width_ != width || height_ != height) {
     width = width_;
@@ -821,12 +833,12 @@ void Camera::set_screen_size(int width_, int height_)
   }
 }
 
-float Camera::motion_time(int step) const
+float Camera::motion_time(const int step) const
 {
   return (use_motion()) ? 2.0f * step / (motion.size() - 1) - 1.0f : 0.0f;
 }
 
-int Camera::motion_step(float time) const
+int Camera::motion_step(const float time) const
 {
   if (use_motion()) {
     for (int step = 0; step < motion.size(); step++) {

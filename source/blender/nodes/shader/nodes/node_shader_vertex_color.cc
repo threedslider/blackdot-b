@@ -37,7 +37,7 @@ static void node_shader_buts_vertex_color(uiLayout *layout, bContext *C, Pointer
     }
   }
 
-  uiItemR(layout, ptr, "layer_name", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_GROUP_VCOL);
+  uiItemR(layout, ptr, "layer_name", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_GROUP_VCOL);
   uiItemL(layout, RPT_("No mesh in active object"), ICON_ERROR);
 }
 
@@ -88,7 +88,12 @@ void register_node_type_sh_vertex_color()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(&ntype, SH_NODE_VERTEX_COLOR, "Color Attribute", NODE_CLASS_INPUT);
+  sh_node_type_base(&ntype, "ShaderNodeVertexColor", SH_NODE_VERTEX_COLOR);
+  ntype.ui_name = "Color Attribute";
+  ntype.ui_description =
+      "Retrieve a color attribute, or the default fallback if none is specified";
+  ntype.enum_name_legacy = "VERTEX_COLOR";
+  ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = file_ns::node_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_vertex_color;
   ntype.initfunc = file_ns::node_shader_init_vertex_color;
@@ -97,5 +102,5 @@ void register_node_type_sh_vertex_color()
   ntype.gpu_fn = file_ns::node_shader_gpu_vertex_color;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

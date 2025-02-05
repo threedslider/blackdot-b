@@ -40,11 +40,70 @@
 /** \name Utilities
  * \{ */
 
+/**
+ * Return the index of `region` of other regions in the area (of the same type).
+ */
+static int area_calc_region_type_index(const ScrArea *area, const ARegion *region)
+{
+  const int region_type = region->regiontype;
+  int index = 0;
+  LISTBASE_FOREACH (const ARegion *, region_iter, &area->regionbase) {
+    if (region_iter->regiontype != region_type) {
+      continue;
+    }
+    if (region_iter == region) {
+      return index;
+    }
+    index += 1;
+  }
+
+  /* Bad input as the `region` was not found in the `area`,
+   * -1 causes the first to be returned. */
+  BLI_assert_unreachable();
+  return -1;
+}
+
+/**
+ * Find the areas region by type and index, or just by type (if the index isn't found).
+ */
+static ARegion *area_find_region_by_type_and_index_hint(const ScrArea *area,
+                                                        const short region_type,
+                                                        int index_hint)
+{
+  ARegion *region_match_type = nullptr;
+  /* Any negative values can return the first match. */
+  index_hint = std::max(0, index_hint);
+  int index = 0;
+  LISTBASE_FOREACH (ARegion *, region, &area->regionbase) {
+    if (region->regiontype != region_type) {
+      continue;
+    }
+    if (index == index_hint) {
+      region_match_type = region;
+      break;
+    }
+    if (region_match_type == nullptr) {
+      region_match_type = region;
+    }
+    index += 1;
+  }
+  return region_match_type;
+}
+
 struct HudRegionData {
   short regionid;
+  /**
+   * The region index of this region type in the `area`.
+   * When this cannot be resolved, use the first region of `regionid`.
+   *
+   * This is needed because it's possible the index is no longer available
+   * if exiting quad-view int the 3D viewport after performing an operation for e.g.
+   * so in this case use the first region.
+   */
+  int region_index_hint;
 };
 
-static bool last_redo_poll(const bContext *C, short region_type)
+static bool last_redo_poll(const bContext *C, short region_type, int region_index_hint)
 {
   wmOperator *op = WM_operator_last_redo(C);
   if (op == nullptr) {
@@ -58,7 +117,8 @@ static bool last_redo_poll(const bContext *C, short region_type)
      * wrong context.
      */
     ScrArea *area = CTX_wm_area(C);
-    ARegion *region_op = (region_type != -1) ? BKE_area_find_region_type(area, region_type) :
+    ARegion *region_op = (region_type != -1) ? area_find_region_by_type_and_index_hint(
+                                                   area, region_type, region_index_hint) :
                                                nullptr;
     ARegion *region_prev = CTX_wm_region(C);
     CTX_wm_region_set((bContext *)C, region_op);
@@ -92,7 +152,7 @@ static bool hud_panel_operator_redo_poll(const bContext *C, PanelType * /*pt*/)
   if (region != nullptr) {
     HudRegionData *hrd = static_cast<HudRegionData *>(region->regiondata);
     if (hrd != nullptr) {
-      return last_redo_poll(C, hrd->regionid);
+      return last_redo_poll(C, hrd->regionid, hrd->region_index_hint);
     }
   }
   return false;
@@ -147,7 +207,7 @@ static void hud_region_init(wmWindowManager *wm, ARegion *region)
   region->v2d.maxzoom = 1.0f;
   region->v2d.minzoom = 1.0f;
 
-  UI_region_handlers_add(&region->handlers);
+  UI_region_handlers_add(&region->runtime->handlers);
   region->flag |= RGN_FLAG_TEMP_REGIONDATA;
 }
 
@@ -159,7 +219,7 @@ static void hud_region_free(ARegion *region)
 static void hud_region_layout(const bContext *C, ARegion *region)
 {
   HudRegionData *hrd = static_cast<HudRegionData *>(region->regiondata);
-  if (hrd == nullptr || !last_redo_poll(C, hrd->regionid)) {
+  if (hrd == nullptr || !last_redo_poll(C, hrd->regionid, hrd->region_index_hint)) {
     ED_region_tag_redraw(region);
     hud_region_hide(region);
     return;
@@ -217,11 +277,26 @@ static void hud_region_draw(const bContext *C, ARegion *region)
   }
 }
 
+static void hud_region_listener(const wmRegionListenerParams *params)
+{
+  ARegion *region = params->region;
+  const wmNotifier *wmn = params->notifier;
+
+  switch (wmn->category) {
+    case NC_WM:
+      if (wmn->data == ND_HISTORY) {
+        ED_region_tag_redraw(region);
+      }
+      break;
+  }
+}
+
 ARegionType *ED_area_type_hud(int space_type)
 {
   ARegionType *art = MEM_cnew<ARegionType>(__func__);
   art->regionid = RGN_TYPE_HUD;
   art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_VIEW2D;
+  art->listener = hud_region_listener;
   art->layout = hud_region_layout;
   art->draw = hud_region_draw;
   art->init = hud_region_init;
@@ -240,7 +315,7 @@ ARegionType *ED_area_type_hud(int space_type)
 
 static ARegion *hud_region_add(ScrArea *area)
 {
-  ARegion *region = MEM_cnew<ARegion>(__func__);
+  ARegion *region = BKE_area_region_new();
   ARegion *region_win = BKE_area_find_region_type(area, RGN_TYPE_WINDOW);
   if (region_win) {
     BLI_insertlinkbefore(&area->regionbase, region_win, region);
@@ -252,14 +327,6 @@ static ARegion *hud_region_add(ScrArea *area)
   region->alignment = RGN_ALIGN_FLOAT;
   region->overlap = true;
   region->flag |= RGN_FLAG_DYNAMIC_SIZE;
-
-  if (region_win) {
-    float x, y;
-
-    UI_view2d_scroller_size_get(&region_win->v2d, true, &x, &y);
-    region->runtime.offset_x = x;
-    region->runtime.offset_y = y;
-  }
 
   return region;
 }
@@ -303,10 +370,11 @@ void ED_area_type_hud_ensure(bContext *C, ScrArea *area)
   }
 
   bool init = false;
-  const bool was_hidden = region == nullptr || region->visible == false;
+  const bool was_hidden = region == nullptr || region->runtime->visible == false;
   ARegion *region_op = CTX_wm_region(C);
   BLI_assert((region_op == nullptr) || (region_op->regiontype != RGN_TYPE_HUD));
-  if (!last_redo_poll(C, region_op ? region_op->regiontype : -1)) {
+  const int region_index_hint = region_op ? area_calc_region_type_index(area, region_op) : -1;
+  if (!last_redo_poll(C, region_op ? region_op->regiontype : -1, region_index_hint)) {
     if (region) {
       ED_region_tag_redraw(region);
       hud_region_hide(region);
@@ -317,7 +385,7 @@ void ED_area_type_hud_ensure(bContext *C, ScrArea *area)
   if (region == nullptr) {
     init = true;
     region = hud_region_add(area);
-    region->type = art;
+    region->runtime->type = art;
   }
 
   /* Let 'ED_area_update_region_sizes' do the work of placing the region.
@@ -341,9 +409,11 @@ void ED_area_type_hud_ensure(bContext *C, ScrArea *area)
     }
     if (region_op) {
       hrd->regionid = region_op->regiontype;
+      hrd->region_index_hint = region_index_hint;
     }
     else {
       hrd->regionid = -1;
+      hrd->region_index_hint = -1;
     }
   }
 
@@ -356,6 +426,16 @@ void ED_area_type_hud_ensure(bContext *C, ScrArea *area)
   ED_region_floating_init(region);
   ED_region_tag_redraw(region);
 
+  /* We need to update/initialize the runtime offsets. */
+  ARegion *region_win = BKE_area_find_region_type(area, RGN_TYPE_WINDOW);
+  if (region_win) {
+    float x, y;
+
+    UI_view2d_scroller_size_get(&region_win->v2d, true, &x, &y);
+    region->runtime->offset_x = x;
+    region->runtime->offset_y = y;
+  }
+
   /* Reset zoom level (not well supported). */
   rctf reset_rect = {};
   reset_rect.xmax = region->winx;
@@ -364,23 +444,24 @@ void ED_area_type_hud_ensure(bContext *C, ScrArea *area)
   region->v2d.minzoom = 1.0f;
   region->v2d.maxzoom = 1.0f;
 
-  region->visible = !(region->flag & RGN_FLAG_HIDDEN);
+  region->runtime->visible = !(region->flag & RGN_FLAG_HIDDEN);
 
   /* We shouldn't need to do this every time :S */
   /* XXX, this is evil! - it also makes the menu show on first draw. :( */
-  if (region->visible) {
+  if (region->runtime->visible) {
     ARegion *region_prev = CTX_wm_region(C);
-    CTX_wm_region_set((bContext *)C, region);
+    CTX_wm_region_set(C, region);
     hud_region_layout(C, region);
     if (was_hidden) {
       region->winx = region->v2d.winx;
       region->winy = region->v2d.winy;
       region->v2d.cur = region->v2d.tot = reset_rect;
     }
-    CTX_wm_region_set((bContext *)C, region_prev);
+    CTX_wm_region_set(C, region_prev);
   }
 
-  region->visible = !((region->flag & RGN_FLAG_HIDDEN) || (region->flag & RGN_FLAG_TOO_SMALL));
+  region->runtime->visible = !((region->flag & RGN_FLAG_HIDDEN) ||
+                               (region->flag & RGN_FLAG_TOO_SMALL));
 }
 
 ARegion *ED_area_type_hud_redo_region_find(const ScrArea *area, const ARegion *hud_region)
@@ -392,7 +473,7 @@ ARegion *ED_area_type_hud_redo_region_find(const ScrArea *area, const ARegion *h
     return nullptr;
   }
 
-  return BKE_area_find_region_type(area, hrd->regionid);
+  return area_find_region_by_type_and_index_hint(area, hrd->regionid, hrd->region_index_hint);
 }
 
 /** \} */

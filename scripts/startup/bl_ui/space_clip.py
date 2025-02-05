@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-import bpy
 from bpy.types import Panel, Header, Menu, UIList
 from bpy.app.translations import (
     pgettext_iface as iface_,
@@ -14,6 +13,7 @@ from bl_ui.properties_grease_pencil_common import (
     AnnotationDrawingToolsPanel,
     AnnotationDataPanel,
 )
+from . import anim
 
 
 class CLIP_UL_tracking_objects(UIList):
@@ -203,9 +203,11 @@ class CLIP_HT_header(Header):
 
                 row = layout.row(align=True)
                 row.prop(dopesheet, "sort_method", text="")
-                row.prop(dopesheet, "use_invert_sort",
-                         text="", toggle=True,
-                         icon='SORT_DESC' if dopesheet.use_invert_sort else 'SORT_ASC')
+                row.prop(
+                    dopesheet, "use_invert_sort",
+                    text="", toggle=True,
+                    icon='SORT_DESC' if dopesheet.use_invert_sort else 'SORT_ASC',
+                )
 
     def _draw_masking(self, context):
         layout = self.layout
@@ -558,8 +560,10 @@ class CLIP_PT_tools_solve(CLIP_PT_tracking_panel, Panel):
         col.prop(settings, "use_keyframe_selection", text="Keyframe")
 
         col = layout.column(align=True)
-        col.active = (not settings.use_tripod_solver and
-                      not settings.use_keyframe_selection)
+        col.active = (
+            not settings.use_tripod_solver and
+            not settings.use_keyframe_selection
+        )
         col.prop(tracking_object, "keyframe_a")
         col.prop(tracking_object, "keyframe_b")
 
@@ -1042,8 +1046,7 @@ class CLIP_PT_stabilization(CLIP_PT_reconstruction_panel, Panel):
         else:
             row.label(text="Tracks for Location")
             row = box.row()
-            row.template_list("UI_UL_list", "stabilization_tracks", stab, "tracks",
-                              stab, "active_track_index", rows=2)
+            row.template_list("UI_UL_list", "stabilization_tracks", stab, "tracks", stab, "active_track_index", rows=2)
 
             sub = row.column(align=True)
 
@@ -1057,9 +1060,11 @@ class CLIP_PT_stabilization(CLIP_PT_reconstruction_panel, Panel):
             if stab.use_stabilize_rotation:
                 box.label(text="Tracks for Rotation/Scale")
                 row = box.row()
-                row.template_list("UI_UL_list", "stabilization_rotation_tracks",
-                                  stab, "rotation_tracks",
-                                  stab, "active_rotation_track_index", rows=2)
+                row.template_list(
+                    "UI_UL_list", "stabilization_rotation_tracks",
+                    stab, "rotation_tracks",
+                    stab, "active_rotation_track_index", rows=2,
+                )
 
                 sub = row.column(align=True)
 
@@ -1187,6 +1192,7 @@ from bl_ui.properties_mask_common import (
     MASK_PT_layers,
     MASK_PT_spline,
     MASK_PT_point,
+    MASK_PT_animation,
     MASK_PT_display,
     MASK_PT_transforms,
     MASK_PT_tools,
@@ -1206,6 +1212,12 @@ class CLIP_PT_active_mask_spline(MASK_PT_spline, Panel):
 
 
 class CLIP_PT_active_mask_point(MASK_PT_point, Panel):
+    bl_space_type = 'CLIP_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Mask"
+
+
+class CLIP_PT_mask_animation(MASK_PT_animation, Panel):
     bl_space_type = 'CLIP_EDITOR'
     bl_region_type = 'UI'
     bl_category = "Mask"
@@ -1255,6 +1267,24 @@ class CLIP_PT_footage(CLIP_PT_clip_view_panel, Panel):
         col.prop(clip, "frame_start")
         col.prop(clip, "frame_offset")
         col.template_movieclip_information(sc, "clip", sc.clip_user)
+
+
+class CLIP_PT_animation(CLIP_PT_clip_view_panel, Panel):
+    bl_space_type = 'CLIP_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Footage"
+    bl_label = "Animation"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        sc = context.space_data
+        clip = sc.clip
+
+        col = layout.column(align=True)
+        anim.draw_action_and_slot_selector_for_id(col, clip)
 
 
 class CLIP_PT_tools_scenesetup(Panel):
@@ -1368,7 +1398,7 @@ class CLIP_MT_clip(Menu):
         sc = context.space_data
         clip = sc.clip
 
-        layout.operator("clip.open")
+        layout.operator("clip.open", text="Open...", icon='FILE_FOLDER')
 
         if clip:
             layout.operator("clip.set_scene_frames")
@@ -1620,9 +1650,9 @@ class CLIP_MT_select_graph(Menu):
     def draw(self, _context):
         layout = self.layout
 
-        layout.operator("clip.graph_select_all_markers", text="All").action = "SELECT"
-        layout.operator("clip.graph_select_all_markers", text="None").action = "DESELECT"
-        layout.operator("clip.graph_select_all_markers", text="Invert").action = "INVERT"
+        layout.operator("clip.graph_select_all_markers", text="All").action = 'SELECT'
+        layout.operator("clip.graph_select_all_markers", text="None").action = 'DESELECT'
+        layout.operator("clip.graph_select_all_markers", text="Invert").action = 'INVERT'
 
 
 class CLIP_MT_tracking_context_menu(Menu):
@@ -1985,6 +2015,7 @@ classes = (
     CLIP_PT_marker,
     CLIP_PT_proxy,
     CLIP_PT_footage,
+    CLIP_PT_animation,
     CLIP_PT_stabilization,
     CLIP_PT_2d_cursor,
     CLIP_PT_mask,
@@ -1992,6 +2023,7 @@ classes = (
     CLIP_PT_mask_display,
     CLIP_PT_active_mask_spline,
     CLIP_PT_active_mask_point,
+    CLIP_PT_mask_animation,
     CLIP_PT_tools_mask_transforms,
     CLIP_PT_tools_mask_tools,
     CLIP_PT_tools_scenesetup,

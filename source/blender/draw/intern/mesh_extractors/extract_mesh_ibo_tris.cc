@@ -8,6 +8,8 @@
 
 #include "BKE_editmesh.hh"
 
+#include "BLI_math_geom.h"
+
 #include "GPU_index_buffer.hh"
 
 #include "extract_mesh.hh"
@@ -118,7 +120,7 @@ void extract_tris(const MeshRenderData &mr,
                   MeshBatchCache &cache,
                   gpu::IndexBuf &ibo)
 {
-  if (mr.extract_type == MR_EXTRACT_MESH) {
+  if (mr.extract_type == MeshExtractType::Mesh) {
     extract_tris_mesh(mr, face_sorted, ibo);
   }
   else {

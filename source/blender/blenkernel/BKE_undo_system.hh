@@ -7,7 +7,7 @@
  * \ingroup bke
  */
 
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_utildefines.h"
 #include "DNA_ID.h"
 #include "DNA_listBase.h"
@@ -146,7 +146,7 @@ struct UndoType {
   size_t step_size;
 };
 
-/** #UndoType.flag bitflags. */
+/** #UndoType.flag bit-flags. */
 enum eUndoTypeFlags {
   /**
    * This undo type `encode` callback needs a valid context, it will fail otherwise.
@@ -275,7 +275,7 @@ void BKE_undosys_step_load_from_index(UndoStack *ustack, bContext *C, int index)
  */
 bool BKE_undosys_step_undo_with_data_ex(UndoStack *ustack,
                                         bContext *C,
-                                        UndoStep *us,
+                                        UndoStep *us_target,
                                         bool use_skip);
 /**
  * Undo until `us_target` step becomes the active (currently loaded) one.
@@ -301,7 +301,7 @@ bool BKE_undosys_step_undo(UndoStack *ustack, bContext *C);
  */
 bool BKE_undosys_step_redo_with_data_ex(UndoStack *ustack,
                                         bContext *C,
-                                        UndoStep *us,
+                                        UndoStep *us_target,
                                         bool use_skip);
 /**
  * Redo until `us_target` step becomes the active (currently loaded) one.

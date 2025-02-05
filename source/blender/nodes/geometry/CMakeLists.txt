@@ -8,19 +8,10 @@ set(INC
   include
   ../intern
   ../../editors/include
-  ../../blenkernel
-  ../../blenloader
-  ../../blentranslation
-  ../../bmesh
-  ../../functions
-  ../../geometry
-  ../../gpu
-  ../../imbuf
   ../../makesrna
   ../../modifiers
-  ../../render
-  ../../windowmanager
   ../../io/common
+  ../../io/ply
   ../../io/stl
   ../../io/wavefront_obj
   # RNA_prototypes.hh
@@ -67,6 +58,7 @@ set(SRC
   nodes/node_geo_curve_topology_curve_of_point.cc
   nodes/node_geo_curve_topology_points_of_curve.cc
   nodes/node_geo_curve_trim.cc
+  nodes/node_geo_curves_to_grease_pencil.cc
   nodes/node_geo_deform_curves_on_surface.cc
   nodes/node_geo_delete_geometry.cc
   nodes/node_geo_distribute_points_in_grid.cc
@@ -82,20 +74,24 @@ set(SRC
   nodes/node_geo_evaluate_on_domain.cc
   nodes/node_geo_extrude_mesh.cc
   nodes/node_geo_flip_faces.cc
+  nodes/node_geo_foreach_geometry_element.cc
   nodes/node_geo_geometry_to_instance.cc
   nodes/node_geo_get_named_grid.cc
   nodes/node_geo_gizmo_dial.cc
   nodes/node_geo_gizmo_linear.cc
   nodes/node_geo_gizmo_transform.cc
+  nodes/node_geo_grease_pencil_to_curves.cc
   nodes/node_geo_grid_to_mesh.cc
   nodes/node_geo_image.cc
   nodes/node_geo_image_info.cc
   nodes/node_geo_image_texture.cc
   nodes/node_geo_import_obj.cc
+  nodes/node_geo_import_ply.cc
   nodes/node_geo_import_stl.cc
   nodes/node_geo_index_of_nearest.cc
   nodes/node_geo_index_switch.cc
   nodes/node_geo_input_active_camera.cc
+  nodes/node_geo_input_collection.cc
   nodes/node_geo_input_curve_handles.cc
   nodes/node_geo_input_curve_tilt.cc
   nodes/node_geo_input_edge_smooth.cc
@@ -118,6 +114,7 @@ set(SRC
   nodes/node_geo_input_named_attribute.cc
   nodes/node_geo_input_named_layer_selection.cc
   nodes/node_geo_input_normal.cc
+  nodes/node_geo_input_object.cc
   nodes/node_geo_input_position.cc
   nodes/node_geo_input_radius.cc
   nodes/node_geo_input_scene_time.cc
@@ -135,6 +132,7 @@ set(SRC
   nodes/node_geo_material_selection.cc
   nodes/node_geo_menu_switch.cc
   nodes/node_geo_merge_by_distance.cc
+  nodes/node_geo_merge_layers.cc
   nodes/node_geo_mesh_face_group_boundaries.cc
   nodes/node_geo_mesh_primitive_circle.cc
   nodes/node_geo_mesh_primitive_cone.cc
@@ -222,8 +220,11 @@ set(SRC
   nodes/node_geo_viewport_transform.cc
   nodes/node_geo_volume_cube.cc
   nodes/node_geo_volume_to_mesh.cc
+  nodes/node_geo_warning.cc
 
   include/NOD_geo_bake.hh
+  include/NOD_geo_capture_attribute.hh
+  include/NOD_geo_foreach_geometry_element.hh
   include/NOD_geo_index_switch.hh
   include/NOD_geo_menu_switch.hh
   include/NOD_geo_repeat.hh
@@ -236,16 +237,25 @@ set(SRC
 )
 
 set(LIB
+  PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
-  bf_bmesh
+  PRIVATE bf::blenloader
+  PRIVATE bf::blentranslation
+  PRIVATE bf::bmesh
   PRIVATE bf::depsgraph
   PRIVATE bf::dna
-  bf_functions
-  bf_geometry
+  PRIVATE bf::functions
+  PRIVATE bf::geometry
+  PRIVATE bf::gpu
+  PRIVATE bf::imbuf
+  PRIVATE bf::imbuf::movie
   PRIVATE bf::intern::guardedalloc
   bf_nodes
   PRIVATE bf::intern::atomic
   PRIVATE bf::extern::fmtlib
+  PRIVATE bf::extern::xxhash
+  PRIVATE bf::render
+  PRIVATE bf::windowmanager
 )
 
 if(WITH_IO_STL)
@@ -254,6 +264,14 @@ if(WITH_IO_STL)
     PRIVATE bf_io_stl
   )
   add_definitions(-DWITH_IO_STL)
+endif()
+
+if(WITH_IO_PLY)
+  list(APPEND LIB
+    PRIVATE bf_io_common
+    PRIVATE bf_io_ply
+  )
+  add_definitions(-DWITH_IO_PLY)
 endif()
 
 if(WITH_IO_WAVEFRONT_OBJ)
@@ -276,13 +294,9 @@ if(WITH_BULLET)
 endif()
 
 if(WITH_TBB)
-  list(APPEND INC_SYS
-    ${TBB_INCLUDE_DIRS}
-  )
-  add_definitions(-DWITH_TBB)
   if(WIN32)
     # TBB includes Windows.h which will define min/max macros
-    # that will collide with the stl versions.
+    # that will collide with the STL versions.
     add_definitions(-DNOMINMAX)
   endif()
 endif()
@@ -328,8 +342,8 @@ list(APPEND LIB
   bf_nodes_geometry_generated
 )
 
-# If compiling with msvc clang we need to add the D_LIBCPP_VERSION define
-# so we don't run into tbb errors when compiling with lib
+# If compiling with MSVC clang we need to add the `D_LIBCPP_VERSION` define
+# so we don't run into TBB errors when compiling with lib.
 if(WITH_TBB AND MSVC_CLANG)
   string(APPEND CMAKE_CXX_FLAGS " /D_LIBCPP_VERSION")
 endif()

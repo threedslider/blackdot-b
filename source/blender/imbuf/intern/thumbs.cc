@@ -7,7 +7,6 @@
  */
 
 #include <algorithm>
-#include <cstdio>
 #include <cstdlib>
 
 #include "MEM_guardedalloc.h"
@@ -17,7 +16,7 @@
 #include "BLI_fileops.h"
 #include "BLI_ghash.h"
 #include "BLI_hash_md5.hh"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_string_utils.hh"
 #include "BLI_system.h"
@@ -31,6 +30,8 @@
 #include "IMB_imbuf_types.hh"
 #include "IMB_metadata.hh"
 #include "IMB_thumbs.hh"
+
+#include "MOV_read.hh"
 
 #include <cctype>
 #include <cstring>
@@ -81,9 +82,9 @@ static bool get_thumb_dir(char *dir, ThumbSize size)
 #else
 #  if defined(USE_FREEDESKTOP)
   const char *home_cache = BLI_getenv("XDG_CACHE_HOME");
-  const char *home = home_cache ? home_cache : BLI_getenv("HOME");
+  const char *home = home_cache ? home_cache : BLI_dir_home();
 #  else
-  const char *home = BLI_getenv("HOME");
+  const char *home = BLI_dir_home();
 #  endif
   if (!home) {
     return false;
@@ -391,18 +392,18 @@ static ImBuf *thumb_create_ex(const char *file_path,
         }
       }
       else if (THB_SOURCE_MOVIE == source) {
-        ImBufAnim *anim = nullptr;
-        anim = IMB_open_anim(file_path, IB_rect | IB_metadata, 0, nullptr);
+        MovieReader *anim = nullptr;
+        anim = MOV_open_file(file_path, IB_rect | IB_metadata, 0, nullptr);
         if (anim != nullptr) {
-          img = IMB_anim_absolute(anim, 0, IMB_TC_NONE, IMB_PROXY_NONE);
+          img = MOV_decode_frame(anim, 0, IMB_TC_NONE, IMB_PROXY_NONE);
           if (img == nullptr) {
-            printf("not an anim; %s\n", file_path);
+            // printf("not an anim; %s\n", file_path);
           }
           else {
             IMB_freeImBuf(img);
-            img = IMB_anim_previewframe(anim);
+            img = MOV_decode_preview_frame(anim);
           }
-          IMB_free_anim(anim);
+          MOV_close(anim);
         }
         if (BLI_stat(file_path, &info) != -1) {
           SNPRINTF(mtime, "%ld", (long int)info.st_mtime);
@@ -424,7 +425,7 @@ static ImBuf *thumb_create_ex(const char *file_path,
           }
           imb_freerectfloatImBuf(img);
         }
-        IMB_scaleImBuf(img, ex, ey);
+        IMB_scale(img, ex, ey, IMBScaleFilter::Box, false);
       }
     }
     SNPRINTF(desc, "Thumbnail for %s", uri);

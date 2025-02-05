@@ -11,8 +11,8 @@
 
 #include <Python.h>
 
-#include "../generic/py_capi_rna.h"
-#include "../generic/python_utildefines.h"
+#include "../generic/py_capi_rna.hh"
+#include "../generic/python_utildefines.hh"
 
 #include "DNA_space_types.h"
 
@@ -26,11 +26,11 @@
 
 #include "ED_space_api.hh"
 
-#include "BPY_extern.h" /* For public API. */
+#include "BPY_extern.hh" /* For public API. */
 
-#include "bpy_capi_utils.h"
-#include "bpy_rna.h"
-#include "bpy_rna_callback.h" /* Own include. */
+#include "bpy_capi_utils.hh"
+#include "bpy_rna.hh"
+#include "bpy_rna_callback.hh" /* Own include. */
 
 /* Use this to stop other capsules from being mis-used. */
 static const char *rna_capsual_id = "RNA_HANDLE";
@@ -85,7 +85,7 @@ static void cb_wm_cursor_draw(bContext *C, int x, int y, void *customdata)
   PyObject *cb_func, *cb_args, *result;
   PyGILState_STATE gilstate;
 
-  bpy_context_set((bContext *)C, &gilstate);
+  bpy_context_set(C, &gilstate);
 
   cb_func = PyTuple_GET_ITEM((PyObject *)customdata, 1);
   cb_args = PyTuple_GET_ITEM((PyObject *)customdata, 2);
@@ -110,7 +110,7 @@ static void cb_wm_cursor_draw(bContext *C, int x, int y, void *customdata)
     PyErr_Clear();
   }
 
-  bpy_context_clear((bContext *)C, &gilstate);
+  bpy_context_clear(C, &gilstate);
 }
 
 #if 0
@@ -354,7 +354,7 @@ PyObject *pyrna_callback_classmethod_add(PyObject * /*self*/, PyObject *args)
    * This reference is decremented in #BPY_callback_screen_free and #BPY_callback_wm_free. */
   Py_INCREF(args);
 
-  PyObject *ret = PyCapsule_New((void *)handle, rna_capsual_id, nullptr);
+  PyObject *ret = PyCapsule_New(handle, rna_capsual_id, nullptr);
 
   /* Store 'args' in context as well for simple access. */
   PyCapsule_SetDestructor(ret, cb_rna_capsule_destructor);

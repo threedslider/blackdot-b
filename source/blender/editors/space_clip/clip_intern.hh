@@ -8,17 +8,15 @@
 
 #pragma once
 
-#include "BLI_utildefines.h"
-
 #include "DNA_space_types.h"
 #include "DNA_tracking_types.h"
 
 struct ARegion;
+struct ARegionType;
 struct MovieClip;
 struct MovieTrackingMarker;
 struct MovieTrackingTrack;
 struct Scene;
-struct ScrArea;
 struct SpaceClip;
 struct bContext;
 struct wmOperatorType;

@@ -7,6 +7,7 @@
  */
 
 #include "BLI_array_utils.hh"
+#include "BLI_math_base.h"
 #include "BLI_ordered_edge.hh"
 #include "BLI_task.hh"
 #include "BLI_threads.h"
@@ -150,7 +151,7 @@ static int get_parallel_maps_count(const Mesh &mesh)
 
 static void clear_hash_tables(MutableSpan<EdgeMap> edge_maps)
 {
-  threading::parallel_for_each(edge_maps, [](EdgeMap &edge_map) { edge_map.clear_and_shrink(); });
+  threading::parallel_for_each(edge_maps, [](EdgeMap &edge_map) { edge_map.clear(); });
 }
 
 static void deselect_known_edges(const OffsetIndices<int> edge_offsets,

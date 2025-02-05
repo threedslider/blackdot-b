@@ -13,13 +13,15 @@
 
 #include <Python.h>
 
+#include <algorithm>
+
 #include "BLI_utildefines.h"
 
 #include "MEM_guardedalloc.h"
 
 #include "GPU_texture.hh"
 
-#include "../generic/py_capi_utils.h"
+#include "../generic/py_capi_utils.hh"
 
 #include "gpu_py.hh"
 
@@ -327,15 +329,9 @@ static int pygpu_buffer_ass_slice(BPyGPUBuffer *self,
   PyObject *item;
   int count, err = 0;
 
-  if (begin < 0) {
-    begin = 0;
-  }
-  if (end > self->shape[0]) {
-    end = self->shape[0];
-  }
-  if (begin > end) {
-    begin = end;
-  }
+  begin = std::max<Py_ssize_t>(begin, 0);
+  end = std::min(end, self->shape[0]);
+  begin = std::min(begin, end);
 
   if (!PySequence_Check(seq)) {
     PyErr_Format(PyExc_TypeError,
@@ -386,7 +382,7 @@ static PyObject *pygpu_buffer__tp_new(PyTypeObject * /*type*/, PyObject *args, P
     return nullptr;
   }
 
-  const PyC_StringEnum pygpu_dataformat = {bpygpu_dataformat_items, GPU_DATA_FLOAT};
+  PyC_StringEnum pygpu_dataformat = {bpygpu_dataformat_items, GPU_DATA_FLOAT};
   if (!PyArg_ParseTuple(
           args, "O&O|O: Buffer", PyC_ParseStringEnum, &pygpu_dataformat, &length_ob, &init))
   {
@@ -447,15 +443,9 @@ static PyObject *pygpu_buffer_slice(BPyGPUBuffer *self, Py_ssize_t begin, Py_ssi
   PyObject *list;
   Py_ssize_t count;
 
-  if (begin < 0) {
-    begin = 0;
-  }
-  if (end > self->shape[0]) {
-    end = self->shape[0];
-  }
-  if (begin > end) {
-    begin = end;
-  }
+  begin = std::max<Py_ssize_t>(begin, 0);
+  end = std::min(end, self->shape[0]);
+  begin = std::min(begin, end);
 
   list = PyList_New(end - begin);
 
@@ -636,7 +626,7 @@ static int pygpu_buffer__bf_getbuffer(BPyGPUBuffer *self, Py_buffer *view, int f
   memset(view, 0, sizeof(*view));
 
   view->obj = (PyObject *)self;
-  view->buf = (void *)self->buf.as_void;
+  view->buf = self->buf.as_void;
   view->len = bpygpu_Buffer_size(self);
   view->readonly = 0;
   view->itemsize = GPU_texture_dataformat_size(eGPUDataFormat(self->format));
@@ -684,7 +674,7 @@ PyDoc_STRVAR(
     "   :arg dimensions: Array describing the dimensions.\n"
     "   :type dimensions: int\n"
     "   :arg data: Optional data array.\n"
-    "   :type data: sequence\n");
+    "   :type data: Buffer | Sequence[float] | Sequence[int]\n");
 PyTypeObject BPyGPU_BufferType = {
     /*ob_base*/ PyVarObject_HEAD_INIT(nullptr, 0)
     /*tp_name*/ "Buffer",

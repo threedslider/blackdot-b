@@ -6,20 +6,18 @@
  * \ingroup draw
  */
 
-#include "draw_manager_c.hh"
+#include "GPU_viewport.hh"
+
+#include "BLI_string.h"
 
 #include "DRW_render.hh"
-
-#include "GPU_batch.hh"
-#include "GPU_framebuffer.hh"
-#include "GPU_matrix.hh"
-#include "GPU_texture.hh"
 
 #include "DNA_space_types.h"
 #include "DNA_view3d_types.h"
 
 #include "BKE_colortools.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
+#include "BKE_scene.hh"
 
 #include "DEG_depsgraph_query.hh"
 
@@ -108,13 +106,11 @@ static eDRWColorManagementType drw_color_management_type_get(Main *bmain,
   if (space_data) {
     switch (space_data->spacetype) {
       case SPACE_IMAGE: {
-        const SpaceImage *sima = static_cast<const SpaceImage *>(
-            static_cast<const void *>(space_data));
+        const SpaceImage *sima = reinterpret_cast<const SpaceImage *>(space_data);
         return drw_color_management_type_for_space_image(*sima);
       }
       case SPACE_NODE: {
-        const SpaceNode *snode = static_cast<const SpaceNode *>(
-            static_cast<const void *>(space_data));
+        const SpaceNode *snode = reinterpret_cast<const SpaceNode *>(space_data);
         return drw_color_management_type_for_space_node(*bmain, *snode);
       }
     }
@@ -175,24 +171,6 @@ static void viewport_color_management_set(GPUViewport &viewport)
 void DRW_viewport_colormanagement_set(GPUViewport *viewport)
 {
   blender::draw::color_management::viewport_color_management_set(*viewport);
-}
-
-void DRW_transform_none(GPUTexture *tex)
-{
-  drw_state_set(DRW_STATE_WRITE_COLOR);
-
-  GPU_matrix_identity_set();
-  GPU_matrix_identity_projection_set();
-
-  /* Draw as texture for final render (without immediate mode). */
-  blender::gpu::Batch *geom = DRW_cache_fullscreen_quad_get();
-  GPU_batch_program_set_builtin(geom, GPU_SHADER_3D_IMAGE_COLOR);
-  GPU_batch_uniform_4f(geom, "color", 1.0f, 1.0f, 1.0f, 1.0f);
-  GPU_batch_texture_bind(geom, "image", tex);
-
-  GPU_batch_draw(geom);
-
-  GPU_texture_unbind(tex);
 }
 
 /** \} */

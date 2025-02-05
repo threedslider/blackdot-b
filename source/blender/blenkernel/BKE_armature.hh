@@ -8,16 +8,16 @@
  * \ingroup bke
  */
 
+#include <optional>
+
 #include "BLI_bounds_types.hh"
 #include "BLI_function_ref.hh"
-#include "BLI_listbase.h"
 #include "BLI_math_matrix_types.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_set.hh"
 
 #include "DNA_armature_types.h"
 
-struct AnimationEvalContext;
 struct BMEditMesh;
 struct Bone;
 struct Depsgraph;
@@ -28,10 +28,8 @@ struct Mesh;
 struct Object;
 struct PoseTree;
 struct Scene;
-struct bAction;
 struct bArmature;
 struct bConstraint;
-struct bGPDstroke;
 struct bPose;
 struct bPoseChannel;
 struct MDeformVert;
@@ -178,8 +176,8 @@ std::optional<blender::Bounds<blender::float3>> BKE_armature_min_max(const Objec
 void BKE_pchan_minmax(const Object *ob,
                       const bPoseChannel *pchan,
                       const bool use_empty_drawtype,
-                      float r_min[3],
-                      float r_max[3]);
+                      blender::float3 &r_min,
+                      blender::float3 &r_max);
 /**
  * Calculate the axis aligned bounds of the pose of `ob` in world-space.
  *
@@ -280,25 +278,6 @@ void BKE_pose_where_is_bone(Depsgraph *depsgraph,
  * Calculate tail of pose-channel.
  */
 void BKE_pose_where_is_bone_tail(bPoseChannel *pchan);
-
-/**
- * Evaluate the action and apply it to the pose. If any pose bones are selected, only FCurves that
- * relate to those bones are evaluated.
- */
-void BKE_pose_apply_action_selected_bones(Object *ob,
-                                          bAction *action,
-                                          const AnimationEvalContext *anim_eval_context);
-/**
- * Evaluate the action and apply it to the pose. Ignore selection state of the bones.
- */
-void BKE_pose_apply_action_all_bones(Object *ob,
-                                     bAction *action,
-                                     const AnimationEvalContext *anim_eval_context);
-
-void BKE_pose_apply_action_blend(Object *ob,
-                                 bAction *action,
-                                 const AnimationEvalContext *anim_eval_context,
-                                 float blend_factor);
 
 void vec_roll_to_mat3(const float vec[3], float roll, float r_mat[3][3]);
 
@@ -502,7 +481,7 @@ void BKE_pchan_bbone_handles_get(bPoseChannel *pchan,
  */
 void BKE_pchan_bbone_spline_params_get(bPoseChannel *pchan,
                                        bool rest,
-                                       BBoneSplineParameters *r_param);
+                                       BBoneSplineParameters *param);
 
 /**
  * Fills the array with the desired amount of bone->segments elements.
@@ -650,21 +629,12 @@ void BKE_pose_eval_cleanup(Depsgraph *depsgraph, Scene *scene, Object *object);
 /* Note that we could have a 'BKE_armature_deform_coords' that doesn't take object data
  * currently there are no callers for this though. */
 
-void BKE_armature_deform_coords_with_gpencil_stroke(const Object *ob_arm,
-                                                    const Object *ob_target,
-                                                    float (*vert_coords)[3],
-                                                    float (*vert_deform_mats)[3][3],
-                                                    int vert_coords_len,
-                                                    int deformflag,
-                                                    float (*vert_coords_prev)[3],
-                                                    const char *defgrp_name,
-                                                    bGPDstroke *gps_target);
-
 void BKE_armature_deform_coords_with_curves(
     const Object &ob_arm,
     const Object &ob_target,
+    const ListBase *defbase,
     blender::MutableSpan<blender::float3> vert_coords,
-    std::optional<blender::MutableSpan<blender::float3>> vert_coords_prev,
+    std::optional<blender::Span<blender::float3>> vert_coords_prev,
     std::optional<blender::MutableSpan<blender::float3x3>> vert_deform_mats,
     blender::Span<MDeformVert> dverts,
     int deformflag,
@@ -705,8 +675,7 @@ SelectedBonesResult BKE_armature_find_selected_bones(const bArmature *armature,
 
 using BoneNameSet = blender::Set<std::string>;
 /**
- * Return a set of names of the selected bones. An empty set means "ignore bone
- * selection", which either means all bones are selected, or none are.
+ * Return a set of names of the selected bones.
  */
 BoneNameSet BKE_armature_find_selected_bone_names(const bArmature *armature);
 

@@ -2,7 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_attribute_math.hh"
 #include "BKE_brush.hh"
 #include "BKE_bvhutils.hh"
 #include "BKE_context.hh"
@@ -76,7 +75,7 @@ struct PuffOperationExecutor {
   Span<int> surface_corner_verts_;
   Span<int3> surface_corner_tris_;
   Span<float3> corner_normals_su_;
-  BVHTreeFromMesh surface_bvh_;
+  bke::BVHTreeFromMesh surface_bvh_;
 
   PuffOperationExecutor(const bContext &C) : ctx_(C) {}
 
@@ -88,7 +87,7 @@ struct PuffOperationExecutor {
     object_ = CTX_data_active_object(&C);
     curves_id_ = static_cast<Curves *>(object_->data);
     curves_ = &curves_id_->geometry.wrap();
-    if (curves_->curves_num() == 0) {
+    if (curves_->is_empty()) {
       return;
     }
     if (curves_id_->surface == nullptr || curves_id_->surface->type != OB_MESH) {
@@ -118,11 +117,10 @@ struct PuffOperationExecutor {
     surface_corner_verts_ = surface_->corner_verts();
     surface_corner_tris_ = surface_->corner_tris();
     corner_normals_su_ = surface_->corner_normals();
-    BKE_bvhtree_from_mesh_get(&surface_bvh_, surface_, BVHTREE_FROM_CORNER_TRIS, 2);
-    BLI_SCOPED_DEFER([&]() { free_bvhtree_from_mesh(&surface_bvh_); });
+    surface_bvh_ = surface_->bvh_corner_tris();
 
     if (stroke_extension.is_first) {
-      if (falloff_shape == PAINT_FALLOFF_SHAPE_SPHERE) {
+      if (falloff_shape == PAINT_FALLOFF_SHAPE_SPHERE || (U.uiflag & USER_ORBIT_SELECTION)) {
         self.brush_3d_ = *sample_curves_3d_brush(*ctx_.depsgraph,
                                                  *ctx_.region,
                                                  *ctx_.v3d,
@@ -130,10 +128,15 @@ struct PuffOperationExecutor {
                                                  *object_,
                                                  brush_pos_re_,
                                                  brush_radius_base_re_);
+        remember_stroke_position(
+            *ctx_.scene,
+            math::transform_point(transforms_.curves_to_world, self_->brush_3d_.position_cu));
       }
 
-      self_->constraint_solver_.initialize(
-          *curves_, curve_selection_, curves_id_->flag & CV_SCULPT_COLLISION_ENABLED);
+      self_->constraint_solver_.initialize(*curves_,
+                                           curve_selection_,
+                                           curves_id_->flag & CV_SCULPT_COLLISION_ENABLED,
+                                           curves_id_->surface_collision_distance);
     }
 
     Array<float> curve_weights(curves_->curves_num(), 0.0f);
@@ -301,7 +304,7 @@ struct PuffOperationExecutor {
         const float3 normal_cu = math::normalize(
             math::transform_direction(transforms_.surface_to_curves_normal, normal_su));
 
-        accumulated_lengths_cu.reinitialize(points.size() - 1);
+        accumulated_lengths_cu.resize(points.size() - 1);
         length_parameterize::accumulate_lengths<float3>(
             positions_cu.slice(points), false, accumulated_lengths_cu);
 

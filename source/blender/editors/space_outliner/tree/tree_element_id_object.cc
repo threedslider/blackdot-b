@@ -9,8 +9,6 @@
 #include "BLI_listbase.h"
 
 #include "DNA_ID.h"
-#include "DNA_action_types.h"
-#include "DNA_armature_types.h"
 #include "DNA_object_types.h"
 #include "DNA_outliner_types.h"
 
@@ -19,6 +17,8 @@
 #include "../outliner_intern.hh"
 
 #include "tree_element_id_object.hh"
+
+struct bConstraint;
 
 namespace blender::ed::outliner {
 
@@ -111,7 +111,7 @@ void TreeElementIDObject::expand_gpencil_effects() const
 
 void TreeElementIDObject::expand_vertex_groups() const
 {
-  if (!ELEM(object_.type, OB_MESH, OB_GPENCIL_LEGACY, OB_LATTICE)) {
+  if (!ELEM(object_.type, OB_MESH, OB_LATTICE)) {
     return;
   }
   const ListBase *defbase = BKE_object_defgroup_list(&object_);

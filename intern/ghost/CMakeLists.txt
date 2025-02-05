@@ -4,7 +4,7 @@
 
 set(INC
   PUBLIC .
-  ../../source/blender/imbuf
+  ../guardedalloc
 )
 
 set(INC_SYS
@@ -72,6 +72,8 @@ set(SRC
 set(LIB
   PRIVATE bf::blenlib
   PRIVATE bf::dna
+  PRIVATE bf::gpu
+  PRIVATE bf::imbuf
   PRIVATE bf::intern::clog
 )
 
@@ -90,7 +92,7 @@ if(WITH_OPENGL_BACKEND)
 endif()
 
 if(WITH_VULKAN_BACKEND)
-  if (WITH_VULKAN_MOLTENVK)
+  if(WITH_VULKAN_MOLTENVK)
     list(APPEND INC_SYS
       PUBLIC ${MOLTENVK_INCLUDE_DIRS}
     )
@@ -98,7 +100,6 @@ if(WITH_VULKAN_BACKEND)
     list(APPEND LIB
       ${MOLTENVK_LIBRARIES}
     )
-    add_definitions(-DWITH_VULKAN_MOLTENVK)
   endif()
 
   list(APPEND SRC
@@ -170,16 +171,9 @@ elseif(WITH_GHOST_SDL)
   list(APPEND INC_SYS
     ${SDL_INCLUDE_DIR}
   )
-  if(WITH_SDL_DYNLOAD)
-    list(APPEND LIB
-      extern_sdlew
-    )
-  else()
-    list(APPEND LIB
-      ${SDL_LIBRARY}
-    )
-  endif()
-
+  list(APPEND LIB
+    ${SDL_LIBRARY}
+  )
 elseif(APPLE AND NOT WITH_GHOST_X11)
   list(APPEND SRC
     intern/GHOST_DisplayManagerCocoa.mm
@@ -190,12 +184,6 @@ elseif(APPLE AND NOT WITH_GHOST_X11)
     intern/GHOST_SystemCocoa.hh
     intern/GHOST_WindowCocoa.hh
     intern/GHOST_WindowViewCocoa.hh
-  )
-
-  list(APPEND SRC
-    intern/GHOST_ContextCGL.mm
-
-    intern/GHOST_ContextCGL.hh
   )
 
   if(WITH_INPUT_NDOF)
@@ -442,7 +430,7 @@ elseif(WITH_GHOST_X11 OR WITH_GHOST_WAYLAND)
     )
     # Tablet.
     generate_protocol_bindings(
-      "${WAYLAND_PROTOCOLS_DIR}/unstable/tablet/tablet-unstable-v2.xml"
+      "${WAYLAND_PROTOCOLS_DIR}/stable/tablet/tablet-v2.xml"
     )
     # Primary-selection.
     generate_protocol_bindings(
@@ -534,6 +522,16 @@ if(UNIX AND NOT APPLE)
       intern/GHOST_ContextEGL.cc
 
       intern/GHOST_ContextEGL.hh
+    )
+  endif()
+endif()
+
+if(APPLE)
+  if(WITH_METAL_BACKEND)
+    list(APPEND SRC
+      intern/GHOST_ContextCGL.mm
+
+      intern/GHOST_ContextCGL.hh
     )
   endif()
 endif()

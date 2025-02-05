@@ -8,6 +8,16 @@
 
 #pragma once
 
+struct ARegion;
+struct ARegionType;
+struct ListBase;
+struct PointerRNA;
+struct SpaceNla;
+struct bAnimContext;
+struct bContext;
+struct wmKeyConfig;
+struct wmOperatorType;
+
 /* internal exports only */
 
 /* **************************************** */
@@ -30,7 +40,7 @@ void draw_nla_main_data(bAnimContext *ac, SpaceNla *snla, ARegion *region);
 void draw_nla_track_list(const bContext *C,
                          bAnimContext *ac,
                          ARegion *region,
-                         const ListBase /* bAnimListElem */ &anim_data);
+                         const ListBase /*bAnimListElem*/ &anim_data);
 
 /* **************************************** */
 /* `nla_select.cc` */

@@ -8,8 +8,10 @@
 
 #pragma once
 
+#include <Python.h>
+
 #ifndef __cplusplus
-#  include "../generic/py_capi_utils.h"
+#  include "../generic/py_capi_utils.hh"
 #endif
 
 struct GPUShaderCreateInfo;
@@ -25,14 +27,14 @@ extern PyTypeObject BPyGPUShader_Type;
 
 #define BPyGPUShader_Check(v) (Py_TYPE(v) == &BPyGPUShader_Type)
 
-typedef struct BPyGPUShader {
+struct BPyGPUShader {
   PyObject_VAR_HEAD
   struct GPUShader *shader;
   bool is_builtin;
-} BPyGPUShader;
+};
 
 PyObject *BPyGPUShader_CreatePyObject(struct GPUShader *shader, bool is_builtin);
-PyObject *bpygpu_shader_init(void);
+PyObject *bpygpu_shader_init();
 
 /* gpu_py_shader_create_info.cc */
 
@@ -68,3 +70,4 @@ struct BPyGPUShaderCreateInfo {
 
 PyObject *BPyGPUStageInterfaceInfo_CreatePyObject(GPUStageInterfaceInfo *interface);
 PyObject *BPyGPUShaderCreateInfo_CreatePyObject(GPUShaderCreateInfo *info);
+bool bpygpu_shader_is_polyline(GPUShader *shader);

@@ -5,16 +5,27 @@
 /** \file
  * \ingroup gpu
  */
+#include "BKE_appdir.hh"
+#include "BKE_blender_version.h"
 
-#include "vk_pipeline_pool.hh"
+#include "BLI_fileops.hh"
+#include "BLI_path_utils.hh"
+
+#include "CLG_log.h"
+
 #include "vk_backend.hh"
-#include "vk_memory.hh"
+#include "vk_pipeline_pool.hh"
+
+#ifdef WITH_BUILDINFO
+extern "C" char build_hash[];
+static CLG_LogRef LOG = {"gpu.vulkan"};
+#endif
 
 namespace blender::gpu {
 
 VKPipelinePool::VKPipelinePool()
 {
-  /* Initialize VkComputePipelineCreateInfo*/
+  /* Initialize VkComputePipelineCreateInfo */
   vk_compute_pipeline_create_info_.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
   vk_compute_pipeline_create_info_.pNext = nullptr;
   vk_compute_pipeline_create_info_.flags = 0;
@@ -80,6 +91,14 @@ VKPipelinePool::VKPipelinePool()
       VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
   vk_pipeline_rasterization_state_create_info_.lineWidth = 1.0f;
   vk_pipeline_rasterization_state_create_info_.frontFace = VK_FRONT_FACE_CLOCKWISE;
+  vk_pipeline_rasterization_state_create_info_.pNext =
+      &vk_pipeline_rasterization_provoking_vertex_state_info_;
+
+  vk_pipeline_rasterization_provoking_vertex_state_info_ = {};
+  vk_pipeline_rasterization_provoking_vertex_state_info_.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_PROVOKING_VERTEX_STATE_CREATE_INFO_EXT;
+  vk_pipeline_rasterization_provoking_vertex_state_info_.provokingVertexMode =
+      VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
 
   vk_pipeline_viewport_state_create_info_ = {};
   vk_pipeline_viewport_state_create_info_.sType =
@@ -115,6 +134,14 @@ VKPipelinePool::VKPipelinePool()
   vk_push_constant_range_.offset = 0;
   vk_push_constant_range_.size = 0;
 }
+void VKPipelinePool::init()
+{
+  VKDevice &device = VKBackend::get().device;
+  VkPipelineCacheCreateInfo create_info = {};
+  create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+  vkCreatePipelineCache(device.vk_handle(), &create_info, nullptr, &vk_pipeline_cache_static_);
+  vkCreatePipelineCache(device.vk_handle(), &create_info, nullptr, &vk_pipeline_cache_non_static_);
+}
 
 VkSpecializationInfo *VKPipelinePool::specialization_info_update(
     Span<shader::SpecializationConstant::Value> specialization_constants)
@@ -147,6 +174,7 @@ void VKPipelinePool::specialization_info_reset()
 }
 
 VkPipeline VKPipelinePool::get_or_create_compute_pipeline(VKComputeInfo &compute_info,
+                                                          const bool is_static_shader,
                                                           VkPipeline vk_pipeline_base)
 {
   std::scoped_lock lock(mutex_);
@@ -166,14 +194,14 @@ VkPipeline VKPipelinePool::get_or_create_compute_pipeline(VKComputeInfo &compute
   /* Build pipeline. */
   VKBackend &backend = VKBackend::get();
   VKDevice &device = backend.device;
-  VK_ALLOCATION_CALLBACKS;
 
   VkPipeline pipeline = VK_NULL_HANDLE;
   vkCreateComputePipelines(device.vk_handle(),
-                           device.vk_pipeline_cache_get(),
+                           is_static_shader ? vk_pipeline_cache_static_ :
+                                              vk_pipeline_cache_non_static_,
                            1,
                            &vk_compute_pipeline_create_info_,
-                           vk_allocation_callbacks,
+                           nullptr,
                            &pipeline);
   compute_pipelines_.add(compute_info, pipeline);
 
@@ -188,6 +216,7 @@ VkPipeline VKPipelinePool::get_or_create_compute_pipeline(VKComputeInfo &compute
 }
 
 VkPipeline VKPipelinePool::get_or_create_graphics_pipeline(VKGraphicsInfo &graphics_info,
+                                                           const bool is_static_shader,
                                                            VkPipeline vk_pipeline_base)
 {
   std::scoped_lock lock(mutex_);
@@ -253,6 +282,10 @@ VkPipeline VKPipelinePool::get_or_create_graphics_pipeline(VKGraphicsInfo &graph
   vk_pipeline_rasterization_state_create_info_.frontFace = graphics_info.state.invert_facing ?
                                                                VK_FRONT_FACE_COUNTER_CLOCKWISE :
                                                                VK_FRONT_FACE_CLOCKWISE;
+  vk_pipeline_rasterization_provoking_vertex_state_info_.provokingVertexMode =
+      graphics_info.state.provoking_vert == GPU_VERTEX_LAST ?
+          VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT :
+          VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
 
   /* Viewport state */
   vk_pipeline_viewport_state_create_info_.pViewports =
@@ -265,6 +298,7 @@ VkPipeline VKPipelinePool::get_or_create_graphics_pipeline(VKGraphicsInfo &graph
       graphics_info.fragment_shader.scissors.size();
 
   /* Color blending */
+  const VKWorkarounds &workarounds = VKBackend::get().device.workarounds_get();
   {
     VkPipelineColorBlendStateCreateInfo &cb = vk_pipeline_color_blend_state_create_info_;
     VkPipelineColorBlendAttachmentState &att_state =
@@ -387,10 +421,16 @@ VkPipeline VKPipelinePool::get_or_create_graphics_pipeline(VKGraphicsInfo &graph
       att_state.colorWriteMask |= VK_COLOR_COMPONENT_A_BIT;
     }
 
+    /* Logic ops. */
+    if (graphics_info.state.logic_op_xor && !workarounds.logic_ops) {
+      cb.logicOpEnable = VK_TRUE;
+      cb.logicOp = VK_LOGIC_OP_XOR;
+    }
+
     vk_pipeline_color_blend_attachment_states_.clear();
     vk_pipeline_color_blend_attachment_states_.append_n_times(
         vk_pipeline_color_blend_attachment_state_template_,
-        graphics_info.fragment_out.color_attachment_formats.size());
+        graphics_info.fragment_out.color_attachment_size);
     vk_pipeline_color_blend_state_create_info_.attachmentCount =
         vk_pipeline_color_blend_attachment_states_.size();
     vk_pipeline_color_blend_state_create_info_.pAttachments =
@@ -504,31 +544,39 @@ VkPipeline VKPipelinePool::get_or_create_graphics_pipeline(VKGraphicsInfo &graph
   }
 
   /* VK_KHR_dynamic_rendering */
-  vk_pipeline_rendering_create_info_.depthAttachmentFormat =
-      graphics_info.fragment_out.depth_attachment_format;
-  vk_pipeline_rendering_create_info_.stencilAttachmentFormat =
-      graphics_info.fragment_out.stencil_attachment_format;
-  vk_pipeline_rendering_create_info_.colorAttachmentCount =
-      graphics_info.fragment_out.color_attachment_formats.size();
-  vk_pipeline_rendering_create_info_.pColorAttachmentFormats =
-      graphics_info.fragment_out.color_attachment_formats.data();
+  if (workarounds.dynamic_rendering) {
+    BLI_assert(ELEM(
+        vk_graphics_pipeline_create_info_.pNext, &vk_pipeline_rendering_create_info_, nullptr));
+    vk_graphics_pipeline_create_info_.pNext = nullptr;
+    vk_graphics_pipeline_create_info_.renderPass = graphics_info.fragment_out.vk_render_pass;
+  }
+  else {
+    vk_pipeline_rendering_create_info_.depthAttachmentFormat =
+        graphics_info.fragment_out.depth_attachment_format;
+    vk_pipeline_rendering_create_info_.stencilAttachmentFormat =
+        graphics_info.fragment_out.stencil_attachment_format;
+    vk_pipeline_rendering_create_info_.colorAttachmentCount =
+        graphics_info.fragment_out.color_attachment_formats.size();
+    vk_pipeline_rendering_create_info_.pColorAttachmentFormats =
+        graphics_info.fragment_out.color_attachment_formats.data();
+  }
 
   /* Common values */
   vk_graphics_pipeline_create_info_.layout = graphics_info.vk_pipeline_layout;
-  // TODO: based on `vk_pipeline_base` we should update the flags.
+  /* TODO: based on `vk_pipeline_base` we should update the flags. */
   vk_graphics_pipeline_create_info_.basePipelineHandle = vk_pipeline_base;
 
   /* Build pipeline. */
   VKBackend &backend = VKBackend::get();
   VKDevice &device = backend.device;
-  VK_ALLOCATION_CALLBACKS;
 
   VkPipeline pipeline = VK_NULL_HANDLE;
   vkCreateGraphicsPipelines(device.vk_handle(),
-                            device.vk_pipeline_cache_get(),
+                            is_static_shader ? vk_pipeline_cache_static_ :
+                                               vk_pipeline_cache_non_static_,
                             1,
                             &vk_graphics_pipeline_create_info_,
-                            vk_allocation_callbacks,
+                            nullptr,
                             &pipeline);
   graphic_pipelines_.add(graphics_info, pipeline);
 
@@ -537,6 +585,7 @@ VkPipeline VKPipelinePool::get_or_create_graphics_pipeline(VKGraphicsInfo &graph
   vk_graphics_pipeline_create_info_.stageCount = 0;
   vk_graphics_pipeline_create_info_.layout = VK_NULL_HANDLE;
   vk_graphics_pipeline_create_info_.basePipelineHandle = VK_NULL_HANDLE;
+  vk_graphics_pipeline_create_info_.renderPass = VK_NULL_HANDLE;
   for (VkPipelineShaderStageCreateInfo &info :
        MutableSpan<VkPipelineShaderStageCreateInfo>(vk_pipeline_shader_stage_create_info_, 3))
   {
@@ -556,11 +605,14 @@ VkPipeline VKPipelinePool::get_or_create_graphics_pipeline(VKGraphicsInfo &graph
   vk_pipeline_rasterization_state_create_info_.depthBiasConstantFactor = 0.0f;
   vk_pipeline_rasterization_state_create_info_.depthBiasClamp = 0.0f;
   vk_pipeline_rasterization_state_create_info_.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  vk_pipeline_rasterization_provoking_vertex_state_info_.provokingVertexMode =
+      VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
   vk_pipeline_viewport_state_create_info_.pScissors = nullptr;
   vk_pipeline_viewport_state_create_info_.scissorCount = 0;
   vk_pipeline_viewport_state_create_info_.pViewports = nullptr;
   vk_pipeline_viewport_state_create_info_.viewportCount = 0;
   vk_pipeline_color_blend_state_create_info_.attachmentCount = 0;
+  vk_pipeline_color_blend_state_create_info_.logicOpEnable = VK_FALSE;
   vk_pipeline_color_blend_state_create_info_.pAttachments = nullptr;
   vk_pipeline_rendering_create_info_.colorAttachmentCount = 0;
   vk_pipeline_rendering_create_info_.depthAttachmentFormat = VK_FORMAT_UNDEFINED;
@@ -600,9 +652,8 @@ void VKPipelinePool::remove(Span<VkShaderModule> vk_shader_modules)
   });
 
   VKDevice &device = VKBackend::get().device;
-  VK_ALLOCATION_CALLBACKS;
   for (VkPipeline vk_pipeline : pipelines_to_destroy) {
-    vkDestroyPipeline(device.vk_handle(), vk_pipeline, vk_allocation_callbacks);
+    vkDestroyPipeline(device.vk_handle(), vk_pipeline, nullptr);
   }
 }
 
@@ -610,15 +661,148 @@ void VKPipelinePool::free_data()
 {
   std::scoped_lock lock(mutex_);
   VKDevice &device = VKBackend::get().device;
-  VK_ALLOCATION_CALLBACKS;
   for (VkPipeline &vk_pipeline : graphic_pipelines_.values()) {
-    vkDestroyPipeline(device.vk_handle(), vk_pipeline, vk_allocation_callbacks);
+    vkDestroyPipeline(device.vk_handle(), vk_pipeline, nullptr);
   }
   graphic_pipelines_.clear();
   for (VkPipeline &vk_pipeline : compute_pipelines_.values()) {
-    vkDestroyPipeline(device.vk_handle(), vk_pipeline, vk_allocation_callbacks);
+    vkDestroyPipeline(device.vk_handle(), vk_pipeline, nullptr);
   }
   compute_pipelines_.clear();
+
+  vkDestroyPipelineCache(device.vk_handle(), vk_pipeline_cache_static_, nullptr);
+  vkDestroyPipelineCache(device.vk_handle(), vk_pipeline_cache_non_static_, nullptr);
 }
+
+/* -------------------------------------------------------------------- */
+/** \name Persistent cache
+ * \{ */
+
+#ifdef WITH_BUILDINFO
+struct VKPipelineCachePrefixHeader {
+  /* 'B'lender 'C'ache + 2 bytes for file versioning. */
+  uint32_t magic = 0xBC00;
+  uint32_t blender_version = BLENDER_VERSION;
+  uint32_t blender_subversion = BLENDER_VERSION_PATCH;
+  char commit_hash[8];
+  uint32_t data_size;
+  uint32_t vendor_id;
+  uint32_t device_id;
+  uint32_t driver_version;
+  uint8_t pipeline_cache_uuid[VK_UUID_SIZE];
+
+  VKPipelineCachePrefixHeader()
+  {
+    const VKDevice &device = VKBackend::get().device;
+    data_size = 0;
+    const VkPhysicalDeviceProperties &properties = device.physical_device_properties_get();
+    vendor_id = properties.vendorID;
+    device_id = properties.deviceID;
+    driver_version = properties.driverVersion;
+    memcpy(&pipeline_cache_uuid, &properties.pipelineCacheUUID, VK_UUID_SIZE);
+
+    memset(commit_hash, 0, sizeof(commit_hash));
+    STRNCPY(commit_hash, build_hash);
+  }
+};
+
+static std::string pipeline_cache_filepath_get()
+{
+  static char tmp_dir_buffer[1024];
+  BKE_appdir_folder_caches(tmp_dir_buffer, sizeof(tmp_dir_buffer));
+
+  std::string cache_dir = std::string(tmp_dir_buffer) + "vk-pipeline-cache" + SEP_STR;
+  BLI_dir_create_recursive(cache_dir.c_str());
+  std::string cache_file = cache_dir + "static.bin";
+  return cache_file;
+}
+#endif
+
+void VKPipelinePool::read_from_disk()
+{
+#ifdef WITH_BUILDINFO
+  /* Don't read the shader cache when GPU debugging is enabled. When enabled we use different
+   * shaders and compilation settings. Previous generated pipelines will not be used. */
+  if (bool(G.debug & G_DEBUG_GPU)) {
+    return;
+  }
+
+  std::string cache_file = pipeline_cache_filepath_get();
+  if (!BLI_exists(cache_file.c_str())) {
+    return;
+  }
+
+  /* Prevent old cache files from being deleted if they're still being used. */
+  BLI_file_touch(cache_file.c_str());
+  /* Read cached binary. */
+  fstream file(cache_file, std::ios::binary | std::ios::in | std::ios::ate);
+  std::streamsize data_size = file.tellg();
+  file.seekg(0, std::ios::beg);
+  void *buffer = MEM_mallocN(data_size, __func__);
+  file.read(reinterpret_cast<char *>(buffer), data_size);
+  file.close();
+
+  /* Validate the prefix header. */
+  VKPipelineCachePrefixHeader prefix;
+  VKPipelineCachePrefixHeader &read_prefix = *static_cast<VKPipelineCachePrefixHeader *>(buffer);
+  prefix.data_size = read_prefix.data_size;
+  if (memcmp(&read_prefix, &prefix, sizeof(VKPipelineCachePrefixHeader)) != 0) {
+    /* Headers are different, most likely the cache will not work and potentially crash the driver.
+     * [https://medium.com/@zeuxcg/creating-a-robust-pipeline-cache-with-vulkan-961d09416cda]
+     */
+    MEM_freeN(buffer);
+    CLOG_INFO(&LOG,
+              1,
+              "Pipeline cache on disk [%s] is ignored as it was written by a different driver or "
+              "Blender version. Cache will be overwritten when exiting.",
+              cache_file.c_str());
+    return;
+  }
+
+  CLOG_INFO(&LOG, 1, "Initialize static pipeline cache from disk [%s].", cache_file.c_str());
+  VKDevice &device = VKBackend::get().device;
+  VkPipelineCacheCreateInfo create_info = {};
+  create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+  create_info.initialDataSize = read_prefix.data_size;
+  create_info.pInitialData = static_cast<uint8_t *>(buffer) + sizeof(VKPipelineCachePrefixHeader);
+  VkPipelineCache vk_pipeline_cache = VK_NULL_HANDLE;
+  vkCreatePipelineCache(device.vk_handle(), &create_info, nullptr, &vk_pipeline_cache);
+  MEM_freeN(buffer);
+
+  vkMergePipelineCaches(device.vk_handle(), vk_pipeline_cache_static_, 1, &vk_pipeline_cache);
+  vkDestroyPipelineCache(device.vk_handle(), vk_pipeline_cache, nullptr);
+#endif
+}
+
+void VKPipelinePool::write_to_disk()
+{
+#ifdef WITH_BUILDINFO
+  /* Don't write the pipeline cache when GPU debugging is enabled. When enabled we use different
+   * shaders and compilation settings. Writing them to disk will clutter the pipeline cache. */
+  if (bool(G.debug & G_DEBUG_GPU)) {
+    return;
+  }
+
+  VKDevice &device = VKBackend::get().device;
+  size_t data_size;
+  vkGetPipelineCacheData(device.vk_handle(), vk_pipeline_cache_static_, &data_size, nullptr);
+  void *buffer = MEM_mallocN(data_size, __func__);
+  vkGetPipelineCacheData(device.vk_handle(), vk_pipeline_cache_static_, &data_size, buffer);
+
+  std::string cache_file = pipeline_cache_filepath_get();
+  CLOG_INFO(&LOG, 1, "Writing static pipeline cache to disk [%s].", cache_file.c_str());
+
+  fstream file(cache_file, std::ios::binary | std::ios::out);
+
+  VKPipelineCachePrefixHeader header;
+  header.data_size = data_size;
+  file.write(reinterpret_cast<char *>(&header), sizeof(VKPipelineCachePrefixHeader));
+  file.write(static_cast<char *>(buffer), data_size);
+
+  MEM_freeN(buffer);
+#endif
+}
+
+/* \} */
 
 }  // namespace blender::gpu

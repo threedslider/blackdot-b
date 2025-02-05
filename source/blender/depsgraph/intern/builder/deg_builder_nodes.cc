@@ -10,14 +10,13 @@
 
 #include "intern/builder/deg_builder_nodes.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_span.hh"
-#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "DNA_action_types.h"
@@ -29,8 +28,6 @@
 #include "DNA_constraint_types.h"
 #include "DNA_curve_types.h"
 #include "DNA_curves_types.h"
-#include "DNA_effect_types.h"
-#include "DNA_gpencil_legacy_types.h"
 #include "DNA_key_types.h"
 #include "DNA_light_types.h"
 #include "DNA_lightprobe_types.h"
@@ -38,7 +35,6 @@
 #include "DNA_mask_types.h"
 #include "DNA_material_types.h"
 #include "DNA_mesh_types.h"
-#include "DNA_meta_types.h"
 #include "DNA_movieclip_types.h"
 #include "DNA_node_types.h"
 #include "DNA_object_types.h"
@@ -52,7 +48,7 @@
 #include "DNA_vfont_types.h"
 #include "DNA_world_types.h"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_anim_data.hh"
 #include "BKE_animsys.h"
 #include "BKE_armature.hh"
@@ -68,7 +64,7 @@
 #include "BKE_grease_pencil.hh"
 #include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_key.hh"
 #include "BKE_lattice.hh"
 #include "BKE_layer.hh"
@@ -76,7 +72,7 @@
 #include "BKE_lib_query.hh"
 #include "BKE_light.h"
 #include "BKE_mask.h"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_mball.hh"
 #include "BKE_mesh.hh"
 #include "BKE_modifier.hh"
@@ -365,7 +361,7 @@ ID *DepsgraphNodeBuilder::get_cow_id(const ID *id_orig) const
 
 ID *DepsgraphNodeBuilder::ensure_cow_id(ID *id_orig)
 {
-  if (id_orig->tag & LIB_TAG_COPIED_ON_EVAL) {
+  if (id_orig->tag & ID_TAG_COPIED_ON_EVAL) {
     /* ID is already remapped to copy-on-evaluation. */
     return id_orig;
   }
@@ -418,8 +414,8 @@ void DepsgraphNodeBuilder::begin_build()
   graph_->entry_tags.clear();
 }
 
-/* Util callbacks for `BKE_library_foreach_ID_link`, used to detect when an evaluated ID is using
- * ID pointers that are either:
+/* Utility callbacks for `BKE_library_foreach_ID_link`, used to detect when an evaluated ID is
+ * using ID pointers that are either:
  *  - evaluated ID pointers that do not exist anymore in current depsgraph.
  *  - Orig ID pointers that do have now an evaluated version in current depsgraph.
  * In both cases, it means the evaluated ID user needs to be flushed, to ensure its pointers are
@@ -506,7 +502,7 @@ void DepsgraphNodeBuilder::update_invalid_cow_pointers()
       /* Node/ID already tagged for copy-on-eval flush, no need to check it. */
       continue;
     }
-    if ((id_node->id_cow->flag & LIB_EMBEDDED_DATA) != 0) {
+    if ((id_node->id_cow->flag & ID_FLAG_EMBEDDED_DATA) != 0) {
       /* For now, we assume embedded data are managed by their owner IDs and do not need to be
        * checked here.
        *
@@ -765,7 +761,7 @@ void DepsgraphNodeBuilder::build_object(int base_index,
     if (id_node->linked_state == DEG_ID_LINKED_INDIRECTLY) {
       build_object_flags(base_index, object, linked_state);
     }
-    id_node->linked_state = max(id_node->linked_state, linked_state);
+    id_node->linked_state = std::max(id_node->linked_state, linked_state);
     id_node->is_visible_on_build |= is_visible;
     id_node->has_base |= (base_index != -1);
 
@@ -856,6 +852,10 @@ void DepsgraphNodeBuilder::build_object(int base_index,
   OperationNode *instance_node = add_operation_node(
       &object->id, NodeType::INSTANCING, OperationCode::INSTANCE);
   instance_node->flag |= OperationFlag::DEPSOP_FLAG_PINNED;
+
+  OperationNode *instance_geometry_node = add_operation_node(
+      &object->id, NodeType::INSTANCING, OperationCode::INSTANCE_GEOMETRY);
+  instance_geometry_node->flag |= OperationFlag::DEPSOP_FLAG_PINNED;
 
   build_object_light_linking(object);
 
@@ -987,7 +987,6 @@ void DepsgraphNodeBuilder::build_object_data(Object *object)
     case OB_SURF:
     case OB_MBALL:
     case OB_LATTICE:
-    case OB_GPENCIL_LEGACY:
     case OB_CURVES:
     case OB_POINTCLOUD:
     case OB_VOLUME:
@@ -1254,6 +1253,9 @@ void DepsgraphNodeBuilder::build_animdata(ID *id)
   }
   /* NLA strips contain actions. */
   LISTBASE_FOREACH (NlaTrack *, nlt, &adt->nla_tracks) {
+    if (nlt->flag & NLATRACK_MUTED) {
+      continue;
+    }
     build_animdata_nlastrip_targets(&nlt->strips);
   }
   /* Drivers. */
@@ -1282,7 +1284,7 @@ void DepsgraphNodeBuilder::build_animation_images(ID *id)
    * we have to check if they might be created during evaluation. */
   bool has_image_animation = false;
   if (ELEM(GS(id->name), ID_MA, ID_WO)) {
-    bNodeTree *ntree = *bke::BKE_ntree_ptr_from_id(id);
+    bNodeTree *ntree = *bke::node_tree_ptr_from_id(id);
     if (ntree != nullptr && ntree->runtime->runtime_flag & NTREE_RUNTIME_FLAG_HAS_IMAGE_ANIMATION)
     {
       has_image_animation = true;
@@ -1403,7 +1405,7 @@ void DepsgraphNodeBuilder::build_driver_id_property(const PointerRNA &target_pro
   if (ptr.owner_id) {
     build_id(ptr.owner_id);
   }
-  const char *prop_identifier = RNA_property_identifier((PropertyRNA *)prop);
+  const char *prop_identifier = RNA_property_identifier(prop);
   /* Custom properties of bones are placed in their components to improve granularity. */
   if (RNA_struct_is_a(ptr.type, &RNA_PoseBone)) {
     const bPoseChannel *pchan = static_cast<const bPoseChannel *>(ptr.data);
@@ -1452,7 +1454,6 @@ void DepsgraphNodeBuilder::build_dimensions(Object *object)
   add_operation_node(&object->id, NodeType::PARAMETERS, OperationCode::DIMENSIONS);
 }
 
-/* Recursively build graph for world */
 void DepsgraphNodeBuilder::build_world(World *world)
 {
   if (built_map_.checkIsBuiltAndTag(world)) {
@@ -1658,7 +1659,6 @@ void DepsgraphNodeBuilder::build_particle_settings(ParticleSettings *particle_se
   }
 }
 
-/* Shape-keys. */
 void DepsgraphNodeBuilder::build_shapekeys(Key *key)
 {
   if (built_map_.checkIsBuiltAndTag(key)) {
@@ -1719,7 +1719,7 @@ void DepsgraphNodeBuilder::build_object_data_geometry_datablock(ID *obdata)
   }
   OperationNode *op_node;
   /* Make sure we've got an ID node before requesting evaluated pointer. */
-  (void)add_id_node((ID *)obdata);
+  (void)add_id_node(obdata);
   ID *obdata_cow = get_cow_id(obdata);
   build_idproperties(obdata->properties);
   /* Animation. */
@@ -1779,18 +1779,6 @@ void DepsgraphNodeBuilder::build_object_data_geometry_datablock(ID *obdata)
       break;
     }
 
-    case ID_GD_LEGACY: {
-      /* GPencil evaluation operations. */
-      op_node = add_operation_node(obdata,
-                                   NodeType::GEOMETRY,
-                                   OperationCode::GEOMETRY_EVAL,
-                                   [obdata_cow](::Depsgraph *depsgraph) {
-                                     BKE_gpencil_frame_active_set(depsgraph,
-                                                                  (bGPdata *)obdata_cow);
-                                   });
-      op_node->set_as_entry();
-      break;
-    }
     case ID_CV: {
       Curves *curves_id = reinterpret_cast<Curves *>(obdata);
 
@@ -2012,7 +2000,7 @@ void DepsgraphNodeBuilder::build_nodetree(bNodeTree *ntree)
     else if (id_type == ID_VF) {
       build_vfont((VFont *)id);
     }
-    else if (ELEM(bnode->type, NODE_GROUP, NODE_CUSTOM_GROUP)) {
+    else if (bnode->is_group()) {
       bNodeTree *group_ntree = (bNodeTree *)id;
       build_nodetree(group_ntree);
     }
@@ -2035,7 +2023,6 @@ void DepsgraphNodeBuilder::build_nodetree(bNodeTree *ntree)
   /* TODO: link from nodetree to owner_component? */
 }
 
-/* Recursively build graph for material */
 void DepsgraphNodeBuilder::build_material(Material *material)
 {
   if (built_map_.checkIsBuiltAndTag(material)) {
@@ -2068,7 +2055,6 @@ void DepsgraphNodeBuilder::build_materials(Material **materials, int num_materia
   }
 }
 
-/* Recursively build graph for texture */
 void DepsgraphNodeBuilder::build_texture(Tex *texture)
 {
   if (built_map_.checkIsBuiltAndTag(texture)) {
@@ -2249,22 +2235,22 @@ void DepsgraphNodeBuilder::build_vfont(VFont *vfont)
       &vfont->id, NodeType::GENERIC_DATABLOCK, OperationCode::GENERIC_DATABLOCK_UPDATE);
 }
 
-static bool seq_node_build_cb(Sequence *seq, void *user_data)
+static bool strip_node_build_cb(Strip *strip, void *user_data)
 {
   DepsgraphNodeBuilder *nb = (DepsgraphNodeBuilder *)user_data;
-  nb->build_idproperties(seq->prop);
-  if (seq->sound != nullptr) {
-    nb->build_sound(seq->sound);
+  nb->build_idproperties(strip->prop);
+  if (strip->sound != nullptr) {
+    nb->build_sound(strip->sound);
   }
-  if (seq->scene != nullptr) {
-    nb->build_scene_parameters(seq->scene);
+  if (strip->scene != nullptr) {
+    nb->build_scene_parameters(strip->scene);
   }
-  if (seq->type == SEQ_TYPE_SCENE && seq->scene != nullptr) {
-    if (seq->flag & SEQ_SCENE_STRIPS) {
-      nb->build_scene_sequencer(seq->scene);
+  if (strip->type == STRIP_TYPE_SCENE && strip->scene != nullptr) {
+    if (strip->flag & SEQ_SCENE_STRIPS) {
+      nb->build_scene_sequencer(strip->scene);
     }
-    ViewLayer *sequence_view_layer = BKE_view_layer_default_render(seq->scene);
-    nb->build_scene_speakers(seq->scene, sequence_view_layer);
+    ViewLayer *sequence_view_layer = BKE_view_layer_default_render(strip->scene);
+    nb->build_scene_speakers(strip->scene, sequence_view_layer);
   }
   /* TODO(sergey): Movie clip, scene, camera, mask. */
   return true;
@@ -2287,7 +2273,7 @@ void DepsgraphNodeBuilder::build_scene_sequencer(Scene *scene)
                        SEQ_eval_sequences(depsgraph, scene_cow, &scene_cow->ed->seqbase);
                      });
   /* Make sure data for sequences is in the graph. */
-  SEQ_for_each_callback(&scene->ed->seqbase, seq_node_build_cb, this);
+  SEQ_for_each_callback(&scene->ed->seqbase, strip_node_build_cb, this);
 }
 
 void DepsgraphNodeBuilder::build_scene_audio(Scene *scene)
@@ -2329,7 +2315,7 @@ void DepsgraphNodeBuilder::build_scene_speakers(Scene *scene, ViewLayer *view_la
 void DepsgraphNodeBuilder::modifier_walk(void *user_data,
                                          Object * /*object*/,
                                          ID **idpoin,
-                                         int /*cb_flag*/)
+                                         LibraryForeachIDCallbackFlag /*cb_flag*/)
 {
   BuilderWalkUserData *data = (BuilderWalkUserData *)user_data;
   ID *id = *idpoin;

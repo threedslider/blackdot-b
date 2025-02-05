@@ -10,6 +10,7 @@
 /* Shrinkwrap stuff */
 #include "BKE_bvhutils.hh"
 
+#include "BKE_context.hh"
 #include "BLI_array.hh"
 #include "BLI_bit_vector.hh"
 #include "BLI_math_vector_types.hh"
@@ -29,6 +30,7 @@
  * (So that you don't have to pass an enormous amount of arguments to functions)
  */
 
+struct Depsgraph;
 struct BVHTree;
 struct MDeformVert;
 struct Mesh;
@@ -51,7 +53,7 @@ class ShrinkwrapBoundaryData {
  public:
   /* Returns true if there is boundary information. If there is no boundary information, then the
    * mesh from which this data is created from has no boundaries. */
-  inline bool has_boundary() const
+  bool has_boundary() const
   {
     return !edge_is_boundary.is_empty();
   }
@@ -79,10 +81,11 @@ const ShrinkwrapBoundaryData &boundary_cache_ensure(const Mesh &mesh);
 struct ShrinkwrapTreeData {
   Mesh *mesh;
 
-  BVHTree *bvh;
-  BVHTreeFromMesh treeData;
+  const BVHTree *bvh;
+  blender::bke::BVHTreeFromMesh treeData;
 
   blender::OffsetIndices<int> faces;
+  blender::Span<blender::int2> edges;
   blender::Span<int> corner_edges;
 
   blender::Span<blender::float3> face_normals;
@@ -120,13 +123,6 @@ void shrinkwrapModifier_deform(ShrinkwrapModifierData *smd,
                                int defgrp_index,
                                float (*vertexCos)[3],
                                int numVerts);
-/* Implementation of the Shrinkwrap Grease Pencil modifier. */
-void shrinkwrapGpencilModifier_deform(ShrinkwrapGpencilModifierData *mmd,
-                                      Object *ob,
-                                      MDeformVert *dvert,
-                                      int defgrp_index,
-                                      float (*vertexCos)[3],
-                                      int numVerts);
 
 struct ShrinkwrapParams {
   /** Shrink target. */

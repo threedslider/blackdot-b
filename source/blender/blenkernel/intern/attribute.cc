@@ -35,8 +35,6 @@
 #include "BKE_pointcloud.hh"
 #include "BKE_report.hh"
 
-#include "RNA_access.hh"
-
 using blender::IndexRange;
 using blender::bke::AttrDomain;
 
@@ -97,6 +95,13 @@ GreasePencil *AttributeOwner::get_grease_pencil() const
   return reinterpret_cast<GreasePencil *>(ptr_);
 }
 
+GreasePencilDrawing *AttributeOwner::get_grease_pencil_drawing() const
+{
+  BLI_assert(this->is_valid());
+  BLI_assert(type_ == AttributeOwnerType::GreasePencilDrawing);
+  return reinterpret_cast<GreasePencilDrawing *>(ptr_);
+}
+
 struct DomainInfo {
   CustomData *customdata = nullptr;
   int length = 0;
@@ -152,6 +157,14 @@ static std::array<DomainInfo, ATTR_DOMAIN_NUM> get_domains(const AttributeOwner 
       info[int(AttrDomain::Layer)].length = grease_pencil->layers().size();
       break;
     }
+    case AttributeOwnerType::GreasePencilDrawing: {
+      blender::bke::greasepencil::Drawing &drawing = owner.get_grease_pencil_drawing()->wrap();
+      info[int(AttrDomain::Point)].customdata = &drawing.geometry.point_data;
+      info[int(AttrDomain::Point)].length = drawing.geometry.point_num;
+      info[int(AttrDomain::Curve)].customdata = &drawing.geometry.curve_data;
+      info[int(AttrDomain::Curve)].length = drawing.geometry.curve_num;
+      break;
+    }
   }
 
   return info;
@@ -182,6 +195,10 @@ static std::optional<blender::bke::MutableAttributeAccessor> get_attribute_acces
       GreasePencil &grease_pencil = *owner.get_grease_pencil();
       return grease_pencil.attributes_for_write();
     }
+    case AttributeOwnerType::GreasePencilDrawing: {
+      blender::bke::greasepencil::Drawing &drawing = owner.get_grease_pencil_drawing()->wrap();
+      return drawing.strokes_for_write().attributes_for_write();
+    }
   }
   return {};
 }
@@ -201,32 +218,42 @@ static bool bke_attribute_rename_if_exists(AttributeOwner &owner,
   return BKE_attribute_rename(owner, old_name, new_name, reports);
 }
 
-static bool mesh_edit_mode_attribute_valid(const blender::StringRef name,
-                                           const AttrDomain domain,
-                                           const eCustomDataType data_type,
-                                           ReportList *reports)
+static bool name_valid_for_builtin_domain_and_type(
+    const blender::bke::AttributeAccessor attributes,
+    const blender::StringRefNull name,
+    const AttrDomain domain,
+    const eCustomDataType data_type,
+    ReportList *reports)
 {
-  if (ELEM(name,
-           "position",
-           ".edge_verts",
-           ".corner_vert",
-           ".corner_edge",
-           "sharp_edge",
-           "sharp_face",
-           "material_index"))
-  {
-    BKE_report(reports, RPT_ERROR, "Unable to create builtin attribute in edit mode");
-    return false;
+  if (const std::optional metadata = attributes.get_builtin_domain_and_type(name)) {
+    if (domain != metadata->domain) {
+      BKE_reportf(reports, RPT_ERROR, "Domain unsupported for \"%s\" attribute", name.c_str());
+      return false;
+    }
+    if (data_type != metadata->data_type) {
+      BKE_reportf(reports, RPT_ERROR, "Type unsupported for \"%s\" attribute", name.c_str());
+      return false;
+    }
   }
-  if (name == "id") {
-    if (domain != AttrDomain::Point) {
-      BKE_report(reports, RPT_ERROR, "Domain unsupported for \"id\" attribute");
+  return true;
+}
+
+static bool mesh_attribute_valid(const Mesh &mesh,
+                                 const blender::StringRefNull name,
+                                 const AttrDomain domain,
+                                 const eCustomDataType data_type,
+                                 ReportList *reports)
+{
+  using namespace blender;
+  if (mesh.runtime->edit_mesh) {
+    if (BM_attribute_stored_in_bmesh_builtin(name)) {
+      BKE_report(reports, RPT_ERROR, "Unable to create attribute in edit mode");
       return false;
     }
-    if (data_type != CD_PROP_INT32) {
-      BKE_report(reports, RPT_ERROR, "Type unsupported for \"id\" attribute");
-      return false;
-    }
+  }
+  if (!name_valid_for_builtin_domain_and_type(mesh.attributes(), name, domain, data_type, reports))
+  {
+    return false;
   }
   return true;
 }
@@ -268,12 +295,24 @@ bool BKE_attribute_rename(AttributeOwner &owner,
 
   if (owner.type() == AttributeOwnerType::Mesh) {
     Mesh *mesh = owner.get_mesh();
-    if (mesh->runtime->edit_mesh) {
-      if (!mesh_edit_mode_attribute_valid(
-              new_name, BKE_attribute_domain(owner, layer), eCustomDataType(layer->type), reports))
-      {
-        return false;
-      }
+    if (!mesh_attribute_valid(*mesh,
+                              new_name,
+                              BKE_attribute_domain(owner, layer),
+                              eCustomDataType(layer->type),
+                              reports))
+    {
+      return false;
+    }
+  }
+  else if (owner.type() == AttributeOwnerType::Curves) {
+    Curves *curves = owner.get_curves();
+    if (!name_valid_for_builtin_domain_and_type(curves->geometry.wrap().attributes(),
+                                                new_name,
+                                                BKE_attribute_domain(owner, layer),
+                                                eCustomDataType(layer->type),
+                                                reports))
+    {
+      return false;
     }
   }
 
@@ -366,7 +405,7 @@ CustomDataLayer *BKE_attribute_new(AttributeOwner &owner,
   if (owner.type() == AttributeOwnerType::Mesh) {
     Mesh *mesh = owner.get_mesh();
     if (BMEditMesh *em = mesh->runtime->edit_mesh.get()) {
-      if (!mesh_edit_mode_attribute_valid(name, domain, type, reports)) {
+      if (!mesh_attribute_valid(*mesh, name, domain, type, reports)) {
         return nullptr;
       }
       BM_data_layer_add_named(em->bm, customdata, type, uniquename.c_str());
@@ -708,6 +747,12 @@ AttrDomain BKE_attribute_domain(const AttributeOwner &owner, const CustomDataLay
   return AttrDomain(AttrDomain::Point);
 }
 
+int BKE_attribute_domain_size(const AttributeOwner &owner, const int domain)
+{
+  const std::array<DomainInfo, ATTR_DOMAIN_NUM> info = get_domains(owner);
+  return info[domain].length;
+}
+
 int BKE_attribute_data_length(AttributeOwner &owner, CustomDataLayer *layer)
 {
   /* When in mesh editmode, attributes point to bmesh customdata layers, the attribute data is
@@ -747,6 +792,8 @@ bool BKE_attribute_required(const AttributeOwner &owner, const char *name)
       return BKE_mesh_attribute_required(name);
     case AttributeOwnerType::GreasePencil:
       return false;
+    case AttributeOwnerType::GreasePencilDrawing:
+      return BKE_grease_pencil_drawing_attribute_required(owner.get_grease_pencil_drawing(), name);
   }
   return false;
 }
@@ -754,6 +801,9 @@ bool BKE_attribute_required(const AttributeOwner &owner, const char *name)
 CustomDataLayer *BKE_attributes_active_get(AttributeOwner &owner)
 {
   int active_index = *BKE_attributes_active_index_p(owner);
+  if (active_index == -1) {
+    return nullptr;
+  }
   if (active_index > BKE_attributes_length(owner, ATTR_DOMAIN_MASK_ALL, CD_MASK_PROP_ALL)) {
     active_index = 0;
   }
@@ -794,20 +844,28 @@ void BKE_attributes_active_set(AttributeOwner &owner, const char *name)
   *BKE_attributes_active_index_p(owner) = index;
 }
 
+void BKE_attributes_active_clear(AttributeOwner &owner)
+{
+  *BKE_attributes_active_index_p(owner) = -1;
+}
+
 int *BKE_attributes_active_index_p(AttributeOwner &owner)
 {
   switch (owner.type()) {
     case AttributeOwnerType::PointCloud: {
-      return &(owner.get_pointcloud())->attributes_active_index;
+      return &owner.get_pointcloud()->attributes_active_index;
     }
     case AttributeOwnerType::Mesh: {
-      return &(owner.get_mesh())->attributes_active_index;
+      return &owner.get_mesh()->attributes_active_index;
     }
     case AttributeOwnerType::Curves: {
-      return &(owner.get_curves())->attributes_active_index;
+      return &owner.get_curves()->geometry.attributes_active_index;
     }
     case AttributeOwnerType::GreasePencil: {
-      return &(owner.get_grease_pencil())->attributes_active_index;
+      return &owner.get_grease_pencil()->attributes_active_index;
+    }
+    case AttributeOwnerType::GreasePencilDrawing: {
+      return &owner.get_grease_pencil_drawing()->geometry.attributes_active_index;
     }
   }
   return nullptr;
@@ -933,6 +991,19 @@ void BKE_id_attributes_active_color_set(ID *id, const char *name)
       if (name) {
         mesh->active_color_attribute = BLI_strdup(name);
       }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+void BKE_id_attributes_active_color_clear(ID *id)
+{
+  switch (GS(id->name)) {
+    case ID_ME: {
+      Mesh *mesh = reinterpret_cast<Mesh *>(id);
+      MEM_SAFE_FREE(mesh->active_color_attribute);
       break;
     }
     default:

@@ -31,7 +31,7 @@ void *IMB_exr_get_handle_name(const char *name);
 void IMB_exr_add_channel(void *handle,
                          const char *layname,
                          const char *passname,
-                         const char *view,
+                         const char *viewname,
                          int xstride,
                          int ystride,
                          float *rect,
@@ -50,6 +50,7 @@ bool IMB_exr_begin_write(void *handle,
                          int width,
                          int height,
                          int compress,
+                         int quality,
                          const StampData *stamp);
 /**
  * Only used for writing temp. render results (not image files)
@@ -72,7 +73,7 @@ bool IMB_exr_set_channel(void *handle,
 float *IMB_exr_channel_rect(void *handle,
                             const char *layname,
                             const char *passname,
-                            const char *view);
+                            const char *viewname);
 
 void IMB_exr_read_channels(void *handle);
 void IMB_exr_write_channels(void *handle);

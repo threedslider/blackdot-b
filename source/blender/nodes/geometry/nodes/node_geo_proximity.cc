@@ -2,7 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BLI_math_vector.h"
 #include "BLI_task.hh"
 
 #include "BKE_bvhutils.hh"
@@ -59,8 +58,8 @@ static void geo_proximity_init(bNodeTree * /*tree*/, bNode *node)
 class ProximityFunction : public mf::MultiFunction {
  private:
   struct BVHTrees {
-    BVHTreeFromMesh mesh_bvh = {};
-    BVHTreeFromPointCloud pointcloud_bvh = {};
+    bke::BVHTreeFromMesh mesh_bvh = {};
+    bke::BVHTreeFromPointCloud pointcloud_bvh = {};
   };
 
   GeometrySet target_;
@@ -96,17 +95,7 @@ class ProximityFunction : public mf::MultiFunction {
     }
   }
 
-  ~ProximityFunction()
-  {
-    for (BVHTrees &trees : bvh_trees_) {
-      if (trees.mesh_bvh.tree) {
-        free_bvhtree_from_mesh(&trees.mesh_bvh);
-      }
-      if (trees.pointcloud_bvh.tree) {
-        free_bvhtree_from_pointcloud(&trees.pointcloud_bvh);
-      }
-    }
-  }
+  ~ProximityFunction() override = default;
 
   void init_for_pointcloud(const PointCloud &pointcloud, const Field<int> &group_id_field)
   {
@@ -132,8 +121,8 @@ class ProximityFunction : public mf::MultiFunction {
             if (group_mask.is_empty()) {
               continue;
             }
-            BVHTreeFromPointCloud &bvh = bvh_trees_[group_i].pointcloud_bvh;
-            BKE_bvhtree_from_pointcloud_get(pointcloud, group_mask, bvh);
+            bvh_trees_[group_i].pointcloud_bvh = bke::bvhtree_from_pointcloud_get(pointcloud,
+                                                                                  group_mask);
           }
         },
         threading::individual_task_sizes(
@@ -166,20 +155,16 @@ class ProximityFunction : public mf::MultiFunction {
             if (group_mask.is_empty()) {
               continue;
             }
-            BVHTreeFromMesh &bvh = bvh_trees_[group_i].mesh_bvh;
             switch (type_) {
-              case GEO_NODE_PROX_TARGET_POINTS: {
-                BKE_bvhtree_from_mesh_verts_init(mesh, group_mask, bvh);
+              case GEO_NODE_PROX_TARGET_POINTS:
+                bvh_trees_[group_i].mesh_bvh = bke::bvhtree_from_mesh_verts_init(mesh, group_mask);
                 break;
-              }
-              case GEO_NODE_PROX_TARGET_EDGES: {
-                BKE_bvhtree_from_mesh_edges_init(mesh, group_mask, bvh);
+              case GEO_NODE_PROX_TARGET_EDGES:
+                bvh_trees_[group_i].mesh_bvh = bke::bvhtree_from_mesh_edges_init(mesh, group_mask);
                 break;
-              }
-              case GEO_NODE_PROX_TARGET_FACES: {
-                BKE_bvhtree_from_mesh_tris_init(mesh, group_mask, bvh);
+              case GEO_NODE_PROX_TARGET_FACES:
+                bvh_trees_[group_i].mesh_bvh = bke::bvhtree_from_mesh_tris_init(mesh, group_mask);
                 break;
-              }
             }
           }
         },
@@ -240,14 +225,14 @@ class ProximityFunction : public mf::MultiFunction {
                                  sample_position,
                                  &nearest,
                                  trees.mesh_bvh.nearest_callback,
-                                 const_cast<BVHTreeFromMesh *>(&trees.mesh_bvh));
+                                 const_cast<bke::BVHTreeFromMesh *>(&trees.mesh_bvh));
       }
       if (trees.pointcloud_bvh.tree != nullptr) {
-        BLI_bvhtree_find_nearest(trees.pointcloud_bvh.tree,
+        BLI_bvhtree_find_nearest(trees.pointcloud_bvh.tree.get(),
                                  sample_position,
                                  &nearest,
                                  trees.pointcloud_bvh.nearest_callback,
-                                 const_cast<BVHTreeFromPointCloud *>(&trees.pointcloud_bvh));
+                                 const_cast<bke::BVHTreeFromPointCloud *>(&trees.pointcloud_bvh));
       }
 
       if (!positions.is_empty()) {
@@ -322,14 +307,18 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_PROXIMITY, "Geometry Proximity", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeProximity", GEO_NODE_PROXIMITY);
+  ntype.ui_name = "Geometry Proximity";
+  ntype.ui_description = "Compute the closest location on the target geometry";
+  ntype.enum_name_legacy = "PROXIMITY";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.initfunc = geo_proximity_init;
   blender::bke::node_type_storage(
       &ntype, "NodeGeometryProximity", node_free_standard_storage, node_copy_standard_storage);
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

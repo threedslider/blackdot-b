@@ -8,8 +8,6 @@
 #include "BKE_lib_id.hh"
 #include "BKE_lib_remap.hh"
 
-#include "MEM_guardedalloc.h"
-
 namespace blender::bke::id {
 
 void IDRemapper::add(ID *old_id, ID *new_id)
@@ -83,7 +81,7 @@ IDRemapperApplyResult IDRemapper::apply(ID **r_id_ptr,
   }
 
   if (options & ID_REMAP_APPLY_UPDATE_REFCOUNT) {
-    /* Do not handle LIB_TAG_INDIRECT/LIB_TAG_EXTERN here. */
+    /* Do not handle ID_TAG_INDIRECT/ID_TAG_EXTERN here. */
     id_us_plus_no_lib(*r_id_ptr);
   }
 
@@ -93,7 +91,7 @@ IDRemapperApplyResult IDRemapper::apply(ID **r_id_ptr,
   return ID_REMAP_RESULT_SOURCE_REMAPPED;
 }
 
-const StringRefNull IDRemapper::result_to_string(const IDRemapperApplyResult result)
+StringRefNull IDRemapper::result_to_string(const IDRemapperApplyResult result)
 {
   switch (result) {
     case ID_REMAP_RESULT_SOURCE_NOT_MAPPABLE:

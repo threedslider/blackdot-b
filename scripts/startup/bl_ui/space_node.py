@@ -7,7 +7,6 @@ from bpy.types import (
     Header,
     Menu,
     Panel,
-    UIList,
 )
 from bpy.app.translations import (
     pgettext_iface as iface_,
@@ -21,7 +20,6 @@ from bl_ui.space_toolsystem_common import (
     ToolActivePanelHelper,
 )
 from bl_ui.properties_material import (
-    EEVEE_MATERIAL_PT_settings,
     EEVEE_NEXT_MATERIAL_PT_settings,
     EEVEE_NEXT_MATERIAL_PT_settings_surface,
     EEVEE_NEXT_MATERIAL_PT_settings_volume,
@@ -65,8 +63,7 @@ class NODE_HT_header(Header):
 
                 NODE_MT_editor_menus.draw_collapsible(context, layout)
 
-                # No shader nodes for EEVEE lights.
-                if snode_id and not (context.engine == 'BLENDER_EEVEE' and ob_type == 'LIGHT'):
+                if snode_id:
                     row = layout.row()
                     row.prop(snode_id, "use_nodes")
 
@@ -198,7 +195,8 @@ class NODE_HT_header(Header):
         if is_compositor:
             layout.prop(snode, "pin", text="", emboss=False)
 
-        layout.operator("node.tree_path_parent", text="", icon='FILE_PARENT')
+        if len(snode.path) > 1:
+            layout.operator("node.tree_path_parent", text="", icon='FILE_PARENT')
 
         # Backdrop
         if is_compositor:
@@ -206,14 +204,11 @@ class NODE_HT_header(Header):
             row.prop(snode, "show_backdrop", toggle=True)
             sub = row.row(align=True)
             sub.active = snode.show_backdrop
-            sub.prop(snode, "backdrop_channels", icon_only=True, text="", expand=True)
+            sub.prop(snode, "backdrop_channels", icon_only=True, text="")
 
         # Snap
         row = layout.row(align=True)
         row.prop(tool_settings, "use_snap_node", text="")
-        row.prop(tool_settings, "snap_node_element", icon_only=True)
-        if tool_settings.snap_node_element != 'GRID':
-            row.prop(tool_settings, "snap_target", text="")
 
         # Overlay toggle & popover
         row = layout.row(align=True)
@@ -341,6 +336,7 @@ class NODE_MT_node(Menu):
     def draw(self, context):
         layout = self.layout
         snode = context.space_data
+        group = snode.edit_tree
         is_compositor = snode.tree_type == 'CompositorNodeTree'
 
         layout.operator("transform.translate").view2d_edge_pan = True
@@ -377,11 +373,12 @@ class NODE_MT_node(Menu):
         layout.operator("node.links_detach")
         layout.operator("node.links_mute")
 
-        layout.separator()
-        layout.operator("node.group_make", icon='NODETREE')
-        layout.operator("node.group_insert", text="Insert Into Group")
-        layout.operator("node.group_edit").exit = False
-        layout.operator("node.group_ungroup")
+        if not group or group.bl_use_group_interface:
+            layout.separator()
+            layout.operator("node.group_make", icon='NODETREE')
+            layout.operator("node.group_insert", text="Insert Into Group")
+            layout.operator("node.group_edit").exit = False
+            layout.operator("node.group_ungroup")
 
         layout.separator()
         layout.menu("NODE_MT_context_menu_show_hide_menu")
@@ -586,6 +583,7 @@ class NODE_MT_context_menu(Menu):
         snode = context.space_data
         is_nested = (len(snode.path) > 1)
         is_geometrynodes = snode.tree_type == 'GeometryNodeTree'
+        group = snode.edit_tree
 
         selected_nodes_len = len(context.selected_nodes)
         active_node = context.active_node
@@ -645,17 +643,18 @@ class NODE_MT_context_menu(Menu):
 
         layout.separator()
 
-        layout.operator("node.group_make", text="Make Group", icon='NODETREE')
-        layout.operator("node.group_insert", text="Insert Into Group")
+        if group and group.bl_use_group_interface:
+            layout.operator("node.group_make", text="Make Group", icon='NODETREE')
+            layout.operator("node.group_insert", text="Insert Into Group")
 
-        if active_node and active_node.type == 'GROUP':
-            layout.operator("node.group_edit").exit = False
-            layout.operator("node.group_ungroup", text="Ungroup")
+            if active_node and active_node.type == 'GROUP':
+                layout.operator("node.group_edit").exit = False
+                layout.operator("node.group_ungroup", text="Ungroup")
 
-        if is_nested:
-            layout.operator("node.tree_path_parent", text="Exit Group", icon='FILE_PARENT')
+            if is_nested:
+                layout.operator("node.tree_path_parent", text="Exit Group", icon='FILE_PARENT')
 
-        layout.separator()
+            layout.separator()
 
         layout.operator("node.join", text="Join in New Frame")
         layout.operator("node.detach", text="Remove from Frame")
@@ -690,9 +689,16 @@ class NODE_PT_active_node_generic(Panel):
     def draw(self, context):
         layout = self.layout
         node = context.active_node
+        tree = node.id_data
+
+        layout.use_property_split = True
+        layout.use_property_decorate = False
 
         layout.prop(node, "name", icon='NODE')
         layout.prop(node, "label", icon='NODE')
+
+        if tree.type == 'GEOMETRY':
+            layout.prop(node, "warning_propagation")
 
 
 class NODE_PT_active_node_color(Panel):
@@ -752,7 +758,10 @@ class NODE_PT_texture_mapping(Panel):
     bl_category = "Node"
     bl_label = "Texture Mapping"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {'BLENDER_RENDER', 'BLENDER_EEVEE', 'BLENDER_WORKBENCH'}
+    COMPAT_ENGINES = {
+        'BLENDER_RENDER',
+        'BLENDER_WORKBENCH',
+    }
 
     @classmethod
     def poll(cls, context):
@@ -844,7 +853,8 @@ class NODE_PT_quality(bpy.types.Panel):
 
         col = layout.column()
         col.prop(rd, "compositor_device", text="Device")
-        col.prop(rd, "compositor_precision", text="Precision")
+        if rd.compositor_device == 'GPU':
+            col.prop(rd, "compositor_precision", text="Precision")
 
         col = layout.column()
         col.prop(tree, "use_viewer_border")
@@ -915,6 +925,8 @@ class NODE_PT_node_tree_interface(Panel):
         if tree is None:
             return False
         if tree.is_embedded_data:
+            return False
+        if not tree.bl_use_group_interface:
             return False
         return True
 
@@ -998,7 +1010,13 @@ class NODE_PT_node_tree_properties(Panel):
         else:
             layout.prop(group, "description", text="Description")
 
+        if not group.bl_use_group_interface:
+            return
+
         layout.prop(group, "color_tag")
+        row = layout.row(align=True)
+        row.prop(group, "default_group_node_width", text="Node Width")
+        row.operator("node.default_group_width_set", text="", icon='NODE')
 
         if group.bl_idname == "GeometryNodeTree":
             header, body = layout.panel("group_usage")
@@ -1022,10 +1040,6 @@ class NODE_PT_annotation(AnnotationDataPanel, Panel):
     def poll(cls, context):
         snode = context.space_data
         return snode is not None and snode.node_tree is not None
-
-
-def node_draw_tree_view(_layout, _context):
-    pass
 
 
 # Adapt properties editor panel to display in node editor. We have to
@@ -1077,7 +1091,6 @@ classes = (
     NODE_PT_overlay,
     NODE_PT_active_node_properties,
 
-    node_panel(EEVEE_MATERIAL_PT_settings),
     node_panel(EEVEE_NEXT_MATERIAL_PT_settings),
     node_panel(EEVEE_NEXT_MATERIAL_PT_settings_surface),
     node_panel(EEVEE_NEXT_MATERIAL_PT_settings_volume),

@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "BLI_array_utils.hh"
-#include "BLI_task.hh"
 
 #include "DNA_mesh_types.h"
 #include "DNA_pointcloud_types.h"
@@ -16,6 +15,8 @@
 
 #include "UI_interface.hh"
 #include "UI_resources.hh"
+
+#include "FN_multi_function_builder.hh"
 
 #include "node_geometry_util.hh"
 
@@ -53,7 +54,7 @@ static void geometry_set_mesh_to_points(GeometrySet &geometry_set,
                                         const Field<float> &radius_field,
                                         const Field<bool> &selection_field,
                                         const AttrDomain domain,
-                                        const AnonymousAttributePropagationInfo &propagation_info)
+                                        const AttributeFilter &attribute_filter)
 {
   const Mesh *mesh = geometry_set.get_mesh();
   if (mesh == nullptr) {
@@ -105,17 +106,17 @@ static void geometry_set_mesh_to_points(GeometrySet &geometry_set,
   array_utils::gather(evaluator.get_evaluated(1), selection, radius.span);
   radius.finish();
 
-  Map<AttributeIDRef, AttributeKind> attributes;
+  Map<StringRef, AttributeDomainAndType> attributes;
   geometry_set.gather_attributes_for_propagation({GeometryComponent::Type::Mesh},
                                                  GeometryComponent::Type::PointCloud,
                                                  false,
-                                                 propagation_info,
+                                                 attribute_filter,
                                                  attributes);
   attributes.remove("radius");
   attributes.remove("position");
 
-  for (MapItem<AttributeIDRef, AttributeKind> entry : attributes.items()) {
-    const AttributeIDRef attribute_id = entry.key;
+  for (MapItem<StringRef, AttributeDomainAndType> entry : attributes.items()) {
+    const StringRef attribute_id = entry.key;
     const eCustomDataType data_type = entry.value.data_type;
     const bke::GAttributeReader src = src_attributes.lookup(attribute_id, domain, data_type);
     if (!src) {
@@ -158,8 +159,7 @@ static void node_geo_exec(GeoNodeExecParams params)
   const NodeGeometryMeshToPoints &storage = node_storage(params.node());
   const GeometryNodeMeshToPointsMode mode = (GeometryNodeMeshToPointsMode)storage.mode;
 
-  const AnonymousAttributePropagationInfo &propagation_info = params.get_output_propagation_info(
-      "Points");
+  const NodeAttributeFilter &attribute_filter = params.get_attribute_filter("Points");
 
   geometry_set.modify_geometry_sets([&](GeometrySet &geometry_set) {
     switch (mode) {
@@ -169,7 +169,7 @@ static void node_geo_exec(GeoNodeExecParams params)
                                     positive_radius,
                                     selection,
                                     AttrDomain::Point,
-                                    propagation_info);
+                                    attribute_filter);
         break;
       case GEO_NODE_MESH_TO_POINTS_EDGES:
         geometry_set_mesh_to_points(geometry_set,
@@ -177,7 +177,7 @@ static void node_geo_exec(GeoNodeExecParams params)
                                     positive_radius,
                                     selection,
                                     AttrDomain::Edge,
-                                    propagation_info);
+                                    attribute_filter);
         break;
       case GEO_NODE_MESH_TO_POINTS_FACES:
         geometry_set_mesh_to_points(geometry_set,
@@ -185,7 +185,7 @@ static void node_geo_exec(GeoNodeExecParams params)
                                     positive_radius,
                                     selection,
                                     AttrDomain::Face,
-                                    propagation_info);
+                                    attribute_filter);
         break;
       case GEO_NODE_MESH_TO_POINTS_CORNERS:
         geometry_set_mesh_to_points(geometry_set,
@@ -193,7 +193,7 @@ static void node_geo_exec(GeoNodeExecParams params)
                                     positive_radius,
                                     selection,
                                     AttrDomain::Corner,
-                                    propagation_info);
+                                    attribute_filter);
         break;
     }
   });
@@ -242,14 +242,18 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_MESH_TO_POINTS, "Mesh to Points", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeMeshToPoints", GEO_NODE_MESH_TO_POINTS);
+  ntype.ui_name = "Mesh to Points";
+  ntype.ui_description = "Generate a point cloud from a mesh's vertices";
+  ntype.enum_name_legacy = "MESH_TO_POINTS";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.initfunc = node_init;
   ntype.draw_buttons = node_layout;
   blender::bke::node_type_storage(
       &ntype, "NodeGeometryMeshToPoints", node_free_standard_storage, node_copy_standard_storage);
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

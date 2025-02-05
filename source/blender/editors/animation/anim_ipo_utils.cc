@@ -14,13 +14,17 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_math_color.h"
-#include "BLI_utildefines.h"
+#include "BLI_string.h"
 
 #include "BLT_translation.hh"
 
 #include "DNA_anim_types.h"
+#include "DNA_modifier_types.h"
+#include "DNA_node_types.h"
+
+#include "BKE_node.hh"
+#include "BKE_node_runtime.hh"
 
 #include "RNA_access.hh"
 #include "RNA_path.hh"
@@ -30,7 +34,7 @@
 
 #include "ANIM_action.hh"
 
-#include "fmt/format.h"
+#include <fmt/format.h>
 
 #include <cstring>
 
@@ -38,8 +42,9 @@ struct StructRNA;
 
 /* ----------------------- Getter functions ----------------------- */
 
-int getname_anim_fcurve(char *name, ID *id, FCurve *fcu)
+std::optional<int> getname_anim_fcurve(char *name, ID *id, FCurve *fcu)
 {
+  using namespace blender;
   /* Could make an argument, it's a documented limit at the moment. */
   constexpr size_t name_maxncpy = 256;
 
@@ -47,19 +52,19 @@ int getname_anim_fcurve(char *name, ID *id, FCurve *fcu)
   if (name == nullptr) {
     /* A 'get name' function should be able to get the name, otherwise it's a bug. */
     BLI_assert_unreachable();
-    return 0;
+    return {};
   }
   if (fcu == nullptr) {
     BLI_strncpy(name, RPT_("<invalid>"), name_maxncpy);
-    return 0;
+    return {};
   }
   if (fcu->rna_path == nullptr) {
     BLI_strncpy(name, RPT_("<no path>"), name_maxncpy);
-    return 0;
+    return {};
   }
   if (id == nullptr) {
     BLI_snprintf(name, name_maxncpy, "%s[%d]", fcu->rna_path, fcu->array_index);
-    return 0;
+    return {};
   }
 
   PointerRNA id_ptr = RNA_id_pointer_create(id);
@@ -73,9 +78,7 @@ int getname_anim_fcurve(char *name, ID *id, FCurve *fcu)
 
     /* Tag F-Curve as disabled - as not usable path. */
     fcu->flag |= FCURVE_DISABLED;
-
-    /* TODO: maybe change this to an 'error' icon instead? */
-    return RNA_struct_ui_icon(id_ptr.type);
+    return {};
   }
 
   const char *structname = nullptr, *propname = nullptr;
@@ -129,7 +132,7 @@ int getname_anim_fcurve(char *name, ID *id, FCurve *fcu)
     if (GS(ptr.owner_id->name) == ID_SCE) {
       char stripname[name_maxncpy];
       if (BLI_str_quoted_substr(
-              fcu->rna_path, "sequence_editor.sequences_all[", stripname, sizeof(stripname)))
+              fcu->rna_path, "sequence_editor.strips_all[", stripname, sizeof(stripname)))
       {
         if (strstr(fcu->rna_path, ".transform.") || strstr(fcu->rna_path, ".crop.") ||
             strstr(fcu->rna_path, ".modifiers["))
@@ -143,26 +146,49 @@ int getname_anim_fcurve(char *name, ID *id, FCurve *fcu)
         }
       }
     }
-    /* For node sockets, it is useful to include the node name as well (multiple similar nodes
-     * are not distinguishable otherwise). Unfortunately, the node label cannot be retrieved
-     * from the rna path, for this to work access to the underlying node is needed (but finding
-     * the node iterates all nodes & sockets which would result in bad performance in some
-     * circumstances). */
+
     if (RNA_struct_is_a(ptr.type, &RNA_NodeSocket)) {
-      char nodename[name_maxncpy];
-      if (BLI_str_quoted_substr(fcu->rna_path, "nodes[", nodename, sizeof(nodename))) {
-        const char *structname_all = BLI_sprintfN("%s : %s", nodename, structname);
-        if (free_structname) {
-          MEM_freeN((void *)structname);
-        }
-        structname = structname_all;
-        free_structname = true;
+      /* Display the name/label of a node socket's node to allow distinguishing multiple nodes. */
+      BLI_assert(GS(ptr.owner_id->name) == ID_NT);
+      const bNodeTree *ntree = reinterpret_cast<const bNodeTree *>(ptr.owner_id);
+      const bNodeSocket *socket = static_cast<const bNodeSocket *>(ptr.data);
+      const bNode &node = bke::node_find_node(*ntree, *socket);
+      if (free_structname) {
+        MEM_freeN((void *)structname);
       }
+      structname = node.label_or_name().c_str();
+      free_structname = false;
+    }
+    else if (RNA_struct_is_a(ptr.type, &RNA_Node)) {
+      /* Display the label of the node if available to distinguish nodes like "Value". */
+      BLI_assert(GS(ptr.owner_id->name) == ID_NT);
+      const bNode *node = static_cast<const bNode *>(ptr.data);
+      if (free_structname) {
+        MEM_freeN((void *)structname);
+      }
+      structname = node->label_or_name().c_str();
+      free_structname = false;
     }
   }
 
-  /* Property Name is straightforward */
   propname = RNA_property_ui_name(prop);
+
+  if (RNA_struct_is_a(ptr.type, &RNA_NodesModifier)) {
+    /* Display geometry node properties with node-tree socket labels. */
+    const NodesModifierData *nmd = static_cast<const NodesModifierData *>(ptr.data);
+    if (const bNodeTree *node_group = nmd->node_group) {
+      if (const bNodeTreeInterfaceSocket *input = bke::node_find_interface_input_by_identifier(
+              *node_group, propname))
+      {
+        propname = input->name;
+      }
+    }
+  }
+  else if (RNA_struct_is_a(ptr.type, &RNA_NodeSocket)) {
+    /* Use the socket's name rather than the "Default Value" name of the socket's RNA property. */
+    const bNodeSocket *socket = static_cast<const bNodeSocket *>(ptr.data);
+    propname = socket->name;
+  }
 
   /* Array Index - only if applicable */
   if (RNA_property_array_check(prop)) {
@@ -198,17 +224,13 @@ int getname_anim_fcurve(char *name, ID *id, FCurve *fcu)
     MEM_freeN((void *)structname);
   }
 
-  /* Valid path - remove the invalid tag since we now know how to use it saving
-   * users manual effort to re-enable using "Revive Disabled FCurves" #29629. */
-  fcu->flag &= ~FCURVE_DISABLED;
-
   /* Use the property's owner struct icon. */
   return RNA_struct_ui_icon(ptr.type);
 }
 
-std::string getname_anim_fcurve_bound(Main &bmain,
-                                      const blender::animrig::Slot &slot,
-                                      FCurve &fcurve)
+std::string getname_anim_fcurve_for_slot(Main &bmain,
+                                         const blender::animrig::Slot &slot,
+                                         FCurve &fcurve)
 {
   /* TODO: Refactor to avoid this variable. */
   constexpr size_t name_maxncpy = 256;
@@ -217,8 +239,8 @@ std::string getname_anim_fcurve_bound(Main &bmain,
 
   /* Check the Slot's users to see if we can find an ID* that can resolve the F-Curve. */
   for (ID *user : slot.users(bmain)) {
-    const int icon = getname_anim_fcurve(name_buffer, user, &fcurve);
-    if (icon) {
+    const std::optional<int> icon = getname_anim_fcurve(name_buffer, user, &fcurve);
+    if (icon.has_value()) {
       /* Managed to find a name! */
       return name_buffer;
     }
@@ -268,7 +290,7 @@ std::string getname_anim_fcurve_bound(Main &bmain,
     return propname;
   }
 
-  std::string arrayname = "";
+  std::string arrayname;
   char c = RNA_property_array_item_char(prop, fcurve.array_index);
   if (c) {
     arrayname = std::string(1, c);

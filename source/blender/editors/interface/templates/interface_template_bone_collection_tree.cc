@@ -141,11 +141,11 @@ class BoneCollectionDropTarget : public TreeViewItemDropTarget {
 
     switch (drag_info.drop_location) {
       case DropLocation::Into:
-        return fmt::format(TIP_("Move {} into {}"), drag_name, drop_name);
+        return fmt::format(fmt::runtime(TIP_("Move {} into {}")), drag_name, drop_name);
       case DropLocation::Before:
-        return fmt::format(TIP_("Move {} above {}"), drag_name, drop_name);
+        return fmt::format(fmt::runtime(TIP_("Move {} above {}")), drag_name, drop_name);
       case DropLocation::After:
-        return fmt::format(TIP_("Move {} below {}"), drag_name, drop_name);
+        return fmt::format(fmt::runtime(TIP_("Move {} below {}")), drag_name, drop_name);
     }
 
     return "";
@@ -279,13 +279,14 @@ class BoneCollectionItem : public AbstractTreeViewItem {
   {
     /* Let RNA handle the property change. This makes sure all the notifiers and DEG
      * update calls are properly called. */
-    PointerRNA bcolls_ptr = RNA_pointer_create(&armature_.id, &RNA_BoneCollections, &armature_);
+    PointerRNA bcolls_ptr = RNA_pointer_create_discrete(
+        &armature_.id, &RNA_BoneCollections, &armature_);
     PropertyRNA *prop = RNA_struct_find_property(&bcolls_ptr, "active_index");
 
     RNA_property_int_set(&bcolls_ptr, prop, bcoll_index_);
-    RNA_property_update(&const_cast<bContext &>(C), &bcolls_ptr, prop);
+    RNA_property_update(&C, &bcolls_ptr, prop);
 
-    ED_undo_push(&const_cast<bContext &>(C), "Change Armature's Active Bone Collection");
+    ED_undo_push(&C, "Change Armature's Active Bone Collection");
   }
 
   std::optional<bool> should_be_collapsed() const override
@@ -311,7 +312,7 @@ class BoneCollectionItem : public AbstractTreeViewItem {
 
     /* Let RNA handle the property change. This makes sure all the notifiers and DEG
      * update calls are properly called. */
-    PointerRNA bcoll_ptr = RNA_pointer_create(
+    PointerRNA bcoll_ptr = RNA_pointer_create_discrete(
         &armature_.id, &RNA_BoneCollection, &bone_collection_);
     PropertyRNA *prop = RNA_struct_find_property(&bcoll_ptr, "is_expanded");
 
@@ -367,7 +368,7 @@ class BoneCollectionItem : public AbstractTreeViewItem {
   /** RNA pointer to the BoneCollection. */
   PointerRNA rna_pointer()
   {
-    return RNA_pointer_create(&armature_.id, &RNA_BoneCollection, &bone_collection_);
+    return RNA_pointer_create_discrete(&armature_.id, &RNA_BoneCollection, &bone_collection_);
   }
 };
 
@@ -474,7 +475,7 @@ void uiTemplateBoneCollectionTree(uiLayout *layout, bContext *C)
       "Bone Collection Tree View",
       std::make_unique<blender::ui::bonecollections::BoneCollectionTreeView>(*armature));
   tree_view->set_context_menu_title("Bone Collection");
-  tree_view->set_min_rows(3);
+  tree_view->set_default_rows(3);
 
-  ui::TreeViewBuilder::build_tree_view(*tree_view, *layout);
+  ui::TreeViewBuilder::build_tree_view(*C, *tree_view, *layout);
 }

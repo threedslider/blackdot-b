@@ -36,6 +36,9 @@ Sphinx: PDF generation
     cd doc/python_api/sphinx-out
     make
 """
+__all__ = (
+    "main",
+)
 
 import os
 import sys
@@ -415,6 +418,13 @@ INFO_DOCS = (
 INFO_DOCS_OTHER = (
     # Included by: `info_advanced.rst`.
     "info_advanced_blender_as_bpy.rst",
+    # Included by: `info_gotcha.rst`.
+    "info_gotchas_crashes.rst",
+    "info_gotchas_internal_data_and_python_objects.rst",
+    "info_gotchas_operators.rst",
+    "info_gotchas_meshes.rst",
+    "info_gotchas_armatures_and_bones.rst",
+    "info_gotchas_file_paths_and_encoding.rst",
 )
 
 # Hide the actual TOC, use a separate list that links to the items.
@@ -588,6 +598,7 @@ from types import (
 
 _BPY_STRUCT_FAKE = "bpy_struct"
 _BPY_PROP_COLLECTION_FAKE = "bpy_prop_collection"
+_BPY_PROP_COLLECTION_IDPROP_FAKE = "bpy_prop_collection_idprop"
 
 if _BPY_PROP_COLLECTION_FAKE:
     _BPY_PROP_COLLECTION_ID = ":class:`{:s}`".format(_BPY_PROP_COLLECTION_FAKE)
@@ -639,20 +650,6 @@ def undocumented_message(module_name, type_name, identifier):
     )
 
     return "Undocumented, consider `contributing <https://developer.blender.org/>`__."
-
-
-def range_str(val):
-    """
-    Converts values to strings for the range directive.
-    (unused function it seems)
-    """
-    if val < -10000000:
-        return "-inf"
-    if val > 10000000:
-        return "inf"
-    if type(val) == float:
-        return "{:g}".format(val)
-    return str(val)
 
 
 def example_extract_docstring(filepath):
@@ -1176,13 +1173,12 @@ context_type_map = {
     "active_annotation_layer": [("GPencilLayer", False)],
     "active_bone": [("EditBone", False), ("Bone", False)],
     "active_file": [("FileSelectEntry", False)],
-    "active_gpencil_frame": [("GreasePencilLayer", True)],
-    "active_gpencil_layer": [("GPencilLayer", True)],
     "active_node": [("Node", False)],
     "active_object": [("Object", False)],
     "active_operator": [("Operator", False)],
     "active_pose_bone": [("PoseBone", False)],
-    "active_sequence_strip": [("Sequence", False)],
+    "active_sequence_strip": [("Strip", False)],
+    "active_strip": [("Strip", False)],
     "active_editable_fcurve": [("FCurve", False)],
     "active_nla_strip": [("NlaStrip", False)],
     "active_nla_track": [("NlaTrack", False)],
@@ -1205,15 +1201,11 @@ context_type_map = {
     "edit_object": [("Object", False)],
     "edit_text": [("Text", False)],
     "editable_bones": [("EditBone", True)],
-    "editable_gpencil_layers": [("GPencilLayer", True)],
-    "editable_gpencil_strokes": [("GPencilStroke", True)],
     "editable_objects": [("Object", True)],
     "editable_fcurves": [("FCurve", True)],
     "fluid": [("FluidSimulationModifier", False)],
     "gpencil": [("GreasePencil", False)],
-    "gpencil_data": [("GreasePencil", False)],
     "grease_pencil": [("GreasePencilv3", False)],
-    "gpencil_data_owner": [("ID", False)],
     "curves": [("Hair Curves", False)],
     "id": [("ID", False)],
     "image_paint_object": [("Object", False)],
@@ -1246,7 +1238,8 @@ context_type_map = {
     "selected_editable_fcurves": [("FCurve", True)],
     "selected_editable_keyframes": [("Keyframe", True)],
     "selected_editable_objects": [("Object", True)],
-    "selected_editable_sequences": [("Sequence", True)],
+    "selected_editable_sequences": [("Strip", True)],
+    "selected_editable_strips": [("Strip", True)],
     "selected_files": [("FileSelectEntry", True)],
     "selected_ids": [("ID", True)],
     "selected_nla_strips": [("NlaStrip", True)],
@@ -1255,10 +1248,12 @@ context_type_map = {
     "selected_objects": [("Object", True)],
     "selected_pose_bones": [("PoseBone", True)],
     "selected_pose_bones_from_active_object": [("PoseBone", True)],
-    "selected_sequences": [("Sequence", True)],
+    "selected_sequences": [("Strip", True)],
+    "selected_strips": [("Strip", True)],
     "selected_visible_actions": [("Action", True)],
     "selected_visible_fcurves": [("FCurve", True)],
-    "sequences": [("Sequence", True)],
+    "sequences": [("Strip", True)],
+    "strips": [("Strip", True)],
     "soft_body": [("SoftBodyModifier", False)],
     "speaker": [("Speaker", False)],
     "texture": [("Texture", False)],
@@ -1270,7 +1265,6 @@ context_type_map = {
     "vertex_paint_object": [("Object", False)],
     "view_layer": [("ViewLayer", False)],
     "visible_bones": [("EditBone", True)],
-    "visible_gpencil_layers": [("GPencilLayer", True)],
     "visible_objects": [("Object", True)],
     "visible_pose_bones": [("PoseBone", True)],
     "visible_fcurves": [("FCurve", True)],
@@ -1625,7 +1619,7 @@ def pyrna2sphinx(basepath):
                 fw("   .. data:: {:s}\n".format(identifier))
             else:
                 fw("   .. attribute:: {:s}\n".format(identifier))
-            # Also write `noindex` on requerst.
+            # Also write `noindex` on request.
             if ("bpy.types", struct_id, identifier) in RST_NOINDEX_ATTR:
                 fw("      :noindex:\n")
             fw("\n")
@@ -1660,7 +1654,18 @@ def pyrna2sphinx(basepath):
         del key, descr
 
         for func in struct.functions:
-            args_str = ", ".join(prop.get_arg_default(force=False) for prop in func.args)
+            args_kw_only_index = next((i for i, prop in enumerate(func.args) if not prop.is_required), -1)
+            if args_kw_only_index == -1:
+                args_str = ", ".join(prop.get_arg_default(force=False) for prop in func.args)
+            else:
+                args_str = ", ".join([
+                    *[prop.get_arg_default(force=False) for prop in func.args[:args_kw_only_index]],
+                    # Keyword only.
+                    "*",
+                    *[prop.get_arg_default(force=False) for prop in func.args[args_kw_only_index:]],
+
+                ])
+            del args_kw_only_index
 
             fw("   .. {:s}:: {:s}({:s})\n\n".format(
                 "classmethod" if func.is_classmethod else "method",
@@ -1675,7 +1680,8 @@ def pyrna2sphinx(basepath):
             if len(func.return_values) == 1:
                 write_param("      ", fw, func.return_values[0], is_return=True)
             elif func.return_values:  # Multiple return values.
-                fw("      :return ({:s}):\n".format(", ".join(prop.identifier for prop in func.return_values)))
+                fw("      :return:\n")
+                type_descrs = []
                 for prop in func.return_values:
                     # TODO: pyrna_enum2sphinx for multiple return values,
                     # actually don't think we even use this but still!
@@ -1690,6 +1696,7 @@ def pyrna2sphinx(basepath):
                         collection_id=_BPY_PROP_COLLECTION_ID,
                         enum_descr_override=enum_descr_override,
                     )
+                    type_descrs.append(type_descr)
                     descr = prop.description
                     if not descr:
                         descr = prop.name
@@ -1698,6 +1705,7 @@ def pyrna2sphinx(basepath):
                         prop.identifier,
                         ", ".join((val for val in (descr, type_descr) if val))
                     ))
+                fw("      :rtype: ({:s})\n".format(", ".join(type_descrs)))
 
             write_example_ref("      ", fw, struct_module_name + "." + struct_id + "." + func.identifier)
 
@@ -1862,10 +1870,17 @@ def pyrna2sphinx(basepath):
             )
 
         if _BPY_PROP_COLLECTION_FAKE:
-            class_value = bpy.data.objects.__class__
+            class_value = bpy.types.bpy_prop_collection
             fake_bpy_type(
                 "bpy.types", class_value, _BPY_PROP_COLLECTION_FAKE,
                 "built-in class used for all collections.", use_subclasses=False,
+            )
+
+        if _BPY_PROP_COLLECTION_IDPROP_FAKE:
+            class_value = bpy.types.bpy_prop_collection_idprop
+            fake_bpy_type(
+                "bpy.types", class_value, _BPY_PROP_COLLECTION_IDPROP_FAKE,
+                "built-in class used for user defined collections.", use_subclasses=False,
             )
 
     # Operators.
@@ -1894,7 +1909,8 @@ def pyrna2sphinx(basepath):
 
             for op in ops_mod:
                 args_str = ", ".join(prop.get_arg_default(force=True) for prop in op.args)
-                fw(".. function:: {:s}({:s})\n\n".format(op.func_name, args_str))
+                # All operator arguments are keyword only (denoted by the leading `*`).
+                fw(".. function:: {:s}({:s}{:s})\n\n".format(op.func_name, "*, " if args_str else "", args_str))
 
                 # If the description isn't valid, we output the standard warning
                 # with a link to the wiki so that people can help.
@@ -2539,7 +2555,7 @@ def main():
 
     try:
         os.mkdir(SPHINX_IN_TMP)
-    except:
+    except Exception:
         pass
 
     # Copy extra files needed for theme.

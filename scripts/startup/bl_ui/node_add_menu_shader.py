@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-import bpy
 from bpy.types import Menu
 from bl_ui import node_add_menu
 from bpy.app.translations import (
@@ -37,12 +36,7 @@ def cycles_shader_nodes_poll(context):
 
 
 def eevee_shader_nodes_poll(context):
-    return context.engine in {'BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT'}
-
-
-def object_cycles_shader_nodes_poll(context):
-    return (object_shader_nodes_poll(context) and
-            cycles_shader_nodes_poll(context))
+    return context.engine == 'BLENDER_EEVEE_NEXT'
 
 
 def object_not_eevee_shader_nodes_poll(context):
@@ -137,6 +131,11 @@ class NODE_MT_category_shader_shader(Menu):
             layout,
             "ShaderNodeBackground",
             poll=world_shader_nodes_poll(context),
+        )
+        node_add_menu.add_node_type(
+            layout,
+            "ShaderNodeBsdfMetallic",
+            poll=object_shader_nodes_poll(context),
         )
         node_add_menu.add_node_type(
             layout,

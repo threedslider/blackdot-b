@@ -8,14 +8,11 @@
 
 #pragma once
 
-#include <map>
 #include <string>
-#include <vector>
 
 #include "COLLADAFWFileInfo.h"
 #include "Math/COLLADABUMathMatrix4.h"
 
-#include "BLI_linklist.h"
 #include "DNA_armature_types.h"
 #include "DNA_material_types.h"
 #include "DNA_object_types.h"
@@ -45,9 +42,9 @@ class UnitConverter {
 
   void convertVector3(COLLADABU::Math::Vector3 &vec, float *v);
 
-  UnitConverter::UnitSystem isMetricSystem(void);
+  UnitConverter::UnitSystem isMetricSystem();
 
-  float getLinearMeter(void);
+  float getLinearMeter();
 
   /* TODO: need also for angle conversion, time conversion... */
 
@@ -67,7 +64,7 @@ extern std::string translate_id(const std::string &id);
 extern std::string translate_id(const char *idString);
 
 extern std::string id_name(void *id);
-extern std::string encode_xml(std::string xml);
+extern std::string encode_xml(const std::string &xml);
 
 extern std::string get_geometry_id(Object *ob);
 extern std::string get_geometry_id(Object *ob, bool use_instantiation);

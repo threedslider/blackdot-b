@@ -17,7 +17,7 @@
 #include "BLI_hash_mm2a.hh"
 #include "BLI_utildefines.h"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /* -------------------------------------------------------------------- */
 /** \name Generic Key Hash & Comparison Functions
@@ -27,7 +27,7 @@
 /* works but slower */
 uint BLI_ghashutil_ptrhash(const void *key)
 {
-  return (uint)(intptr_t)key;
+  return uint(intptr_t(key));
 }
 #else
 uint BLI_ghashutil_ptrhash(const void *key)
@@ -125,7 +125,7 @@ uint BLI_ghashutil_strhash_n(const char *key, size_t n)
   uint h = 5381;
 
   for (p = (const signed char *)key; n-- && *p != '\0'; p++) {
-    h = uint((h << 5) + h) + uint(*p);
+    h = ((h << 5) + h) + uint(*p);
   }
 
   return h;
@@ -136,7 +136,7 @@ uint BLI_ghashutil_strhash_p(const void *ptr)
   uint h = 5381;
 
   for (p = static_cast<const signed char *>(ptr); *p != '\0'; p++) {
-    h = uint((h << 5) + h) + uint(*p);
+    h = ((h << 5) + h) + uint(*p);
   }
 
   return h;

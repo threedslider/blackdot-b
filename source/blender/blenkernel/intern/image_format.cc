@@ -11,15 +11,17 @@
 #include "DNA_defaults.h"
 #include "DNA_scene_types.h"
 
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "IMB_colormanagement.hh"
 #include "IMB_imbuf_types.hh"
 
+#include "MOV_util.hh"
+
 #include "BKE_colortools.hh"
-#include "BKE_image_format.h"
+#include "BKE_image_format.hh"
 
 /* Init/Copy/Free */
 
@@ -54,6 +56,27 @@ void BKE_image_format_free(ImageFormatData *imf)
   BKE_color_managed_view_settings_free(&imf->view_settings);
 }
 
+void BKE_image_format_update_color_space_for_type(ImageFormatData *format)
+{
+  /* If the color space is set to a data space, this is probably the user's intention, so leave it
+   * as is. */
+  if (IMB_colormanagement_space_name_is_data(format->linear_colorspace_settings.name)) {
+    return;
+  }
+
+  const bool image_requires_linear = BKE_imtype_requires_linear_float(format->imtype);
+  const bool is_linear = IMB_colormanagement_space_name_is_scene_linear(
+      format->linear_colorspace_settings.name);
+
+  /* The color space is either not set or is linear but the image requires non-linear or vice
+   * versa. So set to the default for the image type. */
+  if (format->linear_colorspace_settings.name[0] == '\0' || image_requires_linear != is_linear) {
+    const int role = image_requires_linear ? COLOR_ROLE_DEFAULT_FLOAT : COLOR_ROLE_DEFAULT_BYTE;
+    const char *default_color_space = IMB_colormanagement_role_colorspace_name_get(role);
+    STRNCPY(format->linear_colorspace_settings.name, default_color_space);
+  }
+}
+
 void BKE_image_format_blend_read_data(BlendDataReader *reader, ImageFormatData *imf)
 {
   BKE_color_managed_view_settings_blend_read_data(reader, &imf->view_settings);
@@ -62,6 +85,40 @@ void BKE_image_format_blend_read_data(BlendDataReader *reader, ImageFormatData *
 void BKE_image_format_blend_write(BlendWriter *writer, ImageFormatData *imf)
 {
   BKE_color_managed_view_settings_blend_write(writer, &imf->view_settings);
+}
+
+void BKE_image_format_set(ImageFormatData *imf, ID *owner_id, const char imtype)
+{
+  imf->imtype = imtype;
+
+  const bool is_render = (owner_id && GS(owner_id->name) == ID_SCE);
+  /* see note below on why this is */
+  const char chan_flag = BKE_imtype_valid_channels(imf->imtype, true) |
+                         (is_render ? IMA_CHAN_FLAG_BW : 0);
+
+  /* ensure depth and color settings match */
+  if ((imf->planes == R_IMF_PLANES_BW) && !(chan_flag & IMA_CHAN_FLAG_BW)) {
+    imf->planes = R_IMF_PLANES_RGBA;
+  }
+  if ((imf->planes == R_IMF_PLANES_RGBA) && !(chan_flag & IMA_CHAN_FLAG_RGBA)) {
+    imf->planes = R_IMF_PLANES_RGB;
+  }
+
+  /* ensure usable depth */
+  {
+    const int depth_ok = BKE_imtype_valid_depths(imf->imtype);
+    if ((imf->depth & depth_ok) == 0) {
+      imf->depth = BKE_imtype_first_valid_depth(depth_ok);
+    }
+  }
+
+  if (owner_id && GS(owner_id->name) == ID_SCE) {
+    Scene *scene = reinterpret_cast<Scene *>(owner_id);
+    RenderData *rd = &scene->r;
+    MOV_validate_output_settings(rd, imf);
+  }
+
+  BKE_image_format_update_color_space_for_type(imf);
 }
 
 /* File Types */
@@ -97,6 +154,7 @@ int BKE_imtype_to_ftype(const char imtype, ImbFormatOptions *r_options)
     return IMB_FTYPE_TIF;
   }
   if (ELEM(imtype, R_IMF_IMTYPE_OPENEXR, R_IMF_IMTYPE_MULTILAYER)) {
+    r_options->quality = 90;
     return IMB_FTYPE_OPENEXR;
   }
 #ifdef WITH_CINEON
@@ -264,6 +322,7 @@ char BKE_imtype_valid_channels(const char imtype, bool write_file)
     case R_IMF_IMTYPE_RAWTGA:
     case R_IMF_IMTYPE_TIFF:
     case R_IMF_IMTYPE_IRIS:
+    case R_IMF_IMTYPE_OPENEXR:
       chan_flag |= IMA_CHAN_FLAG_BW;
       break;
   }
@@ -295,6 +354,43 @@ char BKE_imtype_valid_depths(const char imtype)
     default:
       return R_IMF_CHAN_DEPTH_8;
   }
+}
+
+char BKE_imtype_valid_depths_with_video(char imtype, const ID *owner_id)
+{
+  UNUSED_VARS(owner_id); /* Might be unused depending on build options. */
+
+  int depths = BKE_imtype_valid_depths(imtype);
+  /* Depending on video codec selected, valid color bit depths might vary. */
+  if (imtype == R_IMF_IMTYPE_FFMPEG) {
+    const bool is_render_out = (owner_id && GS(owner_id->name) == ID_SCE);
+    if (is_render_out) {
+      const Scene *scene = (const Scene *)owner_id;
+      depths |= MOV_codec_valid_bit_depths(scene->r.ffcodecdata.codec);
+    }
+  }
+  return depths;
+}
+
+char BKE_imtype_first_valid_depth(const char valid_depths)
+{
+  /* set first available depth */
+  const char depth_ls[] = {
+      R_IMF_CHAN_DEPTH_32,
+      R_IMF_CHAN_DEPTH_24,
+      R_IMF_CHAN_DEPTH_16,
+      R_IMF_CHAN_DEPTH_12,
+      R_IMF_CHAN_DEPTH_10,
+      R_IMF_CHAN_DEPTH_8,
+      R_IMF_CHAN_DEPTH_1,
+      0,
+  };
+  for (int i = 0; depth_ls[i]; i++) {
+    if (valid_depths & depth_ls[i]) {
+      return depth_ls[i];
+    }
+  }
+  return R_IMF_CHAN_DEPTH_8;
 }
 
 char BKE_imtype_from_arg(const char *imtype_arg)
@@ -626,7 +722,8 @@ void BKE_image_format_to_imbuf(ImBuf *ibuf, const ImageFormatData *imf)
     if (imf->depth == R_IMF_CHAN_DEPTH_16) {
       ibuf->foptions.flag |= OPENEXR_HALF;
     }
-    ibuf->foptions.flag |= (imf->exr_codec & OPENEXR_COMPRESS);
+    ibuf->foptions.flag |= (imf->exr_codec & OPENEXR_CODEC_MASK);
+    ibuf->foptions.quality = quality;
   }
 #endif
 #ifdef WITH_CINEON
@@ -777,7 +874,7 @@ void BKE_image_format_from_imbuf(ImageFormatData *im_format, const ImBuf *imbuf)
     if (custom_flags & OPENEXR_HALF) {
       im_format->depth = R_IMF_CHAN_DEPTH_16;
     }
-    if (custom_flags & OPENEXR_COMPRESS) {
+    if (custom_flags & OPENEXR_CODEC_MASK) {
       im_format->exr_codec = R_IMF_EXR_CODEC_ZIP; /* Can't determine compression */
     }
   }

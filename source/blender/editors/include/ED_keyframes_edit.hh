@@ -348,7 +348,7 @@ KeyframeEditFunc ANIM_editkeyframes_snap(short mode);
  * \note for markers and 'value', the values to use must be supplied as the first float value.
  */
 KeyframeEditFunc ANIM_editkeyframes_mirror(short mode);
-KeyframeEditFunc ANIM_editkeyframes_select(short mode);
+KeyframeEditFunc ANIM_editkeyframes_select(eEditKeyframes_Select selectmode);
 /**
  * Set all selected Bezier Handles to a single type.
  */
@@ -431,11 +431,7 @@ struct FCurveSegment {
  * The caller is responsible for freeing the memory.
  */
 ListBase find_fcurve_segments(FCurve *fcu);
-void clean_fcurve(bAnimContext *ac,
-                  bAnimListElem *ale,
-                  float thresh,
-                  bool cleardefault,
-                  bool only_selected_keys);
+void clean_fcurve(bAnimListElem *ale, float thresh, bool cleardefault, bool only_selected_keys);
 void blend_to_neighbor_fcurve_segment(FCurve *fcu, FCurveSegment *segment, float factor);
 void breakdown_fcurve_segment(FCurve *fcu, FCurveSegment *segment, float factor);
 void scale_average_fcurve_segment(FCurve *fcu, FCurveSegment *segment, float factor);
@@ -455,7 +451,7 @@ void ED_ANIM_get_1d_gauss_kernel(const float sigma, int kernel_size, double *r_k
 
 ButterworthCoefficients *ED_anim_allocate_butterworth_coefficients(const int filter_order);
 void ED_anim_free_butterworth_coefficients(ButterworthCoefficients *bw_coeff);
-void ED_anim_calculate_butterworth_coefficients(float cutoff,
+void ED_anim_calculate_butterworth_coefficients(float cutoff_frequency,
                                                 float sampling_frequency,
                                                 ButterworthCoefficients *bw_coeff);
 /**
@@ -475,7 +471,7 @@ void smooth_fcurve_segment(FCurve *fcu,
                            float *samples,
                            float factor,
                            int kernel_size,
-                           double *kernel);
+                           const double *kernel);
 /**
  * Snap the keys on the given FCurve segment to an S-Curve. By modifying the `factor` the part of
  * the S-Curve that the keys are snapped to is moved on the x-axis.
@@ -514,14 +510,39 @@ void smooth_fcurve(FCurve *fcu);
 
 /* ----------- */
 
+/**
+ * Clear the copy-paste buffer.
+ *
+ * Normally this is not necessary, as `copy_animedit_keys()` will do this for
+ * you.
+ */
+void ANIM_fcurves_copybuf_reset();
+
+/**
+ * Free the copy-paste buffer.
+ */
 void ANIM_fcurves_copybuf_free();
-short copy_animedit_keys(bAnimContext *ac, ListBase *anim_data);
+
+/**
+ * Copy animation keys into the copy buffer.
+ *
+ * \returns Whether anything was copied into the buffer.
+ */
+bool copy_animedit_keys(bAnimContext *ac, ListBase *anim_data);
+
+struct KeyframePasteContext {
+  eKeyPasteOffset offset_mode;
+  eKeyPasteValueOffset value_offset_mode;
+  eKeyMergeMode merge_mode;
+  bool flip;
+
+  int num_slots_selected;   /* Number of selected Action Slots to paste into. */
+  int num_fcurves_selected; /* Number of selected F-Curves to paste into. */
+};
+
 eKeyPasteError paste_animedit_keys(bAnimContext *ac,
                                    ListBase *anim_data,
-                                   eKeyPasteOffset offset_mode,
-                                   eKeyPasteValueOffset value_offset_mode,
-                                   eKeyMergeMode merge_mode,
-                                   bool flip);
+                                   KeyframePasteContext paste_context);
 
 /* ************************************************ */
 

@@ -10,6 +10,8 @@
 #  include "device/hip/kernel.h"
 #  include "device/hiprt/device_impl.h"
 
+#  include "kernel/device/hiprt/globals.h"
+
 CCL_NAMESPACE_BEGIN
 
 HIPRTDeviceQueue::HIPRTDeviceQueue(HIPRTDevice *device)
@@ -19,7 +21,7 @@ HIPRTDeviceQueue::HIPRTDeviceQueue(HIPRTDevice *device)
 
 bool HIPRTDeviceQueue::enqueue(DeviceKernel kernel,
                                const int work_size,
-                               DeviceKernelArguments const &args)
+                               const DeviceKernelArguments &args)
 {
   if (hiprt_device_->have_error()) {
     return false;
@@ -34,14 +36,25 @@ bool HIPRTDeviceQueue::enqueue(DeviceKernel kernel,
   const HIPContextScope scope(hiprt_device_);
   const HIPDeviceKernel &hip_kernel = hiprt_device_->kernels.get(kernel);
 
-  if (!hiprt_device_->global_stack_buffer.device_pointer) {
-    int max_path = num_concurrent_states(0);
-    hiprt_device_->global_stack_buffer.alloc(max_path * HIPRT_SHARED_STACK_SIZE * sizeof(int));
-    hiprt_device_->global_stack_buffer.zero_to_device();
+  if (!hiprt_device_->global_stack_buffer.stackData) {
+    uint32_t max_path = num_concurrent_states(0);
+    hiprtGlobalStackBufferInput stack_buffer_input{
+        hiprtStackTypeGlobal, hiprtStackEntryTypeInteger, HIPRT_THREAD_STACK_SIZE, max_path};
+
+    hiprtError rt_result = hiprtCreateGlobalStackBuffer(hiprt_device_->get_hiprt_context(),
+                                                        stack_buffer_input,
+                                                        hiprt_device_->global_stack_buffer);
+
+    if (rt_result != hiprtSuccess) {
+      LOG(ERROR) << "Failed to create hiprt Global Stack Buffer";
+      return false;
+    }
   }
 
   DeviceKernelArguments args_copy = args;
-  args_copy.add(&hiprt_device_->global_stack_buffer.device_pointer);
+  args_copy.add(DeviceKernelArguments::HIPRT_GLOBAL_STACK,
+                (void *)(&hiprt_device_->global_stack_buffer),
+                sizeof(hiprtGlobalStackBuffer));
 
   /* Compute kernel launch parameters. */
   const int num_threads_per_block = HIPRT_THREAD_GROUP_SIZE;
@@ -58,7 +71,7 @@ bool HIPRTDeviceQueue::enqueue(DeviceKernel kernel,
                                        shared_mem_bytes,
                                        hip_stream_,
                                        const_cast<void **>(args_copy.values),
-                                       0),
+                                       nullptr),
                  "enqueue");
 
   debug_enqueue_end();

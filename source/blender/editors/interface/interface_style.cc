@@ -6,7 +6,6 @@
  * \ingroup edinterface
  */
 
-#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +31,8 @@
 #ifdef WIN32
 #  include "BLI_math_base.h" /* M_PI */
 #endif
+
+using blender::StringRef;
 
 static void fontstyle_set_ex(const uiFontStyle *fs, const float dpi_fac);
 
@@ -81,15 +82,6 @@ static uiStyle *ui_style_new(ListBase *styles, const char *name, short uifont_id
   style->grouplabel.shadowalpha = 0.5f;
   style->grouplabel.shadowcolor = 0.0f;
 
-  style->widgetlabel.uifont_id = uifont_id;
-  style->widgetlabel.points = UI_DEFAULT_TEXT_POINTS;
-  style->widgetlabel.character_weight = 400;
-  style->widgetlabel.shadow = 3;
-  style->widgetlabel.shadx = 0;
-  style->widgetlabel.shady = -1;
-  style->widgetlabel.shadowalpha = 0.5f;
-  style->widgetlabel.shadowcolor = 0.0f;
-
   style->widget.uifont_id = uifont_id;
   style->widget.points = UI_DEFAULT_TEXT_POINTS;
   style->widget.character_weight = 400;
@@ -97,6 +89,14 @@ static uiStyle *ui_style_new(ListBase *styles, const char *name, short uifont_id
   style->widget.shady = -1;
   style->widget.shadowalpha = 0.5f;
   style->widget.shadowcolor = 0.0f;
+
+  style->tooltip.uifont_id = uifont_id;
+  style->tooltip.points = UI_DEFAULT_TOOLTIP_POINTS;
+  style->tooltip.character_weight = 400;
+  style->tooltip.shadow = 1;
+  style->tooltip.shady = -1;
+  style->tooltip.shadowalpha = 0.5f;
+  style->tooltip.shadowcolor = 0.0f;
 
   style->columnspace = 8;
   style->templatespace = 5;
@@ -326,8 +326,10 @@ const uiStyle *UI_style_get_dpi()
   _style.paneltitle.shady = short(UI_SCALE_FAC * _style.paneltitle.shady);
   _style.grouplabel.shadx = short(UI_SCALE_FAC * _style.grouplabel.shadx);
   _style.grouplabel.shady = short(UI_SCALE_FAC * _style.grouplabel.shady);
-  _style.widgetlabel.shadx = short(UI_SCALE_FAC * _style.widgetlabel.shadx);
-  _style.widgetlabel.shady = short(UI_SCALE_FAC * _style.widgetlabel.shady);
+  _style.widget.shadx = short(UI_SCALE_FAC * _style.widget.shadx);
+  _style.widget.shady = short(UI_SCALE_FAC * _style.widget.shady);
+  _style.tooltip.shadx = short(UI_SCALE_FAC * _style.tooltip.shadx);
+  _style.tooltip.shady = short(UI_SCALE_FAC * _style.tooltip.shady);
 
   _style.columnspace = short(UI_SCALE_FAC * _style.columnspace);
   _style.templatespace = short(UI_SCALE_FAC * _style.templatespace);
@@ -347,13 +349,13 @@ int UI_fontstyle_string_width(const uiFontStyle *fs, const char *str)
 }
 
 int UI_fontstyle_string_width_with_block_aspect(const uiFontStyle *fs,
-                                                const char *str,
+                                                const StringRef str,
                                                 const float aspect)
 {
   /* FIXME(@ideasman42): the final scale of the font is rounded which should be accounted for.
    * Failing to do so causes bad alignment when zoomed out very far in the node-editor. */
   fontstyle_set_ex(fs, UI_SCALE_FAC / aspect);
-  return int(BLF_width(fs->uifont_id, str, BLF_DRAW_STR_DUMMY_MAX) * aspect);
+  return int(BLF_width(fs->uifont_id, str.data(), str.size()) * aspect);
 }
 
 int UI_fontstyle_height_max(const uiFontStyle *fs)
@@ -422,7 +424,7 @@ void uiStyleInit()
 
   BLF_cache_flush_set_fn(UI_widgetbase_draw_cache_flush);
 
-  BLF_default_size(style->widgetlabel.points);
+  BLF_default_size(style->widget.points);
 
   /* XXX, this should be moved into a style,
    * but for now best only load the monospaced font once. */
@@ -491,7 +493,7 @@ void uiStyleInit()
 
 static void fontstyle_set_ex(const uiFontStyle *fs, const float dpi_fac)
 {
-  uiFont *font = uifont_to_blfont(fs->uifont_id);
+  const uiFont *font = uifont_to_blfont(fs->uifont_id);
 
   BLF_size(font->blf_id, fs->points * dpi_fac);
   BLF_character_weight(font->blf_id, fs->character_weight);

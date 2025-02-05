@@ -9,8 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "DNA_listBase.h"
-
 #include "RNA_access.hh"
 #include "RNA_prototypes.hh"
 
@@ -30,7 +28,6 @@
 
 #include "GPU_capabilities.hh"
 #include "GPU_immediate.hh"
-#include "GPU_texture.hh"
 #include "GPU_viewport.hh"
 
 #include "WM_api.hh"
@@ -51,7 +48,9 @@ void wm_stereo3d_draw_sidebyside(wmWindow *win, int view)
 
   immBindBuiltinProgram(GPU_SHADER_3D_IMAGE);
 
-  int soffx = WM_window_pixels_x(win) * 0.5f;
+  const blender::int2 win_size = WM_window_native_pixel_size(win);
+
+  int soffx = win_size[0] / 2;
   if (view == STEREO_LEFT_ID) {
     if (!cross_eyed) {
       soffx = 0;
@@ -63,12 +62,9 @@ void wm_stereo3d_draw_sidebyside(wmWindow *win, int view)
     }
   }
 
-  const int sizex = WM_window_pixels_x(win);
-  const int sizey = WM_window_pixels_y(win);
-
   /* `wmOrtho` for the screen has this same offset. */
-  const float halfx = GLA_PIXEL_OFS / sizex;
-  const float halfy = GLA_PIXEL_OFS / sizex;
+  const float halfx = GLA_PIXEL_OFS / win_size[0];
+  const float halfy = GLA_PIXEL_OFS / win_size[1];
 
   /* Texture is already bound to GL_TEXTURE0 unit. */
 
@@ -78,13 +74,13 @@ void wm_stereo3d_draw_sidebyside(wmWindow *win, int view)
   immVertex2f(pos, soffx, 0.0f);
 
   immAttr2f(texcoord, 1.0f + halfx, halfy);
-  immVertex2f(pos, soffx + (sizex * 0.5f), 0.0f);
+  immVertex2f(pos, soffx + (win_size[0] * 0.5f), 0.0f);
 
   immAttr2f(texcoord, 1.0f + halfx, 1.0f + halfy);
-  immVertex2f(pos, soffx + (sizex * 0.5f), sizey);
+  immVertex2f(pos, soffx + (win_size[0] * 0.5f), win_size[1]);
 
   immAttr2f(texcoord, halfx, 1.0f + halfy);
-  immVertex2f(pos, soffx, sizey);
+  immVertex2f(pos, soffx, win_size[1]);
 
   immEnd();
 
@@ -99,20 +95,19 @@ void wm_stereo3d_draw_topbottom(wmWindow *win, int view)
 
   immBindBuiltinProgram(GPU_SHADER_3D_IMAGE);
 
+  const blender::int2 win_size = WM_window_native_pixel_size(win);
+
   int soffy;
   if (view == STEREO_LEFT_ID) {
-    soffy = WM_window_pixels_y(win) * 0.5f;
+    soffy = win_size[1] * 0.5f;
   }
   else { /* #STEREO_RIGHT_ID. */
     soffy = 0;
   }
 
-  const int sizex = WM_window_pixels_x(win);
-  const int sizey = WM_window_pixels_y(win);
-
   /* `wmOrtho` for the screen has this same offset. */
-  const float halfx = GLA_PIXEL_OFS / sizex;
-  const float halfy = GLA_PIXEL_OFS / sizex;
+  const float halfx = GLA_PIXEL_OFS / win_size[0];
+  const float halfy = GLA_PIXEL_OFS / win_size[1];
 
   /* Texture is already bound to GL_TEXTURE0 unit. */
 
@@ -122,13 +117,13 @@ void wm_stereo3d_draw_topbottom(wmWindow *win, int view)
   immVertex2f(pos, 0.0f, soffy);
 
   immAttr2f(texcoord, 1.0f + halfx, halfy);
-  immVertex2f(pos, sizex, soffy);
+  immVertex2f(pos, win_size[0], soffy);
 
   immAttr2f(texcoord, 1.0f + halfx, 1.0f + halfy);
-  immVertex2f(pos, sizex, soffy + (sizey * 0.5f));
+  immVertex2f(pos, win_size[0], soffy + (win_size[1] * 0.5f));
 
   immAttr2f(texcoord, halfx, 1.0f + halfy);
-  immVertex2f(pos, 0.0f, soffy + (sizey * 0.5f));
+  immVertex2f(pos, 0.0f, soffy + (win_size[1] * 0.5f));
 
   immEnd();
 
@@ -173,7 +168,7 @@ void wm_stereo3d_mouse_offset_apply(wmWindow *win, int r_mouse_xy[2])
   }
 
   if (win->stereo3d_format->display_mode == S3D_DISPLAY_SIDEBYSIDE) {
-    const int half_x = WM_window_pixels_x(win) / 2;
+    const int half_x = WM_window_native_pixel_x(win) / 2;
     /* Right half of the screen. */
     if (r_mouse_xy[0] > half_x) {
       r_mouse_xy[0] -= half_x;
@@ -181,7 +176,7 @@ void wm_stereo3d_mouse_offset_apply(wmWindow *win, int r_mouse_xy[2])
     r_mouse_xy[0] *= 2;
   }
   else if (win->stereo3d_format->display_mode == S3D_DISPLAY_TOPBOTTOM) {
-    const int half_y = WM_window_pixels_y(win) / 2;
+    const int half_y = WM_window_native_pixel_y(win) / 2;
     /* Upper half of the screen. */
     if (r_mouse_xy[1] > half_y) {
       r_mouse_xy[1] -= half_y;
@@ -361,28 +356,33 @@ void wm_stereo3d_set_draw(bContext * /*C*/, wmOperator *op)
   uiLayout *layout = op->layout;
   uiLayout *col;
 
-  PointerRNA stereo3d_format_ptr = RNA_pointer_create(
+  PointerRNA stereo3d_format_ptr = RNA_pointer_create_discrete(
       nullptr, &RNA_Stereo3dDisplay, &s3dd->stereo3d_format);
 
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
 
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, &stereo3d_format_ptr, "display_mode", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, &stereo3d_format_ptr, "display_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   switch (s3dd->stereo3d_format.display_mode) {
     case S3D_DISPLAY_ANAGLYPH: {
-      uiItemR(col, &stereo3d_format_ptr, "anaglyph_type", UI_ITEM_NONE, nullptr, ICON_NONE);
+      uiItemR(col, &stereo3d_format_ptr, "anaglyph_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
       break;
     }
     case S3D_DISPLAY_INTERLACE: {
-      uiItemR(col, &stereo3d_format_ptr, "interlace_type", UI_ITEM_NONE, nullptr, ICON_NONE);
-      uiItemR(col, &stereo3d_format_ptr, "use_interlace_swap", UI_ITEM_NONE, nullptr, ICON_NONE);
+      uiItemR(col, &stereo3d_format_ptr, "interlace_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+      uiItemR(
+          col, &stereo3d_format_ptr, "use_interlace_swap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
       break;
     }
     case S3D_DISPLAY_SIDEBYSIDE: {
-      uiItemR(
-          col, &stereo3d_format_ptr, "use_sidebyside_crosseyed", UI_ITEM_NONE, nullptr, ICON_NONE);
+      uiItemR(col,
+              &stereo3d_format_ptr,
+              "use_sidebyside_crosseyed",
+              UI_ITEM_NONE,
+              std::nullopt,
+              ICON_NONE);
       /* Fall-through. */
     }
     case S3D_DISPLAY_PAGEFLIP:

@@ -43,6 +43,7 @@
 
 #include "BKE_global.hh"
 
+#include "BLI_color.hh"
 #include "BLI_map.hh"
 #include "BLI_utility_mixins.hh"
 #include "BLI_vector.hh"
@@ -71,21 +72,8 @@ class VKRenderGraph : public NonCopyable {
   Vector<VKRenderGraphNodeLinks> links_;
   /** All nodes inside the graph indexable via NodeHandle. */
   Vector<VKRenderGraphNode> nodes_;
-  /** Scheduler decides which nodes to select and in what order to execute them. */
-  VKScheduler scheduler_;
-  /**
-   * Command builder generated the commands of the nodes and record them into the command buffer.
-   */
-  VKCommandBuilder command_builder_;
-
-  /**
-   * Command buffer sends the commands to the device (`VKCommandBufferWrapper`).
-   *
-   * To improve testability the command buffer can be replaced by an instance of
-   * `VKCommandBufferLog` this way test cases don't need to create a fully working context in order
-   * to test something render graph specific.
-   */
-  std::unique_ptr<VKCommandBufferInterface> command_buffer_;
+  /** Storage for large node datas to improve CPU cache pre-loading. */
+  VKRenderGraphStorage storage_;
 
   /**
    * Not owning pointer to device resources.
@@ -97,16 +85,32 @@ class VKRenderGraph : public NonCopyable {
    */
   VKResourceStateTracker &resources_;
 
+  struct DebugGroup {
+    std::string name;
+    ColorTheme4f color;
+
+    BLI_STRUCT_EQUALITY_OPERATORS_2(DebugGroup, name, color)
+    uint64_t hash() const
+    {
+      return get_default_hash<std::string, ColorTheme4f>(name, color);
+    }
+  };
+
   struct {
-    VectorSet<std::string> group_names;
+    VectorSet<DebugGroup> groups;
 
     /** Current stack of debug group names. */
     Vector<DebugGroupNameID> group_stack;
-    /** Has a node been added to the current stack? If not the group stack will be added to
-     * used_groups.*/
+
+    /**
+     * Has a node been added to the current stack? If not the group stack will be added to
+     * used_groups.
+     */
     bool group_used = false;
+
     /** All used debug groups. */
     Vector<Vector<DebugGroupNameID>> used_groups;
+
     /**
      * Map of a node_handle to an index of debug group in used_groups.
      *
@@ -120,12 +124,6 @@ class VKRenderGraph : public NonCopyable {
 
  public:
   VKSubmissionID submission_id;
-  /**
-   * Thread this render graph belongs to.
-   *
-   * Contexts of the same thread will share the same render graph. See `VKDevice::render_graph()`.
-   */
-  pthread_t thread_id;
 
   /**
    * Construct a new render graph instance.
@@ -133,8 +131,7 @@ class VKRenderGraph : public NonCopyable {
    * To improve testability the command buffer and resources they work on are provided as a
    * parameter.
    */
-  VKRenderGraph(std::unique_ptr<VKCommandBufferInterface> command_buffer,
-                VKResourceStateTracker &resources);
+  VKRenderGraph(VKResourceStateTracker &resources);
 
  private:
   /**
@@ -158,7 +155,7 @@ class VKRenderGraph : public NonCopyable {
       links_.resize(nodes_.size());
     }
     VKRenderGraphNode &node = nodes_[node_handle];
-    node.set_node_data<NodeInfo>(create_info);
+    node.set_node_data<NodeInfo>(storage_, create_info);
 
     VKRenderGraphNodeLinks &node_links = links_[node_handle];
     BLI_assert(node_links.inputs.is_empty());
@@ -183,7 +180,9 @@ class VKRenderGraph : public NonCopyable {
   { \
     add_node<NODE_CLASS>(create_info); \
   }
+  ADD_NODE(VKBeginQueryNode)
   ADD_NODE(VKBeginRenderingNode)
+  ADD_NODE(VKEndQueryNode)
   ADD_NODE(VKEndRenderingNode)
   ADD_NODE(VKClearAttachmentsNode)
   ADD_NODE(VKClearColorImageNode)
@@ -200,44 +199,18 @@ class VKRenderGraph : public NonCopyable {
   ADD_NODE(VKDrawIndexedNode)
   ADD_NODE(VKDrawIndexedIndirectNode)
   ADD_NODE(VKDrawIndirectNode)
+  ADD_NODE(VKResetQueryPoolNode)
+  ADD_NODE(VKUpdateBufferNode)
   ADD_NODE(VKUpdateMipmapsNode)
+  ADD_NODE(VKSynchronizationNode)
 #undef ADD_NODE
-
-  /**
-   * Submit partial graph to be able to read the expected result of the rendering commands
-   * affecting the given vk_buffer. This method is called from
-   * `GPU_texture/storagebuf/indexbuf/vertbuf/_read`. In vulkan the content of images cannot be
-   * read directly and always needs to be copied to a transfer buffer.
-   *
-   * After calling this function the mapped memory of the vk_buffer would contain the data of the
-   * buffer.
-   */
-  void submit_buffer_for_read(VkBuffer vk_buffer);
-
-  /**
-   * Submit partial graph to be able to present the expected result of the rendering commands
-   * affecting the given vk_swapchain_image. This method is called when performing a
-   * swap chain swap.
-   *
-   * Pre conditions:
-   * - `vk_swapchain_image` needs to be a created using ResourceOwner::SWAP_CHAIN`.
-   *
-   * Post conditions:
-   * - `vk_swapchain_image` layout is transitioned to `VK_IMAGE_LAYOUT_SRC_PRESENT`.
-   */
-  void submit_for_present(VkImage vk_swapchain_image);
-
-  /**
-   * Submit full graph.
-   */
-  void submit();
 
   /**
    * Push a new debugging group to the stack with the given name.
    *
    * New nodes added to the render graph will be associated with this debug group.
    */
-  void debug_group_begin(const char *name);
+  void debug_group_begin(const char *name, const ColorTheme4f &color);
 
   /**
    * Pop the top of the debugging group stack.
@@ -246,6 +219,12 @@ class VKRenderGraph : public NonCopyable {
    * group.
    */
   void debug_group_end();
+
+  /**
+   * Return the full debug group of the given node_handle. Returns an empty string when debug
+   * groups are not enabled (`--debug-gpu`).
+   */
+  std::string full_debug_group(NodeHandle node_handle) const;
 
   /**
    * Utility function that is used during debugging.
@@ -259,10 +238,19 @@ class VKRenderGraph : public NonCopyable {
     return nodes_.size();
   }
 
+  bool is_empty()
+  {
+    return nodes_.is_empty();
+  }
+
   void debug_print(NodeHandle node_handle) const;
 
+  /**
+   * Reset the render graph.
+   */
+  void reset();
+
  private:
-  void remove_nodes(Span<NodeHandle> node_handles);
 };
 
 }  // namespace blender::gpu::render_graph

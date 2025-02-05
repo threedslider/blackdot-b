@@ -2,8 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_global.hh"
-
 #include "eevee_instance.hh"
 
 #include "eevee_hizbuffer.hh"
@@ -111,10 +109,10 @@ void HiZBuffer::update()
 void HiZBuffer::debug_draw(View &view, GPUFrameBuffer *view_fb)
 {
   if (inst_.debug_mode == eDebugMode::DEBUG_HIZ_VALIDATION) {
-    inst_.info +=
+    inst_.info_append(
         "Debug Mode: HiZ Validation\n"
         " - Red: pixel in front of HiZ tile value.\n"
-        " - Blue: No error.\n";
+        " - Blue: No error.");
     inst_.hiz_buffer.update();
     GPU_framebuffer_bind(view_fb);
     inst_.manager->submit(debug_draw_ps_, view);

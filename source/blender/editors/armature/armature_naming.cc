@@ -11,24 +11,20 @@
 
 #include <cstring>
 
-#include "MEM_guardedalloc.h"
-
 #include "DNA_armature_types.h"
 #include "DNA_camera_types.h"
 #include "DNA_constraint_types.h"
-#include "DNA_gpencil_legacy_types.h"
-#include "DNA_gpencil_modifier_types.h"
 #include "DNA_object_types.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_ghash.h"
 #include "BLI_listbase_wrapper.hh"
+#include "BLI_string.h"
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_animsys.h"
 #include "BKE_armature.hh"
 #include "BKE_constraint.h"
@@ -262,6 +258,12 @@ void ED_armature_bone_rename(Main *bmain,
         bDeformGroup *dg = BKE_object_defgroup_find_name(ob, oldname);
         if (dg) {
           STRNCPY(dg->name, newname);
+
+          if (ob->type == OB_GREASE_PENCIL) {
+            /* Update vgroup names stored in CurvesGeometry */
+            BKE_grease_pencil_vgroup_name_update(ob, oldname, dg->name);
+          }
+
           DEG_id_tag_update(static_cast<ID *>(ob->data), ID_RECALC_GEOMETRY);
         }
       }
@@ -306,46 +308,6 @@ void ED_armature_bone_rename(Main *bmain,
           if (STREQ(cam->dof.focus_subtarget, oldname)) {
             STRNCPY(cam->dof.focus_subtarget, newname);
             DEG_id_tag_update(&cam->id, ID_RECALC_SYNC_TO_EVAL);
-          }
-        }
-      }
-
-      /* fix grease pencil modifiers and vertex groups */
-      if (ob->type == OB_GPENCIL_LEGACY) {
-
-        bGPdata *gpd = (bGPdata *)ob->data;
-        LISTBASE_FOREACH (bGPDlayer *, gpl, &gpd->layers) {
-          if ((gpl->parent != nullptr) && (gpl->parent->data == arm)) {
-            if (STREQ(gpl->parsubstr, oldname)) {
-              STRNCPY(gpl->parsubstr, newname);
-            }
-          }
-        }
-
-        LISTBASE_FOREACH (GpencilModifierData *, gp_md, &ob->greasepencil_modifiers) {
-          switch (gp_md->type) {
-            case eGpencilModifierType_Armature: {
-              ArmatureGpencilModifierData *mmd = (ArmatureGpencilModifierData *)gp_md;
-              if (mmd->object && mmd->object->data == arm) {
-                bDeformGroup *dg = BKE_object_defgroup_find_name(ob, oldname);
-                if (dg) {
-                  STRNCPY(dg->name, newname);
-                  DEG_id_tag_update(static_cast<ID *>(ob->data), ID_RECALC_GEOMETRY);
-                }
-              }
-              break;
-            }
-            case eGpencilModifierType_Hook: {
-              HookGpencilModifierData *hgp_md = (HookGpencilModifierData *)gp_md;
-              if (hgp_md->object && (hgp_md->object->data == arm)) {
-                if (STREQ(hgp_md->subtarget, oldname)) {
-                  STRNCPY(hgp_md->subtarget, newname);
-                }
-              }
-              break;
-            }
-            default:
-              break;
           }
         }
       }

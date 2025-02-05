@@ -11,13 +11,14 @@
 #include "DNA_scene_types.h"
 #include "DNA_sound_types.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_path_utils.hh"
+#include "BLI_string.h"
 #include "BLI_string_ref.hh"
 #include "BLI_string_utils.hh"
 
 #include "BKE_context.hh"
 #include "BKE_file_handler.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_main.hh"
 
 #include "SEQ_channels.hh"
@@ -29,12 +30,14 @@
 #include "UI_view2d.hh"
 
 #include "GPU_matrix.hh"
+#include "GPU_state.hh"
 
 #include "ED_screen.hh"
 #include "ED_transform.hh"
 
-#include "IMB_imbuf.hh"
 #include "IMB_imbuf_types.hh"
+
+#include "MOV_read.hh"
 
 #include "WM_api.hh"
 #include "WM_types.hh"
@@ -168,7 +171,6 @@ static float update_overlay_strip_position_data(bContext *C, const int mval[2])
   SeqDropCoords *coords = &g_drop_coords;
   ARegion *region = CTX_wm_region(C);
   Scene *scene = CTX_data_scene(C);
-  eSeqHandle hand;
   View2D *v2d = &region->v2d;
 
   /* Update the position were we would place the strip if we complete the drag and drop action.
@@ -215,26 +217,20 @@ static float update_overlay_strip_position_data(bContext *C, const int mval[2])
     }
   }
 
-  if (strip_len < 1) {
-    /* Only check if there is a strip already under the mouse cursor. */
-    coords->is_intersecting = find_nearest_seq(scene, &region->v2d, mval, &hand);
-  }
-  else {
-    /* Check if there is a strip that would intersect with the new strip(s). */
-    coords->is_intersecting = false;
-    Sequence dummy_seq{};
-    dummy_seq.machine = coords->channel;
-    dummy_seq.start = coords->start_frame;
-    dummy_seq.len = coords->strip_len;
-    dummy_seq.speed_factor = 1.0f;
-    dummy_seq.media_playback_rate = coords->playback_rate;
-    dummy_seq.flag = SEQ_AUTO_PLAYBACK_RATE;
-    Editing *ed = SEQ_editing_ensure(scene);
+  /* Check if there is a strip that would intersect with the new strip(s). */
+  coords->is_intersecting = false;
+  Strip dummy_seq{};
+  dummy_seq.machine = coords->channel;
+  dummy_seq.start = coords->start_frame;
+  dummy_seq.len = coords->strip_len;
+  dummy_seq.speed_factor = 1.0f;
+  dummy_seq.media_playback_rate = coords->playback_rate;
+  dummy_seq.flag = SEQ_AUTO_PLAYBACK_RATE;
+  Editing *ed = SEQ_editing_ensure(scene);
 
-    for (int i = 0; i < coords->channel_len && !coords->is_intersecting; i++) {
-      coords->is_intersecting = SEQ_transform_test_overlap(scene, ed->seqbasep, &dummy_seq);
-      dummy_seq.machine++;
-    }
+  for (int i = 0; i < coords->channel_len && !coords->is_intersecting; i++) {
+    coords->is_intersecting = SEQ_transform_test_overlap(scene, ed->seqbasep, &dummy_seq);
+    dummy_seq.machine++;
   }
 
   return strip_len;
@@ -277,8 +273,8 @@ static void sequencer_drop_copy(bContext *C, wmDrag *drag, wmDropBox *drop)
 
     /* Get the top most strip channel that is in view. */
     int max_channel = -1;
-    for (Sequence *seq : strips) {
-      max_channel = max_ii(seq->machine, max_channel);
+    for (Strip *strip : strips) {
+      max_channel = max_ii(strip->machine, max_channel);
     }
 
     if (max_channel != -1) {
@@ -377,7 +373,7 @@ static void draw_seq_in_view(bContext *C, wmWindow * /*win*/, wmDrag *drag, cons
   float strip_len = update_overlay_strip_position_data(C, mval);
 
   GPU_matrix_push();
-  UI_view2d_view_ortho(&region->v2d);
+  wmOrtho2_region_pixelspace(region);
 
   /* Sometimes the active theme is not the sequencer theme, e.g. when an operator invokes the
    * file browser. This makes sure we get the right color values for the theme. */
@@ -401,11 +397,11 @@ static void draw_seq_in_view(bContext *C, wmWindow * /*win*/, wmDrag *drag, cons
   float pixelx = BLI_rctf_size_x(&region->v2d.cur) / BLI_rcti_size_x(&region->v2d.mask);
   float pixely = BLI_rctf_size_y(&region->v2d.cur) / BLI_rcti_size_y(&region->v2d.mask);
 
-  StripsDrawBatch batch(pixelx, pixely);
+  StripsDrawBatch batch(&region->v2d);
 
   for (int i = 0; i < coords->channel_len; i++) {
-    float y1 = floorf(coords->channel) + i + SEQ_STRIP_OFSBOTTOM;
-    float y2 = floorf(coords->channel) + i + SEQ_STRIP_OFSTOP;
+    float y1 = floorf(coords->channel) + i + STRIP_OFSBOTTOM;
+    float y2 = floorf(coords->channel) + i + STRIP_OFSTOP;
 
     if (coords->type == TH_SEQ_MOVIE && i == 0 && coords->channel_len > 1) {
       /* Assume only video strips occupies two channels.
@@ -551,19 +547,12 @@ static void prefetch_data_fn(void *custom_data, wmJobWorkerStatus * /*worker_sta
   }
 
   char colorspace[64] = "\0"; /* 64 == MAX_COLORSPACE_NAME length. */
-  ImBufAnim *anim = openanim(job_data->path, IB_rect, 0, colorspace);
+  MovieReader *anim = openanim(job_data->path, IB_rect, 0, colorspace);
 
   if (anim != nullptr) {
-    g_drop_coords.strip_len = IMB_anim_get_duration(anim, IMB_TC_NONE);
-    short frs_sec;
-    float frs_sec_base;
-    if (IMB_anim_get_fps(anim, true, &frs_sec, &frs_sec_base)) {
-      g_drop_coords.playback_rate = float(frs_sec) / frs_sec_base;
-    }
-    else {
-      g_drop_coords.playback_rate = 0;
-    }
-    IMB_free_anim(anim);
+    g_drop_coords.strip_len = MOV_get_duration_frames(anim, IMB_TC_NONE);
+    g_drop_coords.playback_rate = MOV_get_fps(anim);
+    MOV_close(anim);
 #ifdef WITH_AUDASPACE
     /* Try to load sound and see if the video has a sound channel. */
     AUD_Sound *sound = AUD_Sound_file(job_data->path);

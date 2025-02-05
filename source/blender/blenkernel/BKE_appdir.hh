@@ -10,7 +10,7 @@
  * since its the main purpose of the API.
  */
 
-#include <stddef.h>
+#include <cstddef>
 
 #include <optional>
 #include <string>
@@ -43,12 +43,6 @@ const char *BKE_appdir_folder_default() ATTR_WARN_UNUSED_RESULT;
 const char *BKE_appdir_folder_root() ATTR_WARN_UNUSED_RESULT ATTR_RETURNS_NONNULL;
 const char *BKE_appdir_folder_default_or_root() ATTR_WARN_UNUSED_RESULT ATTR_RETURNS_NONNULL;
 /**
- * Get the user's home directory, i.e.
- * - Unix: `$HOME`
- * - Windows: `%userprofile%`
- */
-const char *BKE_appdir_folder_home();
-/**
  * Get the user's document directory, i.e.
  * - Linux: `$HOME/Documents`
  * - Windows: `%userprofile%/Documents`
@@ -67,7 +61,7 @@ bool BKE_appdir_folder_documents(char *dir) ATTR_NONNULL(1) ATTR_WARN_UNUSED_RES
  * \returns True if the path is valid. It doesn't create or checks format
  * if the `blender` folder exists. It does check if the parent of the path exists.
  */
-bool BKE_appdir_folder_caches(char *r_path, size_t r_path_maxncpy) ATTR_NONNULL(1);
+bool BKE_appdir_folder_caches(char *path, size_t path_maxncpy) ATTR_NONNULL(1);
 /**
  * Get a folder out of the \a folder_id presets for paths.
  *
@@ -131,8 +125,8 @@ bool BKE_appdir_font_folder_default(char *dir, size_t dir_maxncpy);
 /**
  * Find Python executable.
  */
-bool BKE_appdir_program_python_search(char *fullpath,
-                                      size_t fullpath_len,
+bool BKE_appdir_program_python_search(char *program_filepath,
+                                      size_t program_filepath_maxncpy,
                                       int version_major,
                                       int version_minor) ATTR_NONNULL(1);
 

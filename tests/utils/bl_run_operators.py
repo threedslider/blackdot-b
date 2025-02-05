@@ -7,6 +7,10 @@
 #
 # only error checked for here is a segfault.
 
+__all__ = (
+    "main",
+)
+
 import bpy
 import sys
 
@@ -85,6 +89,9 @@ op_blacklist = (
     "render.cycles_sampling_preset_add",
     "render.cycles_viewport_sampling_preset_add",
     "render.preset_add",
+
+    # Don't manipulate installed extensions.
+    "extensions.*",
 
     # FIXME:
     # Crashes with non-trivial fixes.

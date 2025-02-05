@@ -335,7 +335,11 @@ void register_node_type_sh_tex_wave()
 
   static blender::bke::bNodeType ntype;
 
-  sh_fn_node_type_base(&ntype, SH_NODE_TEX_WAVE, "Wave Texture", NODE_CLASS_TEXTURE);
+  sh_fn_node_type_base(&ntype, "ShaderNodeTexWave", SH_NODE_TEX_WAVE);
+  ntype.ui_name = "Wave Texture";
+  ntype.ui_description = "Generate procedural bands or rings with noise";
+  ntype.enum_name_legacy = "TEX_WAVE";
+  ntype.nclass = NODE_CLASS_TEXTURE;
   ntype.declare = file_ns::sh_node_tex_wave_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_tex_wave;
   blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
@@ -346,5 +350,5 @@ void register_node_type_sh_tex_wave()
   ntype.build_multi_function = file_ns::sh_node_wave_tex_build_multi_function;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

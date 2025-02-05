@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma BLENDER_REQUIRE(common_view_lib.glsl)
+#pragma once
 
 #if defined(GPU_VERTEX_SHADER) || defined(GPU_GEOMETRY_SHADER)
 
@@ -10,12 +10,12 @@ void view_clipping_distances(vec3 wpos)
 {
 #  ifdef USE_WORLD_CLIP_PLANES
   vec4 pos_4d = vec4(wpos, 1.0);
-  gl_ClipDistance[0] = dot(drw_clipping_[0], pos_4d);
-  gl_ClipDistance[1] = dot(drw_clipping_[1], pos_4d);
-  gl_ClipDistance[2] = dot(drw_clipping_[2], pos_4d);
-  gl_ClipDistance[3] = dot(drw_clipping_[3], pos_4d);
-  gl_ClipDistance[4] = dot(drw_clipping_[4], pos_4d);
-  gl_ClipDistance[5] = dot(drw_clipping_[5], pos_4d);
+  gl_ClipDistance[0] = dot(globalsBlock.clip_planes[0], pos_4d);
+  gl_ClipDistance[1] = dot(globalsBlock.clip_planes[1], pos_4d);
+  gl_ClipDistance[2] = dot(globalsBlock.clip_planes[2], pos_4d);
+  gl_ClipDistance[3] = dot(globalsBlock.clip_planes[3], pos_4d);
+  gl_ClipDistance[4] = dot(globalsBlock.clip_planes[4], pos_4d);
+  gl_ClipDistance[5] = dot(globalsBlock.clip_planes[5], pos_4d);
 #  endif
 }
 

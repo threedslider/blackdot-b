@@ -115,7 +115,7 @@ int BLI_delete(const char *path, bool dir, bool recursive) ATTR_NONNULL();
  *
  * \return zero on success (matching 'remove' behavior).
  */
-int BLI_delete_soft(const char *filepath, const char **error_message) ATTR_NONNULL();
+int BLI_delete_soft(const char *filepath, const char **r_error_message) ATTR_NONNULL();
 #if 0 /* Unused */
 int BLI_create_symlink(const char *path, const char *path_dst) ATTR_NONNULL();
 #endif
@@ -227,6 +227,20 @@ double BLI_dir_free_space(const char *dir) ATTR_WARN_UNUSED_RESULT ATTR_NONNULL(
  * \note can return NULL when the size is not big enough
  */
 char *BLI_current_working_dir(char *dir, size_t maxncpy) ATTR_WARN_UNUSED_RESULT ATTR_NONNULL();
+
+/**
+ * Get the user's home directory, i.e.
+ * - Unix: `$HOME` or #passwd::pw_dir.
+ * - Windows: `%userprofile%`
+ *
+ * \return The home directory or null when it cannot be accessed.
+ *
+ * \note By convention, failure to access home means any derived directories fail as well
+ * instead of attempting to create a fallback such as `/`, `/tmp`, `C:\` ... etc.
+ * Although there may be rare cases where a fallback is appropriate.
+ */
+const char *BLI_dir_home(void);
+
 eFileAttributes BLI_file_attributes(const char *path);
 /**
  * Changes the current working directory to the provided path.
@@ -432,14 +446,6 @@ void *BLI_file_read_binary_as_mem(const char *filepath, size_t pad_bytes, size_t
  */
 void BLI_file_free_lines(struct LinkNode *lines);
 
-#ifdef __APPLE__
-/**
- * Expand the leading `~` in the given path to `/Users/$USER`.
- * This doesn't preserve the trailing path separator.
- * Giving a path without leading `~` is not an error.
- */
-const char *BLI_expand_tilde(const char *path_with_tilde);
-#endif
 /* This weirdo pops up in two places. */
 #if !defined(WIN32)
 #  ifndef O_BINARY

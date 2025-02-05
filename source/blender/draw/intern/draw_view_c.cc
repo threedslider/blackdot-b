@@ -14,13 +14,13 @@
 #include "DNA_view3d_types.h"
 
 #include "ED_screen.hh"
-#include "ED_util.hh"
 #include "ED_view3d.hh"
 
 #include "GPU_debug.hh"
 #include "GPU_immediate.hh"
 #include "GPU_matrix.hh"
 #include "GPU_shader.hh"
+#include "GPU_state.hh"
 
 #include "UI_resources.hh"
 #include "UI_view2d.hh"
@@ -32,10 +32,15 @@
 #include "BKE_global.hh"
 #include "BKE_object.hh"
 #include "BKE_paint.hh"
+#include "BKE_screen.hh"
+
+#include "DRW_engine.hh"
+#include "DRW_render.hh"
+
+#include "draw_cache.hh"
+#include "draw_view_c.hh"
 
 #include "view3d_intern.hh"
-
-#include "draw_manager_c.hh"
 
 /* ******************** region info ***************** */
 
@@ -77,7 +82,7 @@ static bool is_cursor_visible(const DRWContextState *draw_ctx, Scene *scene, Vie
       const Paint *paint = BKE_paint_get_active(scene, view_layer);
       const Brush *brush = (paint) ? BKE_paint_brush_for_read(paint) : nullptr;
 
-      if (brush && brush->imagepaint_tool == PAINT_TOOL_CLONE) {
+      if (brush && brush->image_brush_type == IMAGE_PAINT_BRUSH_TYPE_CLONE) {
         if ((scene->toolsettings->imapaint.flag & IMAGEPAINT_PROJECT_LAYER_CLONE) == 0) {
           return true;
         }
@@ -87,7 +92,7 @@ static bool is_cursor_visible(const DRWContextState *draw_ctx, Scene *scene, Vie
     /* no exception met? then don't draw cursor! */
     return false;
   }
-  if (draw_ctx->object_mode & OB_MODE_WEIGHT_GPENCIL_LEGACY) {
+  if (draw_ctx->object_mode & OB_MODE_WEIGHT_GREASE_PENCIL) {
     /* grease pencil hide always in some modes */
     return false;
   }
@@ -122,8 +127,7 @@ void DRW_draw_cursor()
 
   RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
 
-  float cursor_quat[4];
-  BKE_scene_cursor_rot_to_quat(cursor, cursor_quat);
+  blender::math::Quaternion cursor_quat = cursor->rotation();
 
   /* Draw nice Anti Aliased cursor. */
   GPU_line_width(1.0f);
@@ -132,10 +136,10 @@ void DRW_draw_cursor()
 
   float eps = 1e-5f;
   rv3d->viewquat[0] = -rv3d->viewquat[0];
-  bool is_aligned = compare_v4v4(cursor_quat, rv3d->viewquat, eps);
+  bool is_aligned = compare_v4v4(&cursor_quat.w, rv3d->viewquat, eps);
   if (is_aligned == false) {
     float tquat[4];
-    rotation_between_quats_to_quat(tquat, rv3d->viewquat, cursor_quat);
+    rotation_between_quats_to_quat(tquat, rv3d->viewquat, &cursor_quat.w);
     is_aligned = tquat[0] - eps < -1.0f;
   }
   rv3d->viewquat[0] = -rv3d->viewquat[0];
@@ -165,7 +169,7 @@ void DRW_draw_cursor()
     for (int axis = 0; axis < 3; axis++) {
       float axis_vec[3] = {0};
       axis_vec[axis] = scale;
-      mul_qt_v3(cursor_quat, axis_vec);
+      mul_qt_v3(&cursor_quat.w, axis_vec);
       CURSOR_EDGE(axis_vec, axis, +);
       CURSOR_EDGE(axis_vec, axis, -);
     }
@@ -289,7 +293,7 @@ void DRW_draw_gizmo_3d()
   /* draw depth culled gizmos - gizmos need to be updated *after* view matrix was set up */
   /* TODO: depth culling gizmos is not yet supported, just drawing _3D here, should
    * later become _IN_SCENE (and draw _3D separate) */
-  WM_gizmomap_draw(region->gizmo_map, draw_ctx->evil_C, WM_GIZMOMAP_DRAWSTEP_3D);
+  WM_gizmomap_draw(region->runtime->gizmo_map, draw_ctx->evil_C, WM_GIZMOMAP_DRAWSTEP_3D);
 }
 
 void DRW_draw_gizmo_2d()
@@ -297,7 +301,7 @@ void DRW_draw_gizmo_2d()
   const DRWContextState *draw_ctx = DRW_context_state_get();
   ARegion *region = draw_ctx->region;
 
-  WM_gizmomap_draw(region->gizmo_map, draw_ctx->evil_C, WM_GIZMOMAP_DRAWSTEP_2D);
+  WM_gizmomap_draw(region->runtime->gizmo_map, draw_ctx->evil_C, WM_GIZMOMAP_DRAWSTEP_2D);
 
   GPU_depth_mask(true);
 }

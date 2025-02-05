@@ -2,14 +2,20 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma BLENDER_REQUIRE(common_view_clipping_lib.glsl)
-#pragma BLENDER_REQUIRE(common_view_lib.glsl)
-#pragma BLENDER_REQUIRE(common_gpencil_lib.glsl)
+#include "common_gpencil_lib.glsl"
+#include "common_view_clipping_lib.glsl"
+#include "draw_model_lib.glsl"
+#include "draw_view_lib.glsl"
 
-uint outline_colorid_get(void)
+uint outline_colorid_get()
 {
+#ifdef OBINFO_NEW
+  eObjectInfoFlag ob_flag = eObjectInfoFlag(floatBitsToUint(drw_infos[resource_id].infos.w));
+  bool is_active = flag_test(ob_flag, OBJECT_ACTIVE);
+#else
   int flag = int(abs(ObjectInfo.w));
   bool is_active = (flag & DRW_BASE_ACTIVE) != 0;
+#endif
 
   if (isTransform) {
     return 0u; /* colorTransform */

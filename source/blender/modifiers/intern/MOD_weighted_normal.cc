@@ -9,8 +9,6 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_array_utils.hh"
-#include "BLI_bitmap.h"
-#include "BLI_linklist.h"
 #include "BLI_math_vector.h"
 
 #include "BLT_translation.hh"
@@ -18,8 +16,6 @@
 #include "DNA_defaults.h"
 #include "DNA_mesh_types.h"
 #include "DNA_meshdata_types.h"
-#include "DNA_object_types.h"
-#include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
 
 #include "BKE_attribute.hh"
@@ -27,7 +23,6 @@
 #include "BKE_deform.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.hh"
-#include "BKE_mesh_mapping.hh"
 #include "BKE_screen.hh"
 
 #include "UI_interface.hh"
@@ -82,7 +77,6 @@ struct WeightedNormalData {
   blender::Span<int> corner_edges;
   blender::Span<int> loop_to_face;
   blender::MutableSpan<blender::short2> clnors;
-  bool has_clnors; /* True if clnors already existed, false if we had to create them. */
 
   blender::OffsetIndices<int> faces;
   blender::Span<blender::float3> face_normals;
@@ -206,7 +200,6 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
   const short mode = wn_data->mode;
   ModePair *mode_pair = wn_data->mode_pair;
 
-  const bool has_clnors = wn_data->has_clnors;
   bke::mesh::CornerNormalSpaceArray lnors_spacearr;
 
   const bool keep_sharp = (wnmd->flag & MOD_WEIGHTEDNORMAL_KEEP_SHARP) != 0;
@@ -227,11 +220,10 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
                                     corner_verts,
                                     corner_edges,
                                     loop_to_face,
-                                    wn_data->vert_normals,
                                     wn_data->face_normals,
                                     wn_data->sharp_edges,
                                     wn_data->sharp_faces,
-                                    has_clnors ? clnors.data() : nullptr,
+                                    clnors,
                                     &lnors_spacearr,
                                     corner_normals);
 
@@ -355,11 +347,10 @@ static void apply_weights_vertex_normal(WeightedNormalModifierData *wnmd,
                                                corner_verts,
                                                corner_edges,
                                                loop_to_face,
-                                               wn_data->vert_normals,
                                                face_normals,
                                                wn_data->sharp_edges,
                                                wn_data->sharp_faces,
-                                               has_clnors ? clnors.data() : nullptr,
+                                               clnors,
                                                nullptr,
                                                corner_normals);
 
@@ -504,17 +495,6 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     weight = (weight - 1) * 25;
   }
 
-  blender::short2 *clnors = static_cast<blender::short2 *>(CustomData_get_layer_for_write(
-      &result->corner_data, CD_CUSTOMLOOPNORMAL, mesh->corners_num));
-
-  /* Keep info whether we had clnors,
-   * it helps when generating clnor spaces and default normals. */
-  const bool has_clnors = clnors != nullptr;
-  if (!clnors) {
-    clnors = static_cast<blender::short2 *>(CustomData_add_layer(
-        &result->corner_data, CD_CUSTOMLOOPNORMAL, CD_SET_DEFAULT, corner_verts.size()));
-  }
-
   const MDeformVert *dvert;
   int defgrp_index;
   MOD_get_vgroup(ctx->object, mesh, wnmd->defgrp_name, &dvert, &defgrp_index);
@@ -524,6 +504,11 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   bke::MutableAttributeAccessor attributes = result->attributes_for_write();
   bke::SpanAttributeWriter<bool> sharp_edges = attributes.lookup_or_add_for_write_span<bool>(
       "sharp_edge", bke::AttrDomain::Edge);
+  bke::SpanAttributeWriter clnors = attributes.lookup_or_add_for_write_span<short2>(
+      "custom_normal", bke::AttrDomain::Corner);
+  if (!clnors) {
+    return result;
+  }
 
   WeightedNormalData wn_data{};
   wn_data.verts_num = verts_num;
@@ -536,8 +521,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   wn_data.corner_verts = corner_verts;
   wn_data.corner_edges = corner_edges;
   wn_data.loop_to_face = loop_to_face_map;
-  wn_data.clnors = {clnors, mesh->corners_num};
-  wn_data.has_clnors = has_clnors;
+  wn_data.clnors = clnors.span;
 
   wn_data.faces = faces;
   wn_data.face_normals = mesh->face_normals();
@@ -569,6 +553,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   result->runtime->is_original_bmesh = false;
 
   sharp_edges.finish();
+  clnors.finish();
 
   return result;
 }
@@ -585,8 +570,6 @@ static void init_data(ModifierData *md)
 static void required_data_mask(ModifierData *md, CustomData_MeshMasks *r_cddata_masks)
 {
   WeightedNormalModifierData *wnmd = (WeightedNormalModifierData *)md;
-
-  r_cddata_masks->lmask = CD_MASK_CUSTOMLOOPNORMAL;
 
   if (wnmd->defgrp_name[0] != '\0') {
     r_cddata_masks->vmask |= CD_MASK_MDEFORMVERT;
@@ -607,16 +590,16 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   uiItemR(layout, ptr, "weight", UI_ITEM_NONE, IFACE_("Weight"), ICON_NONE);
   uiItemR(layout, ptr, "thresh", UI_ITEM_NONE, IFACE_("Threshold"), ICON_NONE);
 
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "keep_sharp", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "use_face_influence", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "keep_sharp", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "use_face_influence", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", nullptr);
+  modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
 
   modifier_panel_end(layout, ptr);
 }

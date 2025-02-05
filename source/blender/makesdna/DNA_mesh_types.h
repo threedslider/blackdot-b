@@ -19,6 +19,7 @@
 #  include <optional>
 
 #  include "BLI_math_vector_types.hh"
+#  include "BLI_memory_counter_fwd.hh"
 
 namespace blender {
 template<typename T> struct Bounds;
@@ -31,6 +32,7 @@ using offset_indices::OffsetIndices;
 template<typename T> class MutableSpan;
 template<typename T> class Span;
 namespace bke {
+struct BVHTreeFromMesh;
 struct MeshRuntime;
 class AttributeAccessor;
 class MutableAttributeAccessor;
@@ -103,6 +105,8 @@ typedef struct Mesh {
   /**
    * The index of the active attribute in the UI. The attribute list is a combination of the
    * generic type attributes from vertex, edge, face, and corner custom data.
+   *
+   * Set to -1 when none is active.
    */
   int attributes_active_index;
 
@@ -305,6 +309,9 @@ typedef struct Mesh {
   /** Set cached mesh bounds to a known-correct value to avoid their lazy calculation later on. */
   void bounds_set_eager(const blender::Bounds<blender::float3> &bounds);
 
+  /** Get the largest material index used by the mesh or `nullopt` if it has no faces. */
+  std::optional<int> material_index_max() const;
+
   /**
    * Cached map containing the index of the face using each face corner.
    */
@@ -395,6 +402,18 @@ typedef struct Mesh {
    */
   blender::Span<blender::float3> corner_normals() const;
 
+  blender::bke::BVHTreeFromMesh bvh_verts() const;
+  blender::bke::BVHTreeFromMesh bvh_edges() const;
+  blender::bke::BVHTreeFromMesh bvh_legacy_faces() const;
+  blender::bke::BVHTreeFromMesh bvh_corner_tris() const;
+  blender::bke::BVHTreeFromMesh bvh_corner_tris_no_hidden() const;
+  blender::bke::BVHTreeFromMesh bvh_loose_verts() const;
+  blender::bke::BVHTreeFromMesh bvh_loose_edges() const;
+  blender::bke::BVHTreeFromMesh bvh_loose_no_hidden_verts() const;
+  blender::bke::BVHTreeFromMesh bvh_loose_no_hidden_edges() const;
+
+  void count_memory(blender::MemoryCounter &memory) const;
+
   /** Call after changing vertex positions to tag lazily calculated caches for recomputation. */
   void tag_positions_changed();
   /** Call after moving every mesh vertex by the same translation. */
@@ -403,7 +422,7 @@ typedef struct Mesh {
   void tag_positions_changed_no_normals();
   /** Call when changing "sharp_face" or "sharp_edge" data. */
   void tag_sharpness_changed();
-  /** Call when changing #CD_CUSTOMLOOPNORMAL data. */
+  /** Call when changing "custom_normal" data. */
   void tag_custom_normals_changed();
   /** Call when face vertex order has changed but positions and faces haven't changed. */
   void tag_face_winding_changed();
@@ -411,6 +430,10 @@ typedef struct Mesh {
   void tag_edges_split();
   /** Call for topology updates not described by other update tags. */
   void tag_topology_changed();
+  /** Call when changing the ".hide_vert", ".hide_edge", or ".hide_poly" attributes. */
+  void tag_visibility_changed();
+  /** Call when changing the "material_index" attribute. */
+  void tag_material_index_changed();
 #endif
 } Mesh;
 

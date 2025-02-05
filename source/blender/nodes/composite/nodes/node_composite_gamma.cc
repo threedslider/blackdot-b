@@ -6,6 +6,13 @@
  * \ingroup cmpnodes
  */
 
+#include "BLI_math_vector.hh"
+#include "BLI_math_vector_types.hh"
+
+#include "NOD_multi_function.hh"
+
+#include "FN_multi_function_builder.hh"
+
 #include "GPU_material.hh"
 
 #include "COM_shader_node.hh"
@@ -30,7 +37,7 @@ static void cmp_node_gamma_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Color>("Image");
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class GammaShaderNode : public ShaderNode {
  public:
@@ -50,6 +57,17 @@ static ShaderNode *get_compositor_shader_node(DNode node)
   return new GammaShaderNode(node);
 }
 
+static void node_build_multi_function(blender::nodes::NodeMultiFunctionBuilder &builder)
+{
+  static auto gamma_function = mf::build::SI2_SO<float4, float, float4>(
+      "Gamma",
+      [](const float4 &color, const float gamma) -> float4 {
+        return float4(math::safe_pow(color.xyz(), gamma), color.w);
+      },
+      mf::build::exec_presets::SomeSpanOrSingle<0>());
+  builder.set_matching_fn(gamma_function);
+}
+
 }  // namespace blender::nodes::node_composite_gamma_cc
 
 void register_node_type_cmp_gamma()
@@ -58,9 +76,14 @@ void register_node_type_cmp_gamma()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(&ntype, CMP_NODE_GAMMA, "Gamma", NODE_CLASS_OP_COLOR);
+  cmp_node_type_base(&ntype, "CompositorNodeGamma", CMP_NODE_GAMMA);
+  ntype.ui_name = "Gamma";
+  ntype.ui_description = "Apply gamma correction";
+  ntype.enum_name_legacy = "GAMMA";
+  ntype.nclass = NODE_CLASS_OP_COLOR;
   ntype.declare = file_ns::cmp_node_gamma_declare;
   ntype.get_compositor_shader_node = file_ns::get_compositor_shader_node;
+  ntype.build_multi_function = file_ns::node_build_multi_function;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

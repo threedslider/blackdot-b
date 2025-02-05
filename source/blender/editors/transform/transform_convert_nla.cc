@@ -19,7 +19,7 @@
 
 #include "BKE_anim_data.hh"
 #include "BKE_context.hh"
-#include "BKE_nla.h"
+#include "BKE_nla.hh"
 
 #include "ED_anim_api.hh"
 
@@ -253,6 +253,9 @@ static void nlatrack_truncate_temporary_tracks(bAnimContext *ac)
       ac, &anim_data, eAnimFilter_Flags(filter), ac->data, eAnimCont_Types(ac->datatype));
 
   LISTBASE_FOREACH (bAnimListElem *, ale, &anim_data) {
+    if (!ale->adt) {
+      continue;
+    }
     ListBase *nla_tracks = &ale->adt->nla_tracks;
 
     /** Remove top tracks that weren't necessary. */
@@ -407,7 +410,7 @@ static void nlastrip_fix_overlapping(TransInfo *t, TransDataNla *tdn, NlaStrip *
 
   /* Use RNA to write the values to ensure that constraints on these are obeyed
    * (e.g. for transition strips, the values are taken from the neighbors). */
-  PointerRNA strip_ptr = RNA_pointer_create(nullptr, &RNA_NlaStrip, strip);
+  PointerRNA strip_ptr = RNA_pointer_create_discrete(nullptr, &RNA_NlaStrip, strip);
 
   switch (t->mode) {
     case TFM_TIME_EXTEND:

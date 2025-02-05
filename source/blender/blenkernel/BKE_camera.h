@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "BLI_rect.h"
+#include "DNA_vec_types.h"
 
 /** \file
  * \ingroup bke
@@ -25,7 +25,7 @@ struct View3D;
 
 /* Camera Data-block */
 
-void *BKE_camera_add(struct Main *bmain, const char *name);
+struct Camera *BKE_camera_add(struct Main *bmain, const char *name);
 
 /* Camera Usage */
 
@@ -90,7 +90,7 @@ void BKE_camera_params_compute_viewplane(
 /**
  * Crop `viewplane` given the current resolution and a pixel region inside the view plane.
  */
-void BKE_camera_params_crop_viewplane(rctf *viewplane, int winx, int winy, rcti *region);
+void BKE_camera_params_crop_viewplane(rctf *viewplane, int winx, int winy, const rcti *region);
 /**
  * View-plane is assumed to be already computed.
  */
@@ -178,7 +178,7 @@ struct CameraBGImage *BKE_camera_background_image_new(struct Camera *cam);
  * `BKE_lib_id.hh`.
  */
 struct CameraBGImage *BKE_camera_background_image_copy(const struct CameraBGImage *bgpic_src,
-                                                       int copy_flag);
+                                                       int flag);
 void BKE_camera_background_image_remove(struct Camera *cam, struct CameraBGImage *bgpic);
 void BKE_camera_background_image_clear(struct Camera *cam);
 

@@ -11,7 +11,7 @@
 #include "BLI_ordered_edge.hh"
 #include "BLI_set.hh"
 
-#include <float.h>
+#include <cfloat>
 
 struct BVHTree;
 struct ClothVertex;
@@ -75,10 +75,10 @@ struct Cloth {
   unsigned char pad2;
   short pad3;
   BVHTree *bvhtree;     /* collision tree for this cloth object */
-  BVHTree *bvhselftree; /* collision tree for this cloth object (may be same as bvhtree) */
+  BVHTree *bvhselftree; /* Collision tree for this cloth object (may be same as BVH-tree). */
   blender::int3 *vert_tris;
   Implicit_Data *implicit;                    /* our implicit solver connects to this pointer */
-  blender::Set<blender::OrderedEdge> edgeset; /* used for selfcollisions */
+  blender::Set<blender::OrderedEdge> edgeset; /* Used for self-collisions. */
   int last_frame;
   float initial_mesh_volume;     /* Initial volume of the mesh. Used for pressure */
   float average_acceleration[3]; /* Moving average of overall acceleration. */

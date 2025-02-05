@@ -91,11 +91,11 @@ static void node_gather_link_searches(GatherLinkSearchOpParams &params)
       /* If the source node has a geometry socket, connect it to the new viewer node as well. */
       LISTBASE_FOREACH (bNodeSocket *, socket, &params.node.outputs) {
         if (socket->type == SOCK_GEOMETRY && socket->is_visible()) {
-          bke::nodeAddLink(&params.node_tree,
-                           &params.node,
-                           socket,
-                           &node,
-                           static_cast<bNodeSocket *>(node.inputs.first));
+          bke::node_add_link(&params.node_tree,
+                             &params.node,
+                             socket,
+                             &node,
+                             static_cast<bNodeSocket *>(node.inputs.first));
           break;
         }
       }
@@ -142,7 +142,11 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_VIEWER, "Viewer", NODE_CLASS_OUTPUT);
+  geo_node_type_base(&ntype, "GeometryNodeViewer", GEO_NODE_VIEWER);
+  ntype.ui_name = "Viewer";
+  ntype.ui_description = "Display the input data in the Spreadsheet Editor";
+  ntype.enum_name_legacy = "VIEWER";
+  ntype.nclass = NODE_CLASS_OUTPUT;
   blender::bke::node_type_storage(
       &ntype, "NodeGeometryViewer", node_free_standard_storage, node_copy_standard_storage);
   ntype.declare = node_declare;
@@ -152,7 +156,7 @@ static void node_register()
   ntype.gather_link_search_ops = node_gather_link_searches;
   ntype.no_muting = true;
   ntype.get_extra_info = node_extra_info;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

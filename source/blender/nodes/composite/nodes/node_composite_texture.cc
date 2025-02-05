@@ -32,7 +32,7 @@ static void cmp_node_texture_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Color>("Color");
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class TextureOperation : public NodeOperation {
  public:
@@ -58,17 +58,17 @@ class TextureOperation : public NodeOperation {
         texture,
         true,
         domain.size,
-        get_input("Offset").get_vector_value_default(float4(0.0f)).xyz(),
-        get_input("Scale").get_vector_value_default(float4(1.0f)).xyz());
+        get_input("Offset").get_single_value_default(float4(0.0f)).xyz(),
+        get_input("Scale").get_single_value_default(float4(1.0f)).xyz());
 
     Result &color_result = get_result("Color");
     if (color_result.should_compute()) {
-      color_result.wrap_external(cached_texture.color_texture());
+      color_result.wrap_external(cached_texture.color_result);
     }
 
     Result &value_result = get_result("Value");
     if (value_result.should_compute()) {
-      value_result.wrap_external(cached_texture.value_texture());
+      value_result.wrap_external(cached_texture.value_result);
     }
   }
 
@@ -109,12 +109,16 @@ void register_node_type_cmp_texture()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(&ntype, CMP_NODE_TEXTURE, "Texture", NODE_CLASS_INPUT);
+  cmp_node_type_base(&ntype, "CompositorNodeTexture", CMP_NODE_TEXTURE);
+  ntype.ui_name = "Texture";
+  ntype.ui_description = "Generate texture pattern from texture datablock";
+  ntype.enum_name_legacy = "TEXTURE";
+  ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = file_ns::cmp_node_texture_declare;
-  ntype.realtime_compositor_unsupported_message = N_(
+  ntype.compositor_unsupported_message = N_(
       "Texture nodes not supported in the Viewport compositor");
   ntype.flag |= NODE_PREVIEW;
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

@@ -48,7 +48,7 @@ static int view3d_zoom_border_exec(bContext *C, wmOperator *op)
   float cent[2], p[3];
 
   /* NOTE: otherwise opengl won't work. */
-  view3d_operator_needs_opengl(C);
+  view3d_operator_needs_gpu(C);
 
   /* get box select values using rna */
   WM_operator_properties_border_to_rcti(op, &rect);
@@ -58,8 +58,13 @@ static int view3d_zoom_border_exec(bContext *C, wmOperator *op)
 
   ED_view3d_dist_range_get(v3d, dist_range);
 
-  ED_view3d_depth_override(
-      CTX_data_ensure_evaluated_depsgraph(C), region, v3d, nullptr, V3D_DEPTH_NO_GPENCIL, nullptr);
+  ED_view3d_depth_override(CTX_data_ensure_evaluated_depsgraph(C),
+                           region,
+                           v3d,
+                           nullptr,
+                           V3D_DEPTH_NO_GPENCIL,
+                           true,
+                           nullptr);
   {
     /* avoid allocating the whole depth buffer */
     ViewDepths depth_temp = {0};

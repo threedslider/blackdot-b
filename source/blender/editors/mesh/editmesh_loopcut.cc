@@ -20,6 +20,7 @@
 #include "BKE_layer.hh"
 #include "BKE_modifier.hh"
 #include "BKE_report.hh"
+#include "BKE_screen.hh"
 #include "BKE_unit.hh"
 
 #include "UI_interface.hh"
@@ -256,7 +257,7 @@ static void ringsel_exit(bContext * /*C*/, wmOperator *op)
   RingSelOpData *lcd = static_cast<RingSelOpData *>(op->customdata);
 
   /* deactivate the extra drawing stuff in 3D-View */
-  ED_region_draw_cb_exit(lcd->region->type, lcd->draw_handle);
+  ED_region_draw_cb_exit(lcd->region->runtime->type, lcd->draw_handle);
 
   EDBM_preselect_edgering_destroy(lcd->presel_edgering);
 
@@ -281,7 +282,7 @@ static int ringsel_init(bContext *C, wmOperator *op, bool do_cut)
   /* assign the drawing handle for drawing preview line... */
   lcd->region = CTX_wm_region(C);
   lcd->draw_handle = ED_region_draw_cb_activate(
-      lcd->region->type, ringsel_draw, lcd, REGION_DRAW_POST_VIEW);
+      lcd->region->runtime->type, ringsel_draw, lcd, REGION_DRAW_POST_VIEW);
   lcd->presel_edgering = EDBM_preselect_edgering_create();
   /* Initialize once the cursor is over a mesh. */
   lcd->ob = nullptr;
@@ -393,7 +394,7 @@ static int loopcut_init(bContext *C, wmOperator *op, const wmEvent *event)
   }
 
   if (is_interactive) {
-    view3d_operator_needs_opengl(C);
+    view3d_operator_needs_gpu(C);
   }
 
   /* for re-execution, check edge index is in range before we setup ringsel */
@@ -459,7 +460,7 @@ static int loopcut_init(bContext *C, wmOperator *op, const wmEvent *event)
     char buf[UI_MAX_DRAW_STR];
     char str_rep[NUM_STR_REP_LEN * 2];
     if (hasNumInput(&lcd->num)) {
-      outputNumInput(&lcd->num, str_rep, &scene->unit);
+      outputNumInput(&lcd->num, str_rep, scene->unit);
     }
     else {
       BLI_snprintf(str_rep, NUM_STR_REP_LEN, "%d", int(lcd->cuts));
@@ -488,7 +489,7 @@ static int ringcut_invoke(bContext *C, wmOperator *op, const wmEvent *event)
   /* When accessed as a tool, get the active edge from the pre-selection gizmo. */
   {
     ARegion *region = CTX_wm_region(C);
-    wmGizmoMap *gzmap = region->gizmo_map;
+    wmGizmoMap *gzmap = region->runtime->gizmo_map;
     wmGizmoGroup *gzgroup = gzmap ? WM_gizmomap_group_find(gzmap,
                                                            "VIEW3D_GGT_mesh_preselect_edgering") :
                                     nullptr;
@@ -554,7 +555,7 @@ static int loopcut_modal(bContext *C, wmOperator *op, const wmEvent *event)
   lcd->vc = em_setup_viewcontext(C);
   lcd->region = lcd->vc.region;
 
-  view3d_operator_needs_opengl(C);
+  view3d_operator_needs_gpu(C);
 
   /* using the keyboard to input the number of cuts */
   /* Modal numinput active, try to handle numeric inputs first... */
@@ -691,7 +692,7 @@ static int loopcut_modal(bContext *C, wmOperator *op, const wmEvent *event)
     char buf[UI_MAX_DRAW_STR];
     char str_rep[NUM_STR_REP_LEN * 2];
     if (hasNumInput(&lcd->num)) {
-      outputNumInput(&lcd->num, str_rep, &sce->unit);
+      outputNumInput(&lcd->num, str_rep, sce->unit);
     }
     else {
       BLI_snprintf(str_rep, NUM_STR_REP_LEN, "%d", int(lcd->cuts));

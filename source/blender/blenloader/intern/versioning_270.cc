@@ -6,11 +6,7 @@
  * \ingroup blenloader
  */
 
-#include "BLI_compiler_attrs.h"
 #include "BLI_utildefines.h"
-
-/* for MinGW32 definition of NULL, could use BLI_blenlib.h instead too */
-#include <cstddef>
 
 #include <string>
 
@@ -41,6 +37,7 @@
 #include "DNA_sequence_types.h"
 #include "DNA_space_types.h"
 #include "DNA_view3d_types.h"
+#include "DNA_windowmanager_types.h"
 
 #include "DNA_genfile.h"
 
@@ -55,6 +52,7 @@
 #include "BKE_mask.h"
 #include "BKE_modifier.hh"
 #include "BKE_node.hh"
+#include "BKE_node_legacy_types.hh"
 #include "BKE_scene.hh"
 #include "BKE_screen.hh"
 #include "DNA_material_types.h"
@@ -234,8 +232,7 @@ static void do_version_action_editor_properties_region(ListBase *regionbase)
     }
     if (region->regiontype == RGN_TYPE_WINDOW) {
       /* add new region here */
-      ARegion *region_new = static_cast<ARegion *>(
-          MEM_callocN(sizeof(ARegion), "buttons for action"));
+      ARegion *region_new = BKE_area_region_new();
 
       BLI_insertlinkbefore(regionbase, region, region_new);
 
@@ -280,19 +277,19 @@ static void do_version_hue_sat_node(bNodeTree *ntree, bNode *node)
 
   /* Convert value from old storage to new sockets. */
   NodeHueSat *nhs = static_cast<NodeHueSat *>(node->storage);
-  bNodeSocket *hue = blender::bke::nodeFindSocket(node, SOCK_IN, "Hue");
-  bNodeSocket *saturation = blender::bke::nodeFindSocket(node, SOCK_IN, "Saturation");
-  bNodeSocket *value = blender::bke::nodeFindSocket(node, SOCK_IN, "Value");
+  bNodeSocket *hue = blender::bke::node_find_socket(node, SOCK_IN, "Hue");
+  bNodeSocket *saturation = blender::bke::node_find_socket(node, SOCK_IN, "Saturation");
+  bNodeSocket *value = blender::bke::node_find_socket(node, SOCK_IN, "Value");
   if (hue == nullptr) {
-    hue = blender::bke::nodeAddStaticSocket(
+    hue = blender::bke::node_add_static_socket(
         ntree, node, SOCK_IN, SOCK_FLOAT, PROP_FACTOR, "Hue", "Hue");
   }
   if (saturation == nullptr) {
-    saturation = blender::bke::nodeAddStaticSocket(
+    saturation = blender::bke::node_add_static_socket(
         ntree, node, SOCK_IN, SOCK_FLOAT, PROP_FACTOR, "Saturation", "Saturation");
   }
   if (value == nullptr) {
-    value = blender::bke::nodeAddStaticSocket(
+    value = blender::bke::node_add_static_socket(
         ntree, node, SOCK_IN, SOCK_FLOAT, PROP_FACTOR, "Value", "Value");
   }
 
@@ -350,7 +347,7 @@ static void do_versions_compositor_render_passes_storage(bNode *node)
 static void do_versions_compositor_render_passes(bNodeTree *ntree)
 {
   LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
-    if (node->type == CMP_NODE_R_LAYERS) {
+    if (node->type_legacy == CMP_NODE_R_LAYERS) {
       /* First we make sure existing sockets have proper names.
        * This is important because otherwise verification will
        * drop links from sockets which were renamed.
@@ -386,7 +383,7 @@ static char *replace_bbone_easing_rnapath(char *old_path)
   return old_path;
 }
 
-static void do_version_bbone_easing_fcurve_fix(ID * /*id*/, FCurve *fcu, void * /*user_data*/)
+static void do_version_bbone_easing_fcurve_fix(ID * /*id*/, FCurve *fcu)
 {
   /* F-Curve's path (for bbone_in/out) */
   if (fcu->rna_path) {
@@ -423,39 +420,38 @@ static void do_version_bbone_easing_fcurve_fix(ID * /*id*/, FCurve *fcu, void * 
   }
 }
 
-static bool seq_update_proxy_cb(Sequence *seq, void * /*user_data*/)
+static bool strip_update_proxy_cb(Strip *strip, void * /*user_data*/)
 {
-  seq->stereo3d_format = static_cast<Stereo3dFormat *>(
+  strip->stereo3d_format = static_cast<Stereo3dFormat *>(
       MEM_callocN(sizeof(Stereo3dFormat), "Stereo Display 3d Format"));
 
-#define SEQ_USE_PROXY_CUSTOM_DIR (1 << 19)
-#define SEQ_USE_PROXY_CUSTOM_FILE (1 << 21)
-  if (seq->strip && seq->strip->proxy && !seq->strip->proxy->storage) {
-    if (seq->flag & SEQ_USE_PROXY_CUSTOM_DIR) {
-      seq->strip->proxy->storage = SEQ_STORAGE_PROXY_CUSTOM_DIR;
+#define STRIP_USE_PROXY_CUSTOM_DIR (1 << 19)
+#define STRIP_USE_PROXY_CUSTOM_FILE (1 << 21)
+  if (strip->data && strip->data->proxy && !strip->data->proxy->storage) {
+    if (strip->flag & STRIP_USE_PROXY_CUSTOM_DIR) {
+      strip->data->proxy->storage = SEQ_STORAGE_PROXY_CUSTOM_DIR;
     }
-    if (seq->flag & SEQ_USE_PROXY_CUSTOM_FILE) {
-      seq->strip->proxy->storage = SEQ_STORAGE_PROXY_CUSTOM_FILE;
+    if (strip->flag & STRIP_USE_PROXY_CUSTOM_FILE) {
+      strip->data->proxy->storage = SEQ_STORAGE_PROXY_CUSTOM_FILE;
     }
   }
-#undef SEQ_USE_PROXY_CUSTOM_DIR
-#undef SEQ_USE_PROXY_CUSTOM_FILE
+#undef STRIP_USE_PROXY_CUSTOM_DIR
+#undef STRIP_USE_PROXY_CUSTOM_FILE
   return true;
 }
 
-static bool seq_update_effectdata_cb(Sequence *seq, void * /*user_data*/)
+static bool strip_update_effectdata_cb(Strip *strip, void * /*user_data*/)
 {
-
-  if (seq->type != SEQ_TYPE_TEXT) {
+  if (strip->type != STRIP_TYPE_TEXT) {
     return true;
   }
 
-  if (seq->effectdata == nullptr) {
-    SeqEffectHandle effect_handle = SEQ_effect_handle_get(seq);
-    effect_handle.init(seq);
+  if (strip->effectdata == nullptr) {
+    SeqEffectHandle effect_handle = SEQ_effect_handle_get(strip);
+    effect_handle.init(strip);
   }
 
-  TextVars *data = static_cast<TextVars *>(seq->effectdata);
+  TextVars *data = static_cast<TextVars *>(strip->effectdata);
   if (data->color[3] == 0.0f) {
     copy_v4_fl(data->color, 1.0f);
     data->shadow_color[3] = 1.0f;
@@ -484,7 +480,7 @@ void blo_do_versions_270(FileData *fd, Library * /*lib*/, Main *bmain)
     FOREACH_NODETREE_BEGIN (bmain, ntree, id) {
       if (ntree->type == NTREE_COMPOSIT) {
         LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
-          if (ELEM(node->type, CMP_NODE_COMPOSITE, CMP_NODE_OUTPUT_FILE)) {
+          if (ELEM(node->type_legacy, CMP_NODE_COMPOSITE, CMP_NODE_OUTPUT_FILE)) {
             node->id = nullptr;
           }
         }
@@ -652,7 +648,7 @@ void blo_do_versions_270(FileData *fd, Library * /*lib*/, Main *bmain)
   if (!MAIN_VERSION_FILE_ATLEAST(bmain, 272, 1)) {
     LISTBASE_FOREACH (Brush *, br, &bmain->brushes) {
       if ((br->ob_mode & OB_MODE_SCULPT) &&
-          ELEM(br->sculpt_tool, SCULPT_TOOL_GRAB, SCULPT_TOOL_SNAKE_HOOK))
+          ELEM(br->sculpt_brush_type, SCULPT_BRUSH_TYPE_GRAB, SCULPT_BRUSH_TYPE_SNAKE_HOOK))
       {
         br->alpha = 1.0f;
       }
@@ -781,7 +777,7 @@ void blo_do_versions_270(FileData *fd, Library * /*lib*/, Main *bmain)
       FOREACH_NODETREE_BEGIN (bmain, ntree, id) {
         if (ntree->type == NTREE_COMPOSIT) {
           LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
-            if (ELEM(node->type, CMP_NODE_PLANETRACKDEFORM)) {
+            if (ELEM(node->type_legacy, CMP_NODE_PLANETRACKDEFORM)) {
               NodePlaneTrackDeformData *data = static_cast<NodePlaneTrackDeformData *>(
                   node->storage);
               data->flag = 0;
@@ -864,7 +860,7 @@ void blo_do_versions_270(FileData *fd, Library * /*lib*/, Main *bmain)
       STRNCPY(srv->suffix, STEREO_RIGHT_SUFFIX);
 
       if (scene->ed) {
-        SEQ_for_each_callback(&scene->ed->seqbase, seq_update_proxy_cb, nullptr);
+        SEQ_for_each_callback(&scene->ed->seqbase, strip_update_proxy_cb, nullptr);
       }
     }
 
@@ -1059,16 +1055,16 @@ void blo_do_versions_270(FileData *fd, Library * /*lib*/, Main *bmain)
     a = set_listbasepointers(bmain, lbarray);
     while (a--) {
       LISTBASE_FOREACH (ID *, id, lbarray[a]) {
-        id->flag &= LIB_FAKEUSER;
+        id->flag &= ID_FLAG_FAKEUSER;
 
         /* NOTE: This is added in 4.1 code.
          *
          * Original commit (3fcf535d2e) forgot to handle embedded IDs. Fortunately, back then, the
          * only embedded IDs that existed were the NodeTree ones, and the current API to access
          * them should still be valid on code from 9 years ago. */
-        bNodeTree *node_tree = blender::bke::ntreeFromID(id);
+        bNodeTree *node_tree = blender::bke::node_tree_from_id(id);
         if (node_tree) {
-          node_tree->id.flag &= LIB_FAKEUSER;
+          node_tree->id.flag &= ID_FLAG_FAKEUSER;
         }
       }
     }
@@ -1137,7 +1133,7 @@ void blo_do_versions_270(FileData *fd, Library * /*lib*/, Main *bmain)
 
     LISTBASE_FOREACH (Scene *, scene, &bmain->scenes) {
       if (scene->ed) {
-        SEQ_for_each_callback(&scene->ed->seqbase, seq_update_effectdata_cb, nullptr);
+        SEQ_for_each_callback(&scene->ed->seqbase, strip_update_effectdata_cb, nullptr);
       }
     }
 
@@ -1221,7 +1217,7 @@ void blo_do_versions_270(FileData *fd, Library * /*lib*/, Main *bmain)
     }
 
     LISTBASE_FOREACH (Brush *, br, &bmain->brushes) {
-      if (br->sculpt_tool == SCULPT_TOOL_FLATTEN) {
+      if (br->sculpt_brush_type == SCULPT_BRUSH_TYPE_FLATTEN) {
         br->flag |= BRUSH_ACCUMULATE;
       }
     }
@@ -1461,9 +1457,9 @@ void blo_do_versions_270(FileData *fd, Library * /*lib*/, Main *bmain)
     if (!DNA_struct_member_exists(fd->filesdna, "NodeGlare", "char", "star_45")) {
       FOREACH_NODETREE_BEGIN (bmain, ntree, id) {
         if (ntree->type == NTREE_COMPOSIT) {
-          blender::bke::ntreeSetTypes(nullptr, ntree);
+          blender::bke::node_tree_set_type(nullptr, ntree);
           LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
-            if (node->type == CMP_NODE_GLARE) {
+            if (node->type_legacy == CMP_NODE_GLARE) {
               NodeGlare *ndg = static_cast<NodeGlare *>(node->storage);
               switch (ndg->type) {
                 case CMP_NODE_GLARE_STREAKS:
@@ -1613,9 +1609,9 @@ void do_versions_after_linking_270(Main *bmain)
   if (!MAIN_VERSION_FILE_ATLEAST(bmain, 279, 0)) {
     FOREACH_NODETREE_BEGIN (bmain, ntree, id) {
       if (ntree->type == NTREE_COMPOSIT) {
-        blender::bke::ntreeSetTypes(nullptr, ntree);
+        blender::bke::node_tree_set_type(nullptr, ntree);
         LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
-          if (node->type == CMP_NODE_HUE_SAT) {
+          if (node->type_legacy == CMP_NODE_HUE_SAT) {
             do_version_hue_sat_node(ntree, node);
           }
         }
@@ -1626,6 +1622,6 @@ void do_versions_after_linking_270(Main *bmain)
 
   if (!MAIN_VERSION_FILE_ATLEAST(bmain, 279, 2)) {
     /* B-Bones (bbone_in/out -> bbone_easein/out) + Stepped FMod Frame Start/End fix */
-    BKE_fcurves_main_cb(bmain, do_version_bbone_easing_fcurve_fix, nullptr);
+    BKE_fcurves_main_cb(bmain, do_version_bbone_easing_fcurve_fix);
   }
 }

@@ -8,9 +8,7 @@
 
 #include "DNA_windowmanager_types.h"
 
-#include "MEM_guardedalloc.h"
-
-#include "BLI_blenlib.h"
+#include "BLI_string.h"
 
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
@@ -46,7 +44,7 @@ static ARegion *text_has_properties_region(ScrArea *area)
     return nullptr;
   }
 
-  arnew = static_cast<ARegion *>(MEM_callocN(sizeof(ARegion), "properties region"));
+  arnew = BKE_area_region_new();
 
   BLI_insertlinkafter(&area->regionbase, region, arnew);
   arnew->regiontype = RGN_TYPE_UI;

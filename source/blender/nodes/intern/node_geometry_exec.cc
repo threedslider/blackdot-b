@@ -2,16 +2,17 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include <iostream>
+
 #include "DNA_curves_types.h"
 #include "DNA_grease_pencil_types.h"
 #include "DNA_mesh_types.h"
-#include "DNA_modifier_types.h"
 #include "DNA_pointcloud_types.h"
 
 #include "DEG_depsgraph_query.hh"
 
 #include "BKE_curves.hh"
-#include "BKE_type_conversions.hh"
+#include "BKE_node_runtime.hh"
 
 #include "BLT_translation.hh"
 
@@ -241,6 +242,20 @@ void GeoNodeExecParams::check_output_access(StringRef identifier, const CPPType 
       BLI_assert_unreachable();
     }
   }
+}
+
+AttributeFilter::Result NodeAttributeFilter::filter(const StringRef attribute_name) const
+{
+  if (!bke::attribute_name_is_anonymous(attribute_name)) {
+    return AttributeFilter::Result::Process;
+  }
+  if (!set_.names) {
+    return AttributeFilter::Result::AllowSkip;
+  }
+  if (set_.names->contains(attribute_name)) {
+    return AttributeFilter::Result::Process;
+  }
+  return AttributeFilter::Result::AllowSkip;
 }
 
 }  // namespace blender::nodes

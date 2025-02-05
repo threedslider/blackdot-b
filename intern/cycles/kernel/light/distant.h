@@ -4,9 +4,11 @@
 
 #pragma once
 
-#include "kernel/geom/geom.h"
+#include "kernel/geom/object.h"
 
 #include "kernel/light/common.h"
+
+#include "util/math_fast.h"
 
 CCL_NAMESPACE_BEGIN
 
@@ -23,8 +25,8 @@ ccl_device_inline void distant_light_uv(const ccl_global KernelLight *klight,
 
   /* Get u axis and v axis. */
   const Transform itfm = klight->itfm;
-  const float u_ = dot(D, float4_to_float3(itfm.x)) * fac;
-  const float v_ = dot(D, float4_to_float3(itfm.y)) * fac;
+  const float u_ = dot(D, make_float3(itfm.x)) * fac;
+  const float v_ = dot(D, make_float3(itfm.y)) * fac;
 
   /* NOTE: Return barycentric coordinates in the same notation as Embree and OptiX. */
   *u = v_ + 0.5f;
@@ -84,7 +86,7 @@ ccl_device bool distant_light_sample_from_intersection(KernelGlobals kg,
                                                        const int lamp,
                                                        ccl_private LightSample *ccl_restrict ls)
 {
-  ccl_global const KernelLight *klight = &kernel_data_fetch(lights, lamp);
+  const ccl_global KernelLight *klight = &kernel_data_fetch(lights, lamp);
   const int shader = klight->shader_id;
   const LightType type = (LightType)klight->type;
 
@@ -140,10 +142,15 @@ ccl_device_forceinline bool distant_light_tree_parameters(const float3 centroid,
 {
   if (in_volume_segment) {
     if (t == FLT_MAX) {
-      /* In world volume, distant light has no contribution. */
-      return false;
+      /* In world volumes, distant lights can contribute to the lighting of the volume with
+       * specific configurations of procedurally generated volumes. Use a ray length of 1.0 in this
+       * case to give the distant light some weight, but one that isn't too high for a typical
+       * world volume use case. */
+      theta_d = 1.0f;
     }
-    theta_d = t;
+    else {
+      theta_d = t;
+    }
   }
 
   /* Treating it as a disk light 1 unit away */

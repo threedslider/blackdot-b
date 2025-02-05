@@ -9,6 +9,10 @@ https://spdx.org/licenses/
 
 This can be activated by calling "make check_licenses" from Blenders root directory.
 """
+__all__ = (
+    "main",
+)
+
 
 import os
 import argparse
@@ -17,13 +21,11 @@ import re
 
 from dataclasses import dataclass
 
-from typing import (
+from collections.abc import (
     Callable,
-    Dict,
-    Generator,
-    List,
-    Tuple,
+    Iterator,
 )
+
 
 # -----------------------------------------------------------------------------
 # Constants
@@ -42,7 +44,7 @@ EXPECT_SPDX_IN_FIRST_CHARS = 1024
 # Show unique headers after modifying them.
 # Useful when reviewing changes as there may be many duplicates.
 REPORT_UNIQUE_HEADER_MAPPING = False
-mapping: Dict[str, List[str]] = {}
+mapping: dict[str, list[str]] = {}
 
 SOURCE_DIR = os.path.normpath(
     os.path.abspath(
@@ -64,7 +66,7 @@ del fh
 # Global Variables
 
 # Count how many licenses are used.
-SPDX_IDENTIFIER_STATS: Dict[str, int] = {SPDX_IDENTIFIER_UNKNOWN: 0}
+SPDX_IDENTIFIER_STATS: dict[str, int] = {SPDX_IDENTIFIER_UNKNOWN: 0}
 
 # -----------------------------------------------------------------------------
 # File Type Checks
@@ -192,7 +194,7 @@ def txt_anonymous_years(text: str) -> str:
     return text
 
 
-def txt_find_next_indented_block(text: str, find: str, pos: int, limit: int) -> Tuple[int, int]:
+def txt_find_next_indented_block(text: str, find: str, pos: int, limit: int) -> tuple[int, int]:
     """
     Support for finding an indented block of text.
     Return the identifier index and the end of the block.
@@ -405,9 +407,9 @@ operation = check_contents
 
 def source_files(
     path: str,
-    paths_exclude: Tuple[str, ...],
+    paths_exclude: tuple[str, ...],
     filename_test: Callable[[str], bool],
-) -> Generator[str, None, None]:
+) -> Iterator[str]:
     # Split paths into directories & files.
     dirs_exclude_list = []
     files_exclude_list = []
@@ -487,8 +489,8 @@ def main() -> None:
     @dataclass
     class Pass:
         filename_test: Callable[[str], bool]
-        source_paths_include: Tuple[str, ...]
-        source_paths_exclude: Tuple[str, ...]
+        source_paths_include: tuple[str, ...]
+        source_paths_exclude: tuple[str, ...]
 
     passes = (
         Pass(

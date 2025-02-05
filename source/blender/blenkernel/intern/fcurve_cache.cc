@@ -16,7 +16,6 @@
 #include "DNA_anim_types.h"
 
 #include "BLI_ghash.h"
-#include "BLI_listbase.h"
 
 #include "BKE_fcurve.hh"
 
@@ -63,14 +62,13 @@ static int fcurve_cmp_for_cache(const void *fcu_a_p, const void *fcu_b_p)
   return 0;
 }
 
-FCurvePathCache *BKE_fcurve_pathcache_create(ListBase *list)
+FCurvePathCache *BKE_fcurve_pathcache_create(blender::Span<FCurve *> fcurves)
 {
-  const uint fcurve_array_len = BLI_listbase_count(list);
+  const uint fcurve_array_len = fcurves.size();
   FCurve **fcurve_array = static_cast<FCurve **>(
       MEM_mallocN(sizeof(*fcurve_array) * fcurve_array_len, __func__));
-  uint i;
-  LISTBASE_FOREACH_INDEX (FCurve *, fcu, list, i) {
-    fcurve_array[i] = fcu;
+  for (const int i : fcurves.index_range()) {
+    fcurve_array[i] = fcurves[i];
   }
   qsort(fcurve_array, fcurve_array_len, sizeof(FCurve *), fcurve_cmp_for_cache);
 
@@ -83,7 +81,7 @@ FCurvePathCache *BKE_fcurve_pathcache_create(ListBase *list)
   /* May over reserve, harmless. */
   GHash *span_from_rna_path = BLI_ghash_str_new_ex(__func__, fcurve_array_len);
   uint span_index = 0;
-  i = 0;
+  uint i = 0;
   while (i < fcurve_array_len) {
     uint i_end;
     for (i_end = i + 1; i_end < fcurve_array_len; i_end++) {
@@ -122,7 +120,7 @@ void BKE_fcurve_pathcache_destroy(FCurvePathCache *fcache)
   MEM_freeN(fcache);
 }
 
-FCurve *BKE_fcurve_pathcache_find(FCurvePathCache *fcache,
+FCurve *BKE_fcurve_pathcache_find(const FCurvePathCache *fcache,
                                   const char *rna_path,
                                   const int array_index)
 {
@@ -146,7 +144,7 @@ FCurve *BKE_fcurve_pathcache_find(FCurvePathCache *fcache,
   return nullptr;
 }
 
-int BKE_fcurve_pathcache_find_array(FCurvePathCache *fcache,
+int BKE_fcurve_pathcache_find_array(const FCurvePathCache *fcache,
                                     const char *rna_path,
                                     FCurve **fcurve_result,
                                     int fcurve_result_len)

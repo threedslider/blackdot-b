@@ -37,6 +37,8 @@
 
 #include "meshlaplacian.h"
 
+#include <algorithm>
+
 /* ************* XXX *************** */
 static void waitcursor(int /*val*/) {}
 static void progress_bar(int /*dummy_val*/, const char * /*dummy*/) {}
@@ -514,9 +516,7 @@ static void heat_set_H(LaplacianSystem *sys, int vertex)
   for (j = 0; j < sys->heat.numsource; j++) {
     dist = heat_source_distance(sys, vertex, j);
 
-    if (dist < mindist) {
-      mindist = dist;
-    }
+    mindist = std::min(dist, mindist);
   }
 
   sys->heat.mindist[vertex] = mindist;
@@ -635,8 +635,8 @@ void heat_bone_weighting(Object *ob,
                          bDeformGroup **dgroupflip,
                          float (*root)[3],
                          float (*tip)[3],
-                         const int *selected,
-                         const char **error_str)
+                         const bool *selected,
+                         const char **r_error_str)
 {
   using namespace blender;
   LaplacianSystem *sys;
@@ -653,7 +653,7 @@ void heat_bone_weighting(Object *ob,
   bool use_vert_sel = (mesh->editflag & ME_EDIT_PAINT_VERT_SEL) != 0;
   bool use_face_sel = (mesh->editflag & ME_EDIT_PAINT_FACE_SEL) != 0;
 
-  *error_str = nullptr;
+  *r_error_str = nullptr;
 
   /* bone heat needs triangulated faces */
   tris_num = poly_to_tri_count(mesh->faces_num, mesh->corners_num);
@@ -722,7 +722,7 @@ void heat_bone_weighting(Object *ob,
 
   /* compute weights per bone */
   for (j = 0; j < numbones; j++) {
-    if (!selected[j]) {
+    if (selected[j] == false) {
       continue;
     }
 
@@ -799,8 +799,8 @@ void heat_bone_weighting(Object *ob,
         }
       }
     }
-    else if (*error_str == nullptr) {
-      *error_str = N_("Bone Heat Weighting: failed to find solution for one or more bones");
+    else if (*r_error_str == nullptr) {
+      *r_error_str = N_("Bone Heat Weighting: failed to find solution for one or more bones");
       break;
     }
 
@@ -915,8 +915,8 @@ struct MeshDeformBind {
   /* direct solver */
   int *varidx;
 
-  BVHTree *bvhtree;
-  BVHTreeFromMesh bvhdata;
+  const BVHTree *bvhtree;
+  blender::bke::BVHTreeFromMesh bvhdata;
 
   /* avoid DM function calls during intersections */
   struct {
@@ -1604,8 +1604,8 @@ static void harmonic_coordinates_bind(MeshDeformModifierData *mmd, MeshDeformBin
   mdb->boundisect = static_cast<MDefBoundIsect *(*)[6]>(
       MEM_callocN(sizeof(*mdb->boundisect) * mdb->size3, "MDefBoundIsect"));
   mdb->semibound = static_cast<int *>(MEM_callocN(sizeof(int) * mdb->size3, "MDefSemiBound"));
-  mdb->bvhtree = BKE_bvhtree_from_mesh_get(
-      &mdb->bvhdata, mdb->cagemesh, BVHTREE_FROM_CORNER_TRIS, 4);
+  mdb->bvhdata = mdb->cagemesh->bvh_corner_tris();
+  mdb->bvhtree = mdb->bvhdata.tree;
   mdb->inside = static_cast<int *>(MEM_callocN(sizeof(int) * mdb->verts_num, "MDefInside"));
 
   if (mmd->flag & MOD_MDEF_DYNAMIC_BIND) {
@@ -1634,9 +1634,7 @@ static void harmonic_coordinates_bind(MeshDeformModifierData *mmd, MeshDeformBin
    * width of the cells */
   maxwidth = -1.0f;
   for (a = 0; a < 3; a++) {
-    if (mdb->max[a] - mdb->min[a] > maxwidth) {
-      maxwidth = mdb->max[a] - mdb->min[a];
-    }
+    maxwidth = std::max(mdb->max[a] - mdb->min[a], maxwidth);
   }
 
   for (a = 0; a < 3; a++) {
@@ -1751,7 +1749,6 @@ static void harmonic_coordinates_bind(MeshDeformModifierData *mmd, MeshDeformBin
   MEM_freeN(mdb->boundisect);
   MEM_freeN(mdb->semibound);
   BLI_memarena_free(mdb->memarena);
-  free_bvhtree_from_mesh(&mdb->bvhdata);
 }
 
 void ED_mesh_deform_bind_callback(Object *object,

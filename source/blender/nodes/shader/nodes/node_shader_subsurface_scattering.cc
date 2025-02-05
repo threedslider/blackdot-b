@@ -30,7 +30,7 @@ static void node_declare(NodeDeclarationBuilder &b)
       .max(1.0f)
       .subtype(PROP_FACTOR);
   b.add_input<decl::Vector>("Normal").hide_value();
-  b.add_input<decl::Float>("Weight").unavailable();
+  b.add_input<decl::Float>("Weight").available(false);
   b.add_output<decl::Shader>("BSSRDF");
 }
 
@@ -55,16 +55,9 @@ static int node_shader_gpu_subsurface_scattering(GPUMaterial *mat,
     GPU_link(mat, "world_normals_get", &in[6].link);
   }
 
-  bNodeSocket *socket = (bNodeSocket *)BLI_findlink(&node->runtime->original->inputs, 2);
-  bNodeSocketValueRGBA *socket_data = (bNodeSocketValueRGBA *)socket->default_value;
-  /* For some reason it seems that the socket value is in ARGB format. */
-  bool use_subsurf = GPU_material_sss_profile_create(mat, &socket_data->value[1]);
-
-  float use_sss = (use_subsurf) ? 1.0f : 0.0f;
-
   GPU_material_flag_set(mat, GPU_MATFLAG_DIFFUSE | GPU_MATFLAG_SUBSURFACE);
 
-  return GPU_stack_link(mat, node, "node_subsurface_scattering", in, out, GPU_constant(&use_sss));
+  return GPU_stack_link(mat, node, "node_subsurface_scattering", in, out);
 }
 
 static void node_shader_update_subsurface_scattering(bNodeTree *ntree, bNode *node)
@@ -73,10 +66,10 @@ static void node_shader_update_subsurface_scattering(bNodeTree *ntree, bNode *no
 
   LISTBASE_FOREACH (bNodeSocket *, sock, &node->inputs) {
     if (STR_ELEM(sock->name, "IOR", "Anisotropy")) {
-      bke::nodeSetSocketAvailability(ntree, sock, sss_method != SHD_SUBSURFACE_BURLEY);
+      bke::node_set_socket_availability(ntree, sock, sss_method != SHD_SUBSURFACE_BURLEY);
     }
     if (STR_ELEM(sock->name, "Roughness")) {
-      bke::nodeSetSocketAvailability(ntree, sock, sss_method == SHD_SUBSURFACE_RANDOM_WALK);
+      bke::node_set_socket_availability(ntree, sock, sss_method == SHD_SUBSURFACE_RANDOM_WALK);
     }
   }
 }
@@ -115,8 +108,13 @@ void register_node_type_sh_subsurface_scattering()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(
-      &ntype, SH_NODE_SUBSURFACE_SCATTERING, "Subsurface Scattering", NODE_CLASS_SHADER);
+  sh_node_type_base(&ntype, "ShaderNodeSubsurfaceScattering", SH_NODE_SUBSURFACE_SCATTERING);
+  ntype.ui_name = "Subsurface Scattering";
+  ntype.ui_description =
+      "Subsurface multiple scattering shader to simulate light entering the surface and bouncing "
+      "internally.\nTypically used for materials such as skin, wax, marble or milk";
+  ntype.enum_name_legacy = "SUBSURFACE_SCATTERING";
+  ntype.nclass = NODE_CLASS_SHADER;
   ntype.declare = file_ns::node_declare;
   ntype.add_ui_poll = object_shader_nodes_poll;
   ntype.draw_buttons = file_ns::node_shader_buts_subsurface;
@@ -126,5 +124,5 @@ void register_node_type_sh_subsurface_scattering()
   ntype.updatefunc = file_ns::node_shader_update_subsurface_scattering;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

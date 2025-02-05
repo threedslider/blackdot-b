@@ -5,8 +5,10 @@
 #ifndef __MEMORYALLOCATOR_H__
 #define __MEMORYALLOCATOR_H__
 
-#include <stdio.h>
-#include <stdlib.h>
+#include <cstdio>
+#include <cstdlib>
+
+#include "MEM_guardedalloc.h"
 
 #define HEAP_BASE 16
 #define UCHAR unsigned char
@@ -22,7 +24,7 @@
  */
 class VirtualMemoryAllocator {
  public:
-  virtual ~VirtualMemoryAllocator() {}
+  virtual ~VirtualMemoryAllocator() = default;
 
   virtual void *allocate() = 0;
   virtual void deallocate(void *obj) = 0;
@@ -33,9 +35,7 @@ class VirtualMemoryAllocator {
   virtual int getAll() = 0;
   virtual int getBytes() = 0;
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("DUALCON:VirtualMemoryAllocator")
-#endif
 };
 
 /**
@@ -122,7 +122,7 @@ template<int N> class MemoryAllocator : public VirtualMemoryAllocator {
   /**
    * Destructor
    */
-  void destroy()
+  void destroy() override
   {
     int i;
     for (i = 0; i < datablocknum; i++) {
@@ -138,7 +138,7 @@ template<int N> class MemoryAllocator : public VirtualMemoryAllocator {
   /**
    * Allocation method
    */
-  void *allocate()
+  void *allocate() override
   {
     if (available == 0) {
       allocateDataBlock();
@@ -152,7 +152,7 @@ template<int N> class MemoryAllocator : public VirtualMemoryAllocator {
   /**
    * De-allocation method
    */
-  void deallocate(void *obj)
+  void deallocate(void *obj) override
   {
     if (available == stacksize) {
       allocateStackBlock();
@@ -167,7 +167,7 @@ template<int N> class MemoryAllocator : public VirtualMemoryAllocator {
   /**
    * Print information
    */
-  void printInfo()
+  void printInfo() override
   {
     printf("Bytes: %d Used: %d Allocated: %d Maxfree: %d\n",
            getBytes(),
@@ -179,24 +179,22 @@ template<int N> class MemoryAllocator : public VirtualMemoryAllocator {
   /**
    * Query methods
    */
-  int getAllocated()
+  int getAllocated() override
   {
     return HEAP_UNIT * datablocknum - available;
   };
 
-  int getAll()
+  int getAll() override
   {
     return HEAP_UNIT * datablocknum;
   };
 
-  int getBytes()
+  int getBytes() override
   {
     return N;
   };
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("DUALCON:MemoryAllocator")
-#endif
 };
 
 #endif /* __MEMORYALLOCATOR_H__ */

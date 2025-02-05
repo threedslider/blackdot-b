@@ -7,6 +7,7 @@
 #ifdef WITH_METAL
 
 #  include "device/kernel.h"
+
 #  include <Metal/Metal.h>
 
 CCL_NAMESPACE_BEGIN
@@ -115,12 +116,15 @@ class MetalDispatchPipeline {
 namespace MetalDeviceKernels {
 
 int num_incomplete_specialization_requests();
-int get_loaded_kernel_count(MetalDevice const *device, MetalPipelineType pso_type);
-bool should_load_kernels(MetalDevice const *device, MetalPipelineType pso_type);
+int get_loaded_kernel_count(const MetalDevice *device, MetalPipelineType pso_type);
+bool should_load_kernels(const MetalDevice *device, MetalPipelineType pso_type);
 bool load(MetalDevice *device, MetalPipelineType pso_type);
 const MetalKernelPipeline *get_best_pipeline(const MetalDevice *device, DeviceKernel kernel);
 void wait_for_all();
 bool is_benchmark_warmup();
+
+/* Deinitialize all static variables, so that no code would run on application exit. */
+void static_deinitialize();
 
 } /* namespace MetalDeviceKernels */
 

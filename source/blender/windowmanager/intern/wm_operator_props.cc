@@ -282,7 +282,7 @@ void WM_operator_properties_id_lookup(wmOperatorType *ot, const bool add_name_pr
                           MAX_ID_NAME - 2,
                           "Name",
                           "Name of the data-block to use by the operator");
-    RNA_def_property_flag(prop, (PropertyFlag)(PROP_SKIP_SAVE | PROP_HIDDEN));
+    RNA_def_property_flag(prop, PROP_SKIP_SAVE | PROP_HIDDEN);
   }
 
   prop = RNA_def_int(ot->srna,
@@ -294,7 +294,7 @@ void WM_operator_properties_id_lookup(wmOperatorType *ot, const bool add_name_pr
                      "Session UID of the data-block to use by the operator",
                      INT32_MIN,
                      INT32_MAX);
-  RNA_def_property_flag(prop, (PropertyFlag)(PROP_SKIP_SAVE | PROP_HIDDEN));
+  RNA_def_property_flag(prop, PROP_SKIP_SAVE | PROP_HIDDEN);
 }
 
 static void wm_operator_properties_select_action_ex(wmOperatorType *ot,
@@ -397,19 +397,26 @@ void WM_operator_properties_border(wmOperatorType *ot)
   RNA_def_property_flag(prop, PROP_HIDDEN | PROP_SKIP_SAVE);
 }
 
-void WM_operator_properties_border_to_rcti(wmOperator *op, rcti *rect)
+void WM_operator_properties_border_to_rcti(wmOperator *op, rcti *r_rect)
 {
-  rect->xmin = RNA_int_get(op->ptr, "xmin");
-  rect->ymin = RNA_int_get(op->ptr, "ymin");
-  rect->xmax = RNA_int_get(op->ptr, "xmax");
-  rect->ymax = RNA_int_get(op->ptr, "ymax");
+  r_rect->xmin = RNA_int_get(op->ptr, "xmin");
+  r_rect->ymin = RNA_int_get(op->ptr, "ymin");
+  r_rect->xmax = RNA_int_get(op->ptr, "xmax");
+  r_rect->ymax = RNA_int_get(op->ptr, "ymax");
 }
 
-void WM_operator_properties_border_to_rctf(wmOperator *op, rctf *rect)
+void WM_operator_properties_border_to_rctf(wmOperator *op, rctf *r_rect)
 {
   rcti rect_i;
   WM_operator_properties_border_to_rcti(op, &rect_i);
-  BLI_rctf_rcti_copy(rect, &rect_i);
+  BLI_rctf_rcti_copy(r_rect, &rect_i);
+}
+
+blender::Bounds<blender::int2> WM_operator_properties_border_to_bounds(wmOperator *op)
+{
+  using namespace blender;
+  return Bounds<int2>({RNA_int_get(op->ptr, "xmin"), RNA_int_get(op->ptr, "ymin")},
+                      {RNA_int_get(op->ptr, "xmax"), RNA_int_get(op->ptr, "ymax")});
 }
 
 void WM_operator_properties_gesture_box_ex(wmOperatorType *ot, bool deselect, bool extend)

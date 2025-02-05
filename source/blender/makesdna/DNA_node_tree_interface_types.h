@@ -31,7 +31,6 @@ typedef struct bNodeTreeInterfaceRuntimeHandle bNodeTreeInterfaceRuntimeHandle;
 typedef struct bNodeSocketTypeHandle bNodeSocketTypeHandle;
 #endif
 
-struct bContext;
 struct bNodeSocket;
 struct bNodeTreeInterfaceItem;
 struct bNodeTreeInterfacePanel;
@@ -39,11 +38,8 @@ struct bNodeTreeInterfaceSocket;
 struct ID;
 struct IDProperty;
 struct LibraryForeachIDData;
-struct PointerRNA;
-struct uiLayout;
 struct BlendWriter;
 struct BlendDataReader;
-struct BlendLibReader;
 
 /** Type of interface item. */
 typedef enum NodeTreeInterfaceItemType {
@@ -94,7 +90,7 @@ typedef struct bNodeTreeInterfaceSocket {
   /* Socket default value and associated data, e.g. bNodeSocketValueFloat. */
   void *socket_data;
 
-  IDProperty *properties;
+  struct IDProperty *properties;
 
 #ifdef __cplusplus
   bNodeSocketTypeHandle *socket_typeinfo() const;
@@ -104,7 +100,7 @@ typedef struct bNodeTreeInterfaceSocket {
    * Set the \a socket_type and replace the \a socket_data.
    * \param new_socket_type: Socket type idname, e.g. "NodeSocketFloat"
    */
-  bool set_socket_type(const char *new_socket_type);
+  bool set_socket_type(blender::StringRef new_socket_type);
 
   /**
    * Use an existing socket to define an interface socket.
@@ -118,8 +114,8 @@ typedef struct bNodeTreeInterfaceSocket {
 typedef enum NodeTreeInterfacePanelFlag {
   /* Panel starts closed on new node instances. */
   NODE_INTERFACE_PANEL_DEFAULT_CLOSED = 1 << 0,
-  /* Allow child panels inside this panel. */
-  NODE_INTERFACE_PANEL_ALLOW_CHILD_PANELS = 1 << 1,
+  /* In the past, not all panels allowed child panels. Now all allow them. */
+  NODE_INTERFACE_PANEL_ALLOW_CHILD_PANELS_LEGACY = 1 << 1,
   /* Allow adding sockets after panels. */
   NODE_INTERFACE_PANEL_ALLOW_SOCKETS_AFTER_PANELS = 1 << 2,
 } NodeTreeInterfacePanelFlag;

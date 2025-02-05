@@ -20,7 +20,7 @@
 #include "BLI_memarena.h"
 #include "BLI_task.h"
 
-#include "BKE_attribute.hh"
+#include "BKE_attribute.h"
 #include "BKE_customdata.hh"
 #include "BKE_multires.hh"
 
@@ -147,10 +147,6 @@ void BM_face_interp_from_face_ex(BMesh *bm,
 
   float *w = static_cast<float *>(BLI_array_alloca(w, f_src->len));
   float co[2];
-
-  if (f_src != f_dst) {
-    BM_elem_attrs_copy(bm, f_src, f_dst);
-  }
 
   /* interpolate */
   l_iter = l_first = BM_FACE_FIRST_LOOP(f_dst);
@@ -286,7 +282,7 @@ static bool quad_co(const float v1[3],
 
 static void mdisp_axis_from_quad(const float v1[3],
                                  const float v2[3],
-                                 float[3] /*v3[3]*/,
+                                 float /*v3*/[3],
                                  const float v4[3],
                                  float r_axis_x[3],
                                  float r_axis_y[3])

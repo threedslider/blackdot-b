@@ -25,7 +25,7 @@ std::string make_safe_name(const std::string &name, [[maybe_unused]] bool allow_
   }
 
   std::string buf;
-  buf.resize(name.size());  // We won't be exceeding the size of the incoming string
+  buf.resize(name.size()); /* We won't be exceeding the size of the incoming string. */
 
   bool first = true;
   size_t offset = 0;
@@ -43,6 +43,8 @@ std::string make_safe_name(const std::string &name, [[maybe_unused]] bool allow_
     first = false;
   }
 
+  /* Ensure the returned string is sized exactly to the number of required bytes. */
+  buf.resize(offset);
   return buf;
 #else
   return pxr::TfMakeValidIdentifier(name);

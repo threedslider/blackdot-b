@@ -3,13 +3,10 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "testing/testing.h"
 
-#include "BLI_utildefines.h"
-
 #include "CLG_log.h"
 
 #include "GHOST_Path-api.hh"
 
-#include "DNA_constraint_types.h"
 #include "DNA_mesh_types.h"
 #include "DNA_node_types.h"
 #include "DNA_object_types.h"
@@ -19,7 +16,6 @@
 
 #include "BKE_appdir.hh"
 #include "BKE_collection.hh"
-#include "BKE_constraint.h"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
 #include "BKE_idprop.hh"
@@ -27,7 +23,7 @@
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
 #include "BKE_main.hh"
-#include "BKE_mesh.hh"
+#include "BKE_mesh.h"
 #include "BKE_node.hh"
 #include "BKE_object.hh"
 #include "BKE_scene.hh"
@@ -35,8 +31,6 @@
 #include "IMB_imbuf.hh"
 
 #include "ED_node.hh"
-
-#include "MEM_guardedalloc.h"
 
 namespace blender::bke::tests {
 
@@ -128,7 +122,7 @@ template<typename TestData> class Context {
     CLG_init();
     BKE_idtype_init();
     RNA_init();
-    bke::BKE_node_system_init();
+    bke::node_system_init();
     BKE_appdir_init();
     IMB_init();
 
@@ -139,7 +133,7 @@ template<typename TestData> class Context {
   {
     test_data.teardown();
 
-    bke::BKE_node_system_exit();
+    bke::node_system_exit();
     RNA_exit();
     IMB_exit();
     GHOST_DisposeSystemPaths();

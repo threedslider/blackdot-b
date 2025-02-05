@@ -6,13 +6,15 @@
  * \ingroup collada
  */
 
-#include "BKE_collection.hh"
-#include "BKE_lib_id.hh"
-#include "BKE_object.hh"
-#include "BLI_listbase.h"
-#include "BLI_utildefines.h"
+#include "COLLADASWInstanceCamera.h"
+#include "COLLADASWInstanceGeometry.h"
+#include "COLLADASWInstanceLight.h"
 
-#include "BCSampleData.h"
+#include "BLI_listbase.h"
+
+#include "BKE_collection.hh"
+#include "BKE_constraint.h"
+
 #include "SceneExporter.h"
 #include "collada_utils.h"
 
@@ -36,7 +38,7 @@ void SceneExporter::exportHierarchy()
   /* Ensure all objects in the export_set are marked */
   for (node = this->export_settings.get_export_set(); node; node = node->next) {
     Object *ob = (Object *)node->link;
-    ob->id.tag |= LIB_TAG_DOIT;
+    ob->id.tag |= ID_TAG_DOIT;
   }
 
   /* Now find all exportable base objects (highest in export hierarchy) */
@@ -48,7 +50,6 @@ void SceneExporter::exportHierarchy()
         case OB_CAMERA:
         case OB_LAMP:
         case OB_EMPTY:
-        case OB_GPENCIL_LEGACY:
         case OB_ARMATURE:
           base_objects.add(ob);
           break;

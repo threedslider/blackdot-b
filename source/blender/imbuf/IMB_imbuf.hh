@@ -46,13 +46,9 @@
 
 #include "IMB_imbuf_types.hh"
 
-#define IM_MAX_SPACE 64
-
 struct ImBuf;
 struct rctf;
 struct rcti;
-
-struct ImBufAnim;
 
 struct ColorManagedDisplay;
 
@@ -73,9 +69,18 @@ ImBuf *IMB_testiffname(const char *filepath, int flags);
 
 ImBuf *IMB_loadiffname(const char *filepath, int flags, char colorspace[IM_MAX_SPACE]);
 
+enum class IMBThumbLoadFlags {
+  Zero = 0,
+  /** Normally files larger than 100MB are not loaded for thumbnails, except when this flag is set.
+   */
+  LoadLargeFiles = (1 << 0),
+};
+ENUM_OPERATORS(IMBThumbLoadFlags, IMBThumbLoadFlags::LoadLargeFiles);
+
 ImBuf *IMB_thumb_load_image(const char *filepath,
                             const size_t max_thumb_size,
-                            char colorspace[IM_MAX_SPACE]);
+                            char colorspace[IM_MAX_SPACE],
+                            IMBThumbLoadFlags load_flags = IMBThumbLoadFlags::Zero);
 
 void IMB_freeImBuf(ImBuf *ibuf);
 
@@ -284,91 +289,10 @@ enum eIMBInterpolationFilterMode {
   IMB_FILTER_BOX,
 };
 
-/**
- * Defaults to BL_proxy within the directory of the animation.
- */
-void IMB_anim_set_index_dir(ImBufAnim *anim, const char *dir);
-void IMB_anim_get_filename(ImBufAnim *anim, char *filename, int filename_maxncpy);
-
-int IMB_anim_index_get_frame_index(ImBufAnim *anim, IMB_Timecode_Type tc, int position);
-
-int IMB_anim_proxy_get_existing(ImBufAnim *anim);
-
-struct IndexBuildContext;
-
-/**
- * Prepare context for proxies/time-codes builder
- */
-IndexBuildContext *IMB_anim_index_rebuild_context(ImBufAnim *anim,
-                                                  IMB_Timecode_Type tcs_in_use,
-                                                  int proxy_sizes_in_use,
-                                                  int quality,
-                                                  const bool overwrite,
-                                                  GSet *file_list,
-                                                  bool build_only_on_bad_performance);
-
-/**
- * Will rebuild all used indices and proxies at once.
- */
-void IMB_anim_index_rebuild(IndexBuildContext *context,
-                            bool *stop,
-                            bool *do_update,
-                            float *progress);
-
-/**
- * Finish rebuilding proxies/time-codes and free temporary contexts used.
- */
-void IMB_anim_index_rebuild_finish(IndexBuildContext *context, bool stop);
-
-/**
- * Return the length (in frames) of the given \a anim.
- */
-int IMB_anim_get_duration(ImBufAnim *anim, IMB_Timecode_Type tc);
-
-/**
- * Return the encoded start offset (in seconds) of the given \a anim.
- */
-double IMD_anim_get_offset(ImBufAnim *anim);
-
-/**
- * Return the fps contained in movie files (function rval is false,
- * and frs_sec and frs_sec_base untouched if none available!)
- */
-bool IMB_anim_get_fps(const ImBufAnim *anim,
-                      bool no_av_base,
-                      short *r_frs_sec,
-                      float *r_frs_sec_base);
-
-ImBufAnim *IMB_open_anim(const char *filepath,
-                         int ib_flags,
-                         int streamindex,
-                         char colorspace[IM_MAX_SPACE]);
-void IMB_suffix_anim(ImBufAnim *anim, const char *suffix);
-void IMB_close_anim(ImBufAnim *anim);
-void IMB_close_anim_proxies(ImBufAnim *anim);
-bool IMB_anim_can_produce_frames(const ImBufAnim *anim);
-
-int IMB_anim_get_image_width(ImBufAnim *anim);
-int IMB_anim_get_image_height(ImBufAnim *anim);
-bool IMB_get_gop_decode_time(ImBufAnim *anim);
-
-ImBuf *IMB_anim_absolute(ImBufAnim *anim,
-                         int position,
-                         IMB_Timecode_Type tc /* = 1 = IMB_TC_RECORD_RUN */,
-                         IMB_Proxy_Size preview_size /* = 0 = IMB_PROXY_NONE */);
-
-/**
- * fetches a define preview-frame, usually half way into the movie.
- */
-ImBuf *IMB_anim_previewframe(ImBufAnim *anim);
-
-void IMB_free_anim(ImBufAnim *anim);
-
 #define FILTER_MASK_NULL 0
 #define FILTER_MASK_MARGIN 1
 #define FILTER_MASK_USED 2
 
-void IMB_filter(ImBuf *ibuf);
 void IMB_mask_filter_extend(char *mask, int width, int height);
 void IMB_mask_clear(ImBuf *ibuf, const char *mask, int val);
 /**
@@ -392,17 +316,40 @@ void IMB_filtery(ImBuf *ibuf);
 
 ImBuf *IMB_onehalf(ImBuf *ibuf1);
 
-/**
- * Return true if \a ibuf is modified.
- */
-bool IMB_scaleImBuf(ImBuf *ibuf, unsigned int newx, unsigned int newy);
+/** Interpolation filter used by `IMB_scale`. */
+enum class IMBScaleFilter {
+  /** No filtering (point sampling). This is fastest but lowest quality. */
+  Nearest,
+  /**
+   * Bilinear filter: each pixel in result image interpolates between 2x2 pixels of source image.
+   */
+  Bilinear,
+  /**
+   * Box filter. Behaves exactly like Bilinear when scaling up,
+   * better results when scaling down by more than 2x.
+   */
+  Box,
+};
 
 /**
+ * Scale/resize image to new dimensions.
  * Return true if \a ibuf is modified.
  */
-bool IMB_scalefastImBuf(ImBuf *ibuf, unsigned int newx, unsigned int newy);
+bool IMB_scale(ImBuf *ibuf,
+               unsigned int newx,
+               unsigned int newy,
+               IMBScaleFilter filter,
+               bool threaded = true);
 
-void IMB_scaleImBuf_threaded(ImBuf *ibuf, unsigned int newx, unsigned int newy);
+/**
+ * Scale/resize image to new dimensions, into a newly created result image.
+ * Metadata of input image (if any) is copied into the result image.
+ */
+ImBuf *IMB_scale_into_new(const ImBuf *ibuf,
+                          unsigned int newx,
+                          unsigned int newy,
+                          IMBScaleFilter filter,
+                          bool threaded = true);
 
 bool IMB_saveiff(ImBuf *ibuf, const char *filepath, int flags);
 
@@ -410,12 +357,6 @@ bool IMB_ispic(const char *filepath);
 bool IMB_ispic_type_matches(const char *filepath, int filetype);
 int IMB_ispic_type_from_memory(const unsigned char *buf, size_t buf_size);
 int IMB_ispic_type(const char *filepath);
-
-/**
- * Test if the file is a video file (known format, has a video stream and
- * supported video codec).
- */
-bool IMB_isanim(const char *filepath);
 
 /**
  * Test if color-space conversions of pixels in buffer need to take into account alpha.
@@ -640,7 +581,7 @@ void IMB_processor_apply_threaded(
     int handle_size,
     void *init_customdata,
     void(init_handle)(void *handle, int start_line, int tot_line, void *customdata),
-    void *(do_thread)(void *));
+    void(do_thread)(void *));
 
 using ScanlineThreadFunc = void (*)(void *custom_data, int scanline);
 void IMB_processor_apply_threaded_scanlines(int total_scanlines,
@@ -686,11 +627,6 @@ void IMB_transform(const ImBuf *src,
                    eIMBInterpolationFilterMode filter,
                    const float transform_matrix[4][4],
                    const rctf *src_crop);
-
-/* FFMPEG */
-
-void IMB_ffmpeg_init();
-const char *IMB_ffmpeg_last_error();
 
 GPUTexture *IMB_create_gpu_texture(const char *name,
                                    ImBuf *ibuf,
@@ -740,18 +676,6 @@ void IMB_stereo3d_write_dimensions(
     char mode, bool is_squeezed, size_t width, size_t height, size_t *r_width, size_t *r_height);
 void IMB_stereo3d_read_dimensions(
     char mode, bool is_squeezed, size_t width, size_t height, size_t *r_width, size_t *r_height);
-int *IMB_stereo3d_from_rect(const ImageFormatData *im_format,
-                            size_t x,
-                            size_t y,
-                            size_t channels,
-                            int *rect_left,
-                            int *rect_right);
-float *IMB_stereo3d_from_rectf(const ImageFormatData *im_format,
-                               size_t x,
-                               size_t y,
-                               size_t channels,
-                               float *rectf_left,
-                               float *rectf_right);
 /**
  * Left/right are always float.
  */
@@ -760,6 +684,6 @@ ImBuf *IMB_stereo3d_ImBuf(const ImageFormatData *im_format, ImBuf *ibuf_left, Im
  * Reading a stereo encoded ibuf (*left) and generating two ibufs from it (*left and *right).
  */
 void IMB_ImBufFromStereo3d(const Stereo3dFormat *s3d,
-                           ImBuf *ibuf_stereo,
+                           ImBuf *ibuf_stereo3d,
                            ImBuf **r_ibuf_left,
                            ImBuf **r_ibuf_right);

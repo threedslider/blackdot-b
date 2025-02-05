@@ -38,13 +38,20 @@ template<> inline float edge_factor_calc<float>(const float3 &a, const float3 &b
   /* Re-scale to the slider range. */
   float fac = (200 * (cosine - 1.0f)) + 1.0f;
   CLAMP(fac, 0.0f, 1.0f);
-  return fac;
+  /* 1.0 is a reserved value to force hide the wire. */
+  constexpr float factor = 254.0f / 255.0f;
+  return fac * factor;
 }
 
 template<> inline uint8_t edge_factor_calc<uint8_t>(const float3 &a, const float3 &b)
 {
+  const float cosine = math::dot(a, b);
+
+  /* Re-scale to the slider range. */
+  float fac = (200 * (cosine - 1.0f)) + 1.0f;
+  CLAMP(fac, 0.0f, 1.0f);
   /* 255 is a reserved value to force hide the wire. */
-  return uint8_t(edge_factor_calc<float>(a, b) * 254);
+  return fac * 254;
 }
 
 template<typename T>
@@ -62,7 +69,12 @@ static void extract_edge_factor_mesh(const MeshRenderData &mr, MutableSpan<T> vb
     for (const int corner : faces[face]) {
       const int edge = corner_edges[corner];
       if (!optimal_display_edges.is_empty() && !optimal_display_edges[edge]) {
-        vbo_data[corner] = FORCE_HIDE;
+        if constexpr (std::is_same_v<T, float>) {
+          vbo_data[corner] = 1.0f;
+        }
+        else {
+          vbo_data[corner] = FORCE_HIDE;
+        }
         continue;
       }
 
@@ -106,7 +118,7 @@ static void extract_edge_factor_bm(const MeshRenderData &mr, MutableSpan<T> vbo_
   BMesh &bm = *mr.bm;
   threading::parallel_for(IndexRange(bm.totface), 2048, [&](const IndexRange range) {
     for (const int face_index : range) {
-      const BMFace &face = *BM_face_at_index(&const_cast<BMesh &>(bm), face_index);
+      const BMFace &face = *BM_face_at_index(&bm, face_index);
       const BMLoop *loop = BM_FACE_FIRST_LOOP(&face);
       for ([[maybe_unused]] const int i : IndexRange(face.len)) {
         const int index = BM_elem_index_get(loop);
@@ -134,7 +146,7 @@ void extract_edge_factor(const MeshRenderData &mr, gpu::VertBuf &vbo)
     GPU_vertbuf_init_with_format(vbo, format);
     GPU_vertbuf_data_alloc(vbo, mr.corners_num + mr.loose_indices_num);
     MutableSpan vbo_data = vbo.data<float>();
-    if (mr.extract_type == MR_EXTRACT_MESH) {
+    if (mr.extract_type == MeshExtractType::Mesh) {
       extract_edge_factor_mesh(mr, vbo_data);
     }
     else {
@@ -150,7 +162,7 @@ void extract_edge_factor(const MeshRenderData &mr, gpu::VertBuf &vbo)
     GPU_vertbuf_init_with_format(vbo, format);
     GPU_vertbuf_data_alloc(vbo, mr.corners_num + mr.loose_indices_num);
     MutableSpan vbo_data = vbo.data<uint8_t>();
-    if (mr.extract_type == MR_EXTRACT_MESH) {
+    if (mr.extract_type == MeshExtractType::Mesh) {
       extract_edge_factor_mesh(mr, vbo_data);
     }
     else {
@@ -231,12 +243,14 @@ void extract_edge_factor_subdiv(const DRWSubdivCache &subdiv_cache,
                                    subdiv_cache.num_subdiv_loops +
                                        subdiv_loose_edges_num(mr, subdiv_cache) * 2);
 
-  gpu::VertBuf *poly_other_map = build_poly_other_map_vbo(subdiv_cache);
+  if (mr.faces_num > 0) {
+    gpu::VertBuf *poly_other_map = build_poly_other_map_vbo(subdiv_cache);
 
-  draw_subdiv_build_edge_fac_buffer(
-      subdiv_cache, &pos_nor, subdiv_cache.edges_draw_flag, poly_other_map, &vbo);
+    draw_subdiv_build_edge_fac_buffer(
+        subdiv_cache, &pos_nor, subdiv_cache.edges_draw_flag, poly_other_map, &vbo);
 
-  GPU_vertbuf_discard(poly_other_map);
+    GPU_vertbuf_discard(poly_other_map);
+  }
 
   const int loose_edges_num = subdiv_loose_edges_num(mr, subdiv_cache);
   if (loose_edges_num == 0) {

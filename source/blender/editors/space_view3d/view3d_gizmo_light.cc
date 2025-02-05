@@ -88,7 +88,7 @@ static void gizmo_spot_blend_prop_matrix_set(const wmGizmo * /*gz*/,
 
   float spot_blend = safe_divide(clamp_f(c - a, 0.0f, 1.0f - a), 1.0f - a);
 
-  PointerRNA light_ptr = RNA_pointer_create(&la->id, &RNA_Light, la);
+  PointerRNA light_ptr = RNA_pointer_create_discrete(&la->id, &RNA_Light, la);
   PropertyRNA *spot_blend_prop = RNA_struct_find_property(&light_ptr, "spot_blend");
   RNA_property_float_set(&light_ptr, spot_blend_prop, spot_blend);
 
@@ -128,7 +128,7 @@ static void gizmo_light_radius_prop_matrix_set(const wmGizmo * /*gz*/,
 
   const float radius = 0.5f * len_v3(matrix[0]);
 
-  PointerRNA light_ptr = RNA_pointer_create(&la->id, &RNA_Light, la);
+  PointerRNA light_ptr = RNA_pointer_create_discrete(&la->id, &RNA_Light, la);
   PropertyRNA *radius_prop = RNA_struct_find_property(&light_ptr, "shadow_soft_size");
   RNA_property_float_set(&light_ptr, radius_prop, radius);
 
@@ -214,6 +214,11 @@ static void WIDGETGROUP_light_spot_setup(const bContext *C, wmGizmoGroup *gzgrou
     params.user_data = (void *)C;
     WM_gizmo_target_property_def_func(gz, "matrix", &params);
   }
+
+  /* All gizmos must perform undo. */
+  LISTBASE_FOREACH (wmGizmo *, gz, &gzgroup->gizmos) {
+    WM_gizmo_set_flag(gz, WM_GIZMO_NEEDS_UNDO, true);
+  }
 }
 
 static void WIDGETGROUP_light_spot_refresh(const bContext *C, wmGizmoGroup *gzgroup)
@@ -227,7 +232,7 @@ static void WIDGETGROUP_light_spot_refresh(const bContext *C, wmGizmoGroup *gzgr
 
   /* Spot angle gizmo. */
   {
-    PointerRNA lamp_ptr = RNA_pointer_create(&la->id, &RNA_Light, la);
+    PointerRNA lamp_ptr = RNA_pointer_create_discrete(&la->id, &RNA_Light, la);
 
     wmGizmo *gz = ls_gzgroup->spot_angle;
     float dir[3];
@@ -337,6 +342,11 @@ static void WIDGETGROUP_light_point_setup(const bContext *C, wmGizmoGroup *gzgro
   params.range_get_fn = nullptr;
   params.user_data = (void *)C;
   WM_gizmo_target_property_def_func(gz, "matrix", &params);
+
+  /* All gizmos must perform undo. */
+  LISTBASE_FOREACH (wmGizmo *, gz_iter, &gzgroup->gizmos) {
+    WM_gizmo_set_flag(gz_iter, WM_GIZMO_NEEDS_UNDO, true);
+  }
 }
 
 static void WIDGETGROUP_light_point_draw_prepare(const bContext *C, wmGizmoGroup *gzgroup)
@@ -447,6 +457,11 @@ static void WIDGETGROUP_light_area_setup(const bContext * /*C*/, wmGizmoGroup *g
 
   UI_GetThemeColor3fv(TH_GIZMO_PRIMARY, gz->color);
   UI_GetThemeColor3fv(TH_GIZMO_HI, gz->color_hi);
+
+  /* All gizmos must perform undo. */
+  LISTBASE_FOREACH (wmGizmo *, gz_iter, &gzgroup->gizmos) {
+    WM_gizmo_set_flag(gz_iter, WM_GIZMO_NEEDS_UNDO, true);
+  }
 }
 
 static void WIDGETGROUP_light_area_refresh(const bContext *C, wmGizmoGroup *gzgroup)
@@ -544,6 +559,8 @@ static void WIDGETGROUP_light_target_setup(const bContext * /*C*/, wmGizmoGroup 
       gz->ptr, "draw_options", ED_GIZMO_MOVE_DRAW_FLAG_FILL | ED_GIZMO_MOVE_DRAW_FLAG_ALIGN_VIEW);
 
   WM_gizmo_operator_set(gz, 0, ot, nullptr);
+
+  /* The operator handles undo, no need to set #WM_GIZMO_NEEDS_UNDO. */
 }
 
 static void WIDGETGROUP_light_target_draw_prepare(const bContext *C, wmGizmoGroup *gzgroup)

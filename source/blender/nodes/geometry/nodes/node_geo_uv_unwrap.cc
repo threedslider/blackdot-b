@@ -2,9 +2,9 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "GEO_uv_parametrizer.hh"
+#include "DNA_mesh_types.h"
 
-#include "BKE_mesh.hh"
+#include "GEO_uv_parametrizer.hh"
 
 #include "UI_interface.hh"
 #include "UI_resources.hh"
@@ -104,6 +104,7 @@ static VArray<float3> construct_uv_gvarray(const Mesh &mesh,
                                        mp_vkeys.data(),
                                        mp_co.data(),
                                        mp_uv.data(),
+                                       nullptr,
                                        mp_pin.data(),
                                        mp_select.data());
   });
@@ -211,14 +212,18 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_UV_UNWRAP, "UV Unwrap", NODE_CLASS_CONVERTER);
+  geo_node_type_base(&ntype, "GeometryNodeUVUnwrap", GEO_NODE_UV_UNWRAP);
+  ntype.ui_name = "UV Unwrap";
+  ntype.ui_description = "Generate a UV map based on seam edges";
+  ntype.enum_name_legacy = "UV_UNWRAP";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.initfunc = node_init;
   blender::bke::node_type_storage(
       &ntype, "NodeGeometryUVUnwrap", node_free_standard_storage, node_copy_standard_storage);
   ntype.declare = node_declare;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

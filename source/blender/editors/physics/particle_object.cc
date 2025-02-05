@@ -169,7 +169,8 @@ static int new_particle_settings_exec(bContext *C, wmOperator * /*op*/)
 
   /* add or copy particle setting */
   if (psys->part) {
-    part = (ParticleSettings *)BKE_id_copy(bmain, &psys->part->id);
+    part = reinterpret_cast<ParticleSettings *>(BKE_id_copy_ex(
+        bmain, &psys->part->id, nullptr, LIB_ID_COPY_DEFAULT | LIB_ID_COPY_ACTIONS));
   }
   else {
     part = BKE_particlesettings_add(bmain, "ParticleSettings");
@@ -700,7 +701,7 @@ static bool remap_hair_emitter(Depsgraph *depsgraph,
   ParticleData *pa, *tpa;
   PTCacheEditPoint *edit_point;
   PTCacheEditKey *ekey;
-  BVHTreeFromMesh bvhtree = {nullptr};
+  blender::bke::BVHTreeFromMesh bvhtree = {nullptr};
   const MFace *mface = nullptr, *mf;
   const blender::int2 *edges = nullptr, *edge;
   Mesh *mesh, *target_mesh;
@@ -756,12 +757,12 @@ static bool remap_hair_emitter(Depsgraph *depsgraph,
 
   if (mesh->totface_legacy != 0) {
     mface = static_cast<const MFace *>(CustomData_get_layer(&mesh->fdata_legacy, CD_MFACE));
-    BKE_bvhtree_from_mesh_get(&bvhtree, mesh, BVHTREE_FROM_FACES, 2);
+    bvhtree = mesh->bvh_legacy_faces();
   }
   else if (mesh->edges_num != 0) {
     edges = static_cast<const blender::int2 *>(
         CustomData_get_layer_named(&mesh->edge_data, CD_PROP_INT32_2D, ".edge_verts"));
-    BKE_bvhtree_from_mesh_get(&bvhtree, mesh, BVHTREE_FROM_EDGES, 2);
+    bvhtree = mesh->bvh_edges();
   }
   else {
     BKE_id_free(nullptr, mesh);
@@ -896,7 +897,6 @@ static bool remap_hair_emitter(Depsgraph *depsgraph,
     }
   }
 
-  free_bvhtree_from_mesh(&bvhtree);
   BKE_id_free(nullptr, mesh);
 
   psys_free_path_cache(target_psys, target_edit);
@@ -1011,6 +1011,7 @@ static void copy_particle_edit(Depsgraph *depsgraph,
   psys->edit = edit;
 
   edit->pathcache = nullptr;
+  edit->mirror_cache = nullptr;
   BLI_listbase_clear(&edit->pathcachebufs);
 
   edit->emitter_field = nullptr;
@@ -1330,6 +1331,10 @@ static bool duplicate_particle_systems_poll(bContext *C)
   }
   Object *ob = blender::ed::object::context_active_object(C);
   if (BLI_listbase_is_empty(&ob->particlesystem)) {
+    return false;
+  }
+  if (ob->mode != OB_MODE_OBJECT) {
+    CTX_wm_operator_poll_msg_set(C, "Object must be in object mode");
     return false;
   }
   return true;

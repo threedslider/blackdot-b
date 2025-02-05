@@ -44,14 +44,15 @@
 #  define GHOST_OPENGL_VK_RESET_NOTIFICATION_STRATEGY 0
 #endif
 
-typedef enum {
+enum GHOST_TVulkanPlatformType {
+  GHOST_kVulkanPlatformHeadless = 0,
 #ifdef WITH_GHOST_X11
-  GHOST_kVulkanPlatformX11 = 0,
+  GHOST_kVulkanPlatformX11 = 1,
 #endif
 #ifdef WITH_GHOST_WAYLAND
-  GHOST_kVulkanPlatformWayland = 1,
+  GHOST_kVulkanPlatformWayland = 2,
 #endif
-} GHOST_TVulkanPlatformType;
+};
 
 struct GHOST_ContextVK_WindowInfo {
   int size[2];
@@ -80,12 +81,13 @@ class GHOST_ContextVK : public GHOST_Context {
 #endif
                   int contextMajorVersion,
                   int contextMinorVersion,
-                  int debug);
+                  int debug,
+                  const GHOST_GPUDevice &preferred_device);
 
   /**
    * Destructor.
    */
-  ~GHOST_ContextVK();
+  ~GHOST_ContextVK() override;
 
   /**
    * Swaps front and back buffers of a window.
@@ -126,7 +128,8 @@ class GHOST_ContextVK : public GHOST_Context {
                                   void *r_physical_device,
                                   void *r_device,
                                   uint32_t *r_graphic_queue_family,
-                                  void *r_queue) override;
+                                  void *r_queue,
+                                  void **r_queue_mutex) override;
 
   GHOST_TSuccess getVulkanSwapChainFormat(GHOST_VulkanSwapChainData *r_swap_chain_data) override;
 
@@ -173,6 +176,7 @@ class GHOST_ContextVK : public GHOST_Context {
   const int m_context_major_version;
   const int m_context_minor_version;
   const int m_debug;
+  const GHOST_GPUDevice m_preferred_device;
 
   VkCommandPool m_command_pool;
   VkCommandBuffer m_command_buffer;
@@ -189,11 +193,6 @@ class GHOST_ContextVK : public GHOST_Context {
   VkExtent2D m_render_extent_min;
   VkSurfaceFormatKHR m_surface_format;
   VkFence m_fence;
-
-  /** frame modulo swapchain_len. Used as index for sync objects. */
-  int m_currentFrame = 0;
-  /** Image index in the swapchain. Used as index for render objects. */
-  uint32_t m_currentImage = 0;
 
   std::function<void(const GHOST_VulkanSwapChainData *)> swap_buffers_pre_callback_;
   std::function<void(void)> swap_buffers_post_callback_;

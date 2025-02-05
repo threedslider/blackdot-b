@@ -28,6 +28,7 @@ struct Mesh;
 struct PointCloud;
 struct Curves;
 struct GreasePencil;
+struct GreasePencilDrawing;
 
 typedef enum AttrDomainMask {
   ATTR_DOMAIN_MASK_POINT = (1 << 0),
@@ -45,6 +46,7 @@ enum class AttributeOwnerType {
   PointCloud,
   Curves,
   GreasePencil,
+  GreasePencilDrawing,
 };
 
 class AttributeOwner {
@@ -64,6 +66,7 @@ class AttributeOwner {
   PointCloud *get_pointcloud() const;
   Curves *get_curves() const;
   GreasePencil *get_grease_pencil() const;
+  GreasePencilDrawing *get_grease_pencil_drawing() const;
 };
 
 #define ATTR_DOMAIN_AS_MASK(domain) ((AttrDomainMask)((1 << (int)(domain))))
@@ -108,6 +111,7 @@ struct CustomDataLayer *BKE_attribute_search_for_write(AttributeOwner &owner,
 
 blender::bke::AttrDomain BKE_attribute_domain(const AttributeOwner &owner,
                                               const struct CustomDataLayer *layer);
+int BKE_attribute_domain_size(const AttributeOwner &owner, int domain);
 int BKE_attribute_data_length(AttributeOwner &owner, struct CustomDataLayer *layer);
 bool BKE_attribute_required(const AttributeOwner &owner, const char *name);
 bool BKE_attribute_rename(AttributeOwner &owner,
@@ -121,6 +125,7 @@ int BKE_attributes_length(const AttributeOwner &owner,
 
 struct CustomDataLayer *BKE_attributes_active_get(AttributeOwner &owner);
 void BKE_attributes_active_set(AttributeOwner &owner, const char *name);
+void BKE_attributes_active_clear(AttributeOwner &owner);
 int *BKE_attributes_active_index_p(AttributeOwner &owner);
 
 CustomData *BKE_attributes_iterator_next_domain(AttributeOwner &owner,
@@ -139,6 +144,7 @@ int BKE_attribute_to_index(const AttributeOwner &owner,
 const char *BKE_id_attributes_active_color_name(const struct ID *id);
 const char *BKE_id_attributes_default_color_name(const struct ID *id);
 void BKE_id_attributes_active_color_set(struct ID *id, const char *name);
+void BKE_id_attributes_active_color_clear(struct ID *id);
 void BKE_id_attributes_default_color_set(struct ID *id, const char *name);
 
 const struct CustomDataLayer *BKE_id_attributes_color_find(const struct ID *id, const char *name);

@@ -199,9 +199,9 @@ void BKE_libblock_relink_multiple(Main *bmain,
 
 /**
  * Remaps ID usages of given ID to their `id->newid` pointer if not None, and proceeds recursively
- * in the dependency tree of IDs for all data-blocks tagged with `LIB_TAG_NEW`.
+ * in the dependency tree of IDs for all data-blocks tagged with `ID_TAG_NEW`.
  *
- * \note `LIB_TAG_NEW` is cleared.
+ * \note `ID_TAG_NEW` is cleared.
  *
  * Very specific usage, not sure we'll keep it on the long run,
  * currently only used in Object/Collection duplication code.
@@ -282,7 +282,6 @@ class IDRemapper {
    */
   bool allow_idtype_mismatch = false;
 
- public:
   void clear()
   {
     mappings_.clear();
@@ -341,7 +340,7 @@ class IDRemapper {
   }
 
   /** Return a readable string for the given result. Can be used for debugging purposes. */
-  static const StringRefNull result_to_string(const IDRemapperApplyResult result);
+  static StringRefNull result_to_string(const IDRemapperApplyResult result);
 
   /** Print out the rules inside the given id_remapper. Can be used for debugging purposes. */
   void print() const;

@@ -10,9 +10,14 @@
 
 #include "gpu_state_private.hh"
 
+#include "vk_common.hh"
+
 namespace blender::gpu {
 
 class VKFence : public Fence {
+ private:
+  TimelineValue timeline_value_;
+
  public:
   void signal() override;
   void wait() override;

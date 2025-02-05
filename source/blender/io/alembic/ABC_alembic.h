@@ -22,7 +22,7 @@ struct Object;
 struct Scene;
 struct bContext;
 
-int ABC_get_version(void);
+int ABC_get_version();
 
 struct AlembicExportParams {
   double frame_start;
@@ -120,12 +120,12 @@ void ABC_get_transform(struct CacheReader *reader,
                        double time,
                        float scale);
 
-typedef struct ABCReadParams {
+struct ABCReadParams {
   double time;
   int read_flags;
   const char *velocity_name;
   float velocity_scale;
-} ABCReadParams;
+};
 
 #ifdef __cplusplus
 namespace blender::bke {
@@ -137,16 +137,15 @@ void ABC_read_geometry(CacheReader *reader,
                        Object *ob,
                        blender::bke::GeometrySet &geometry_set,
                        const ABCReadParams *params,
-                       const char **err_str);
+                       const char **r_err_str);
 #endif
 
 bool ABC_mesh_topology_changed(struct CacheReader *reader,
                                struct Object *ob,
                                const struct Mesh *existing_mesh,
                                double time,
-                               const char **err_str);
+                               const char **r_err_str);
 
-void ABC_CacheReader_incref(struct CacheReader *reader);
 void ABC_CacheReader_free(struct CacheReader *reader);
 
 struct CacheReader *CacheReader_open_alembic_object(struct CacheArchiveHandle *handle,

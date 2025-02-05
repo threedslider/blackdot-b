@@ -8,7 +8,10 @@
 
 #pragma once
 
+#include <atomic>
 #include <mutex>
+
+#include "DNA_vec_types.h"
 
 #include "BLF_api.hh"
 
@@ -18,8 +21,13 @@
 #include "GPU_texture.hh"
 #include "GPU_vertex_buffer.hh"
 
+#include <ft2build.h>
+
 struct ColorManagedDisplay;
 struct FontBLF;
+struct GlyphCacheBLF;
+struct GlyphBLF;
+
 namespace blender::gpu {
 class Batch;
 class VertBuf;
@@ -51,7 +59,7 @@ struct GPUVertBufRaw;
  * This is an internal type that represents sub-pixel positioning,
  * users of this type are to use `ft_pix_*` functions to keep scaling/rounding in one place.
  */
-typedef int32_t ft_pix;
+using ft_pix = int32_t;
 
 /* Macros copied from `include/freetype/internal/ftobjs.h`. */
 
@@ -71,7 +79,7 @@ inline int ft_pix_to_int_floor(ft_pix v)
 
 inline int ft_pix_to_int_ceil(ft_pix v)
 {
-  return int(FT_PIX_CEIL(v) >> 6);
+  return (FT_PIX_CEIL(v) >> 6);
 }
 
 inline ft_pix ft_pix_from_int(int v)
@@ -310,8 +318,8 @@ struct FontBLF {
    */
   uint unicode_ranges[4];
 
-  /** Number of times this font was loaded. */
-  unsigned int reference_count;
+  /** Number of references to this font object. When it reaches zero, font is unloaded. */
+  std::atomic<uint32_t> reference_count;
 
   /** Aspect ratio or scale. */
   float aspect[3];

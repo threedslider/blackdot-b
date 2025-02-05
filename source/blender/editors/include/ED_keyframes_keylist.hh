@@ -8,8 +8,8 @@
 
 #pragma once
 
+#include "BLI_bounds_types.hh"
 #include "BLI_math_vector_types.hh"
-#include "BLI_range.h"
 
 #include "DNA_curve_types.h"
 
@@ -62,8 +62,6 @@ struct ActKeyColumn {
   ActKeyColumn *left, *right;
   /** parent of this node in the tree */
   ActKeyColumn *parent;
-  /** DLRB_BLACK or DLRB_RED */
-  char tree_col;
 
   /* keyframe info */
   eBezTriple_KeyframeType key_type;
@@ -141,15 +139,17 @@ const ActKeyColumn *ED_keylist_find_exact(const AnimKeylist *keylist, float cfra
 const ActKeyColumn *ED_keylist_find_next(const AnimKeylist *keylist, float cfra);
 const ActKeyColumn *ED_keylist_find_prev(const AnimKeylist *keylist, float cfra);
 const ActKeyColumn *ED_keylist_find_any_between(const AnimKeylist *keylist,
-                                                const Range2f frame_range);
+                                                const blender::Bounds<float> frame_range);
 bool ED_keylist_is_empty(const AnimKeylist *keylist);
-const ListBase /* ActKeyColumn */ *ED_keylist_listbase(const AnimKeylist *keylist);
-bool ED_keylist_all_keys_frame_range(const AnimKeylist *keylist, Range2f *r_frame_range);
+const ListBase /*ActKeyColumn*/ *ED_keylist_listbase(const AnimKeylist *keylist);
+bool ED_keylist_all_keys_frame_range(const AnimKeylist *keylist,
+                                     blender::Bounds<float> *r_frame_range);
 /**
  * Return the selected key-frame's range. If none are selected, return False and
  * do not affect the frame range.
  */
-bool ED_keylist_selected_keys_frame_range(const AnimKeylist *keylist, Range2f *r_frame_range);
+bool ED_keylist_selected_keys_frame_range(const AnimKeylist *keylist,
+                                          blender::Bounds<float> *r_frame_range);
 const ActKeyColumn *ED_keylist_array(const AnimKeylist *keylist);
 int64_t ED_keylist_array_len(const AnimKeylist *keylist);
 
@@ -157,11 +157,22 @@ int64_t ED_keylist_array_len(const AnimKeylist *keylist);
 
 /**
  * Add the keyframes of the F-Curve to the keylist.
- * \param adt: can be a nullptr.
- * \param range: only adds keys in the given range to the keylist.
+ *
+ * \param adt: the AnimData associated with the FCurve, if any.  Must be
+ * non-null if `use_nla_remapping` is true, because it's needed for that
+ * remapping.
+ * \param range: adds keys in the given range to the keylist plus 1 extra on
+ * each side if available.
+ * \param use_nla_remapping: whether to allow NLA remapping or not. `true` by
+ * default, basically only `false` when this F-Curve is an NLA control curve
+ * (like animated influence) or a driver.
  */
-void fcurve_to_keylist(
-    AnimData *adt, FCurve *fcu, AnimKeylist *keylist, int saction_flag, blender::float2 range);
+void fcurve_to_keylist(AnimData *adt,
+                       FCurve *fcu,
+                       AnimKeylist *keylist,
+                       int saction_flag,
+                       blender::float2 range,
+                       bool use_nla_remapping);
 /* Action Group */
 void action_group_to_keylist(AnimData *adt,
                              bActionGroup *agrp,
@@ -169,8 +180,11 @@ void action_group_to_keylist(AnimData *adt,
                              int saction_flag,
                              blender::float2 range);
 /* Action */
-void action_to_keylist(
-    AnimData *adt, bAction *act, AnimKeylist *keylist, int saction_flag, blender::float2 range);
+void action_to_keylist(AnimData *adt,
+                       bAction *dna_action,
+                       AnimKeylist *keylist,
+                       int saction_flag,
+                       blender::float2 range);
 void action_slot_to_keylist(AnimData *adt,
                             blender::animrig::Action &action,
                             blender::animrig::slot_handle_t slot_handle,

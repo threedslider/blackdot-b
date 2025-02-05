@@ -6,7 +6,7 @@
  * \ingroup texnodes
  */
 
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_texture.h"
 #include "BLI_math_vector.h"
 #include "DNA_material_types.h"
@@ -243,7 +243,7 @@ static void init(bNodeTree * /*ntree*/, bNode *node)
   node->storage = tex;
 
   BKE_texture_default(tex);
-  tex->type = node->type - TEX_NODE_PROC;
+  tex->type = node->type_legacy - TEX_NODE_PROC;
 
   if (tex->type == TEX_WOOD) {
     tex->stype = TEX_BANDNOISE;
@@ -251,12 +251,15 @@ static void init(bNodeTree * /*ntree*/, bNode *node)
 }
 
 /* Node type definitions */
-#define TexDef(TEXTYPE, outputs, name, Name) \
+#define TexDef(TEXTYPE, idname, outputs, name, Name, EnumNameLegacy) \
   void register_node_type_tex_proc_##name(void) \
   { \
     static blender::bke::bNodeType ntype; \
 \
-    tex_node_type_base(&ntype, TEX_NODE_PROC + TEXTYPE, Name, NODE_CLASS_TEXTURE); \
+    tex_node_type_base(&ntype, idname, TEX_NODE_PROC + TEXTYPE); \
+    ntype.ui_name = Name; \
+    ntype.enum_name_legacy = EnumNameLegacy; \
+    ntype.nclass = NODE_CLASS_TEXTURE; \
     blender::bke::node_type_socket_templates(&ntype, name##_inputs, outputs); \
     blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle); \
     ntype.initfunc = init; \
@@ -265,15 +268,20 @@ static void init(bNodeTree * /*ntree*/, bNode *node)
     ntype.exec_fn = name##_exec; \
     ntype.flag |= NODE_PREVIEW; \
 \
-    blender::bke::nodeRegisterType(&ntype); \
+    blender::bke::node_register_type(&ntype); \
   }
 
 #define C outputs_color_only
 #define CV outputs_both
 
-TexDef(TEX_VORONOI, CV, voronoi, "Voronoi") TexDef(TEX_BLEND, C, blend, "Blend");
-TexDef(TEX_MAGIC, C, magic, "Magic") TexDef(TEX_MARBLE, CV, marble, "Marble");
-TexDef(TEX_CLOUDS, CV, clouds, "Clouds") TexDef(TEX_WOOD, CV, wood, "Wood");
-TexDef(TEX_MUSGRAVE, CV, musgrave, "Musgrave") TexDef(TEX_NOISE, C, noise, "Noise");
-TexDef(TEX_STUCCI, CV, stucci, "Stucci");
-TexDef(TEX_DISTNOISE, CV, distnoise, "Distorted Noise");
+TexDef(TEX_VORONOI, "TextureNodeTexVoronoi", CV, voronoi, "Voronoi", "TEX_VORONOI");
+TexDef(TEX_BLEND, "TextureNodeTexBlend", C, blend, "Blend", "TEX_BLEND");
+TexDef(TEX_MAGIC, "TextureNodeTexMagic", C, magic, "Magic", "TEX_MAGIC");
+TexDef(TEX_MARBLE, "TextureNodeTexMarble", CV, marble, "Marble", "TEX_MARBLE");
+TexDef(TEX_CLOUDS, "TextureNodeTexClouds", CV, clouds, "Clouds", "TEX_CLOUDS");
+TexDef(TEX_WOOD, "TextureNodeTexWood", CV, wood, "Wood", "TEX_WOOD");
+TexDef(TEX_MUSGRAVE, "TextureNodeTexMusgrave", CV, musgrave, "Musgrave", "TEX_MUSGRAVE");
+TexDef(TEX_NOISE, "TextureNodeTexNoise", C, noise, "Noise", "TEX_NOISE");
+TexDef(TEX_STUCCI, "TextureNodeTexStucci", CV, stucci, "Stucci", "TEX_STUCCI");
+TexDef(
+    TEX_DISTNOISE, "TextureNodeTexDistNoise", CV, distnoise, "Distorted Noise", "TEX_DISTNOISE");

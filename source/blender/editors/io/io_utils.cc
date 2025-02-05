@@ -4,11 +4,12 @@
 
 #include <fmt/format.h>
 
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 
 #include "BLT_translation.hh"
 
 #include "BKE_context.hh"
+#include "BKE_main.hh"
 
 #include "DNA_space_types.h"
 
@@ -21,7 +22,7 @@
 
 namespace blender::ed::io {
 
-int filesel_drop_import_invoke(bContext *C, wmOperator *op, const wmEvent * /* event */)
+int filesel_drop_import_invoke(bContext *C, wmOperator *op, const wmEvent * /*event*/)
 {
 
   PropertyRNA *filepath_prop = RNA_struct_find_property(op->ptr, "filepath");
@@ -37,7 +38,7 @@ int filesel_drop_import_invoke(bContext *C, wmOperator *op, const wmEvent * /* e
         title = files[0];
       }
       else {
-        title = fmt::format(TIP_("Import {} files"), files.size());
+        title = fmt::format(fmt::runtime(TIP_("Import {} files")), files.size());
       }
     }
     else {
@@ -74,10 +75,17 @@ Vector<std::string> paths_from_operator_properties(PointerRNA *ptr)
 {
   Vector<std::string> paths;
   PropertyRNA *directory_prop = RNA_struct_find_property(ptr, "directory");
+  PropertyRNA *relative_path_prop = RNA_struct_find_property(ptr, "relative_path");
+  const bool is_relative_path = relative_path_prop ?
+                                    RNA_property_boolean_get(ptr, relative_path_prop) :
+                                    false;
   if (RNA_property_is_set(ptr, directory_prop)) {
     char directory[FILE_MAX], name[FILE_MAX];
 
     RNA_string_get(ptr, "directory", directory);
+    if (is_relative_path && !BLI_path_is_rel(directory)) {
+      BLI_path_rel(directory, BKE_main_blendfile_path_from_global());
+    }
 
     PropertyRNA *files_prop = RNA_struct_find_collection_property_check(
         *ptr, "files", &RNA_OperatorFileListElement);
@@ -96,6 +104,9 @@ Vector<std::string> paths_from_operator_properties(PointerRNA *ptr)
   if (filepath_prop && RNA_property_is_set(ptr, filepath_prop)) {
     char filepath[FILE_MAX];
     RNA_string_get(ptr, "filepath", filepath);
+    if (is_relative_path && !BLI_path_is_rel(filepath)) {
+      BLI_path_rel(filepath, BKE_main_blendfile_path_from_global());
+    }
     paths.append_non_duplicates(filepath);
   }
   return paths;

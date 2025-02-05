@@ -14,7 +14,8 @@
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
+#include "BKE_node_legacy_types.hh"
 
 #include "ED_gizmo_library.hh"
 #include "ED_screen.hh"
@@ -102,9 +103,9 @@ static bool WIDGETGROUP_node_transform_poll(const bContext *C, wmGizmoGroupType 
   }
 
   if (snode && snode->edittree && snode->edittree->type == NTREE_COMPOSIT) {
-    bNode *node = bke::nodeGetActive(snode->edittree);
+    bNode *node = bke::node_get_active(snode->edittree);
 
-    if (node && ELEM(node->type, CMP_NODE_VIEWER)) {
+    if (node && ELEM(node->type_legacy, CMP_NODE_VIEWER)) {
       return true;
     }
   }
@@ -150,7 +151,7 @@ static void WIDGETGROUP_node_transform_refresh(const bContext *C, wmGizmoGroup *
     /* Need to set property here for undo. TODO: would prefer to do this in _init. */
     SpaceNode *snode = CTX_wm_space_node(C);
 #if 0
-    PointerRNA nodeptr = RNA_pointer_create(snode->id, &RNA_SpaceNodeEditor, snode);
+    PointerRNA nodeptr = RNA_pointer_create_discrete(snode->id, &RNA_SpaceNodeEditor, snode);
     WM_gizmo_target_property_def_rna(cage, "offset", &nodeptr, "backdrop_offset", -1);
     WM_gizmo_target_property_def_rna(cage, "scale", &nodeptr, "backdrop_zoom", -1);
 #endif
@@ -210,19 +211,19 @@ static void gizmo_node_crop_update(NodeCropWidgetGroup *crop_group)
 }
 
 static void two_xy_to_rect(
-    const NodeTwoXYs *nxy, rctf *rect, const float2 &dims, const float2 offset, bool is_relative)
+    const NodeTwoXYs *nxy, const float2 &dims, const float2 offset, bool is_relative, rctf *r_rect)
 {
   if (is_relative) {
-    rect->xmin = nxy->fac_x1 + (offset.x / dims.x);
-    rect->xmax = nxy->fac_x2 + (offset.x / dims.x);
-    rect->ymin = nxy->fac_y1 + (offset.y / dims.y);
-    rect->ymax = nxy->fac_y2 + (offset.y / dims.y);
+    r_rect->xmin = nxy->fac_x1 + (offset.x / dims.x);
+    r_rect->xmax = nxy->fac_x2 + (offset.x / dims.x);
+    r_rect->ymin = nxy->fac_y2 + (offset.y / dims.y);
+    r_rect->ymax = nxy->fac_y1 + (offset.y / dims.y);
   }
   else {
-    rect->xmin = (nxy->x1 + offset.x) / dims.x;
-    rect->xmax = (nxy->x2 + offset.x) / dims.x;
-    rect->ymin = (nxy->y1 + offset.y) / dims.y;
-    rect->ymax = (nxy->y2 + offset.y) / dims.y;
+    r_rect->xmin = (nxy->x1 + offset.x) / dims.x;
+    r_rect->xmax = (nxy->x2 + offset.x) / dims.x;
+    r_rect->ymin = (nxy->y2 + offset.y) / dims.y;
+    r_rect->ymax = (nxy->y1 + offset.y) / dims.y;
   }
 }
 
@@ -232,14 +233,14 @@ static void two_xy_from_rect(
   if (is_relative) {
     nxy->fac_x1 = rect->xmin - (offset.x / dims.x);
     nxy->fac_x2 = rect->xmax - (offset.x / dims.x);
-    nxy->fac_y1 = rect->ymin - (offset.y / dims.y);
-    nxy->fac_y2 = rect->ymax - (offset.y / dims.y);
+    nxy->fac_y2 = rect->ymin - (offset.y / dims.y);
+    nxy->fac_y1 = rect->ymax - (offset.y / dims.y);
   }
   else {
     nxy->x1 = rect->xmin * dims.x - offset.x;
     nxy->x2 = rect->xmax * dims.x - offset.x;
-    nxy->y1 = rect->ymin * dims.y - offset.y;
-    nxy->y2 = rect->ymax * dims.y - offset.y;
+    nxy->y2 = rect->ymin * dims.y - offset.y;
+    nxy->y1 = rect->ymax * dims.y - offset.y;
   }
 }
 
@@ -257,7 +258,7 @@ static void gizmo_node_crop_prop_matrix_get(const wmGizmo *gz,
   const NodeTwoXYs *nxy = (const NodeTwoXYs *)node->storage;
   bool is_relative = bool(node->custom2);
   rctf rct;
-  two_xy_to_rect(nxy, &rct, dims, offset, is_relative);
+  two_xy_to_rect(nxy, dims, offset, is_relative, &rct);
   matrix[0][0] = fabsf(BLI_rctf_size_x(&rct));
   matrix[1][1] = fabsf(BLI_rctf_size_y(&rct));
   matrix[3][0] = (BLI_rctf_cent_x(&rct) - 0.5f) * dims[0];
@@ -277,9 +278,7 @@ static void gizmo_node_crop_prop_matrix_set(const wmGizmo *gz,
   NodeTwoXYs *nxy = (NodeTwoXYs *)node->storage;
   bool is_relative = bool(node->custom2);
   rctf rct;
-  two_xy_to_rect(nxy, &rct, dims, offset, is_relative);
-  const bool nx = rct.xmin > rct.xmax;
-  const bool ny = rct.ymin > rct.ymax;
+  two_xy_to_rect(nxy, dims, offset, is_relative, &rct);
   BLI_rctf_resize(&rct, fabsf(matrix[0][0]), fabsf(matrix[1][1]));
   BLI_rctf_recenter(&rct, ((matrix[3][0]) / dims[0]) + 0.5f, ((matrix[3][1]) / dims[1]) + 0.5f);
   rctf rct_isect{};
@@ -288,12 +287,6 @@ static void gizmo_node_crop_prop_matrix_set(const wmGizmo *gz,
   rct_isect.ymin = offset.y;
   rct_isect.ymax = offset.y / dims.y + 1;
   BLI_rctf_isect(&rct_isect, &rct, &rct);
-  if (nx) {
-    std::swap(rct.xmin, rct.xmax);
-  }
-  if (ny) {
-    std::swap(rct.ymin, rct.ymax);
-  }
   two_xy_from_rect(nxy, &rct, dims, offset, is_relative);
   gizmo_node_crop_update(crop_group);
 }
@@ -307,9 +300,9 @@ static bool WIDGETGROUP_node_crop_poll(const bContext *C, wmGizmoGroupType * /*g
   }
 
   if (snode && snode->edittree && snode->edittree->type == NTREE_COMPOSIT) {
-    bNode *node = bke::nodeGetActive(snode->edittree);
+    bNode *node = bke::node_get_active(snode->edittree);
 
-    if (node && ELEM(node->type, CMP_NODE_CROP)) {
+    if (node && ELEM(node->type_legacy, CMP_NODE_CROP)) {
       /* ignore 'use_crop_size', we can't usefully edit the crop in this case. */
       if ((node->custom1 & (1 << 0)) == 0) {
         return true;
@@ -322,7 +315,7 @@ static bool WIDGETGROUP_node_crop_poll(const bContext *C, wmGizmoGroupType * /*g
 
 static void WIDGETGROUP_node_crop_setup(const bContext * /*C*/, wmGizmoGroup *gzgroup)
 {
-  NodeCropWidgetGroup *crop_group = MEM_cnew<NodeCropWidgetGroup>(__func__);
+  NodeCropWidgetGroup *crop_group = MEM_new<NodeCropWidgetGroup>(__func__);
   crop_group->border = WM_gizmo_new("GIZMO_GT_cage_2d", gzgroup, nullptr);
 
   RNA_enum_set(crop_group->border->ptr,
@@ -330,6 +323,9 @@ static void WIDGETGROUP_node_crop_setup(const bContext * /*C*/, wmGizmoGroup *gz
                ED_GIZMO_CAGE_XFORM_FLAG_TRANSLATE | ED_GIZMO_CAGE_XFORM_FLAG_SCALE);
 
   gzgroup->customdata = crop_group;
+  gzgroup->customdata_free = [](void *customdata) {
+    MEM_delete(static_cast<NodeCropWidgetGroup *>(customdata));
+  };
 }
 
 static void WIDGETGROUP_node_crop_draw_prepare(const bContext *C, wmGizmoGroup *gzgroup)
@@ -361,10 +357,10 @@ static void WIDGETGROUP_node_crop_refresh(const bContext *C, wmGizmoGroup *gzgro
     WM_gizmo_set_flag(gz, WM_GIZMO_HIDDEN, false);
 
     SpaceNode *snode = CTX_wm_space_node(C);
-    bNode *node = bke::nodeGetActive(snode->edittree);
+    bNode *node = bke::node_get_active(snode->edittree);
 
     crop_group->update_data.context = (bContext *)C;
-    crop_group->update_data.ptr = RNA_pointer_create(
+    crop_group->update_data.ptr = RNA_pointer_create_discrete(
         (ID *)snode->edittree, &RNA_CompositorNodeCrop, node);
     crop_group->update_data.prop = RNA_struct_find_property(&crop_group->update_data.ptr,
                                                             "relative");
@@ -421,9 +417,9 @@ static bool WIDGETGROUP_node_sbeam_poll(const bContext *C, wmGizmoGroupType * /*
   }
 
   if (snode && snode->edittree && snode->edittree->type == NTREE_COMPOSIT) {
-    bNode *node = bke::nodeGetActive(snode->edittree);
+    bNode *node = bke::node_get_active(snode->edittree);
 
-    if (node && ELEM(node->type, CMP_NODE_SUNBEAMS)) {
+    if (node && ELEM(node->type_legacy, CMP_NODE_SUNBEAMS)) {
       return true;
     }
   }
@@ -474,10 +470,10 @@ static void WIDGETGROUP_node_sbeam_refresh(const bContext *C, wmGizmoGroup *gzgr
     copy_v2_v2(sbeam_group->state.offset, ima->runtime.backdrop_offset);
 
     SpaceNode *snode = CTX_wm_space_node(C);
-    bNode *node = bke::nodeGetActive(snode->edittree);
+    bNode *node = bke::node_get_active(snode->edittree);
 
     /* Need to set property here for undo. TODO: would prefer to do this in _init. */
-    PointerRNA nodeptr = RNA_pointer_create(
+    PointerRNA nodeptr = RNA_pointer_create_discrete(
         (ID *)snode->edittree, &RNA_CompositorNodeSunBeams, node);
     WM_gizmo_target_property_def_rna(gz, "offset", &nodeptr, "source", -1);
 
@@ -528,9 +524,9 @@ static bool WIDGETGROUP_node_corner_pin_poll(const bContext *C, wmGizmoGroupType
   }
 
   if (snode && snode->edittree && snode->edittree->type == NTREE_COMPOSIT) {
-    bNode *node = bke::nodeGetActive(snode->edittree);
+    bNode *node = bke::node_get_active(snode->edittree);
 
-    if (node && ELEM(node->type, CMP_NODE_CORNERPIN)) {
+    if (node && ELEM(node->type_legacy, CMP_NODE_CORNERPIN)) {
       return true;
     }
   }
@@ -588,7 +584,7 @@ static void WIDGETGROUP_node_corner_pin_refresh(const bContext *C, wmGizmoGroup 
     copy_v2_v2(cpin_group->state.offset, ima->runtime.backdrop_offset);
 
     SpaceNode *snode = CTX_wm_space_node(C);
-    bNode *node = bke::nodeGetActive(snode->edittree);
+    bNode *node = bke::node_get_active(snode->edittree);
 
     /* need to set property here for undo. TODO: would prefer to do this in _init. */
     int i = 0;
@@ -596,7 +592,8 @@ static void WIDGETGROUP_node_corner_pin_refresh(const bContext *C, wmGizmoGroup 
       if (sock->type == SOCK_VECTOR) {
         wmGizmo *gz = cpin_group->gizmos[i++];
 
-        PointerRNA sockptr = RNA_pointer_create((ID *)snode->edittree, &RNA_NodeSocket, sock);
+        PointerRNA sockptr = RNA_pointer_create_discrete(
+            (ID *)snode->edittree, &RNA_NodeSocket, sock);
         WM_gizmo_target_property_def_rna(gz, "offset", &sockptr, "default_value", -1);
 
         WM_gizmo_set_flag(gz, WM_GIZMO_DRAW_MODAL, true);

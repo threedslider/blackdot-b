@@ -23,11 +23,13 @@
 #include "BLI_kdtree.h"
 #include "BLI_lasso_2d.hh"
 #include "BLI_listbase.h"
+#include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
+#include "BLI_math_vector.hh"
 #include "BLI_rand.h"
 #include "BLI_rect.h"
 #include "BLI_task.h"
-#include "BLI_time_utildefines.h"
+#include "BLI_time.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_bvhutils.hh"
@@ -59,8 +61,6 @@
 #include "GPU_immediate.hh"
 #include "GPU_immediate_util.hh"
 #include "GPU_state.hh"
-
-#include "UI_resources.hh"
 
 #include "WM_api.hh"
 #include "WM_message.hh"
@@ -467,7 +467,7 @@ struct PEData {
   Object *ob;
   Mesh *mesh;
   PTCacheEdit *edit;
-  BVHTreeFromMesh shape_bvh;
+  blender::bke::BVHTreeFromMesh *shape_bvh;
   Depsgraph *depsgraph;
 
   RNG *rng;
@@ -524,6 +524,7 @@ static void PE_set_view3d_data(bContext *C, PEData *data)
                              data->vc.v3d,
                              data->vc.obact,
                              V3D_DEPTH_OBJECT_ONLY,
+                             false,
                              &data->depths);
   }
 }
@@ -533,19 +534,17 @@ static bool PE_create_shape_tree(PEData *data, Object *shapeob)
   Object *shapeob_eval = DEG_get_evaluated_object(data->depsgraph, shapeob);
   const Mesh *mesh = BKE_object_get_evaluated_mesh(shapeob_eval);
 
-  data->shape_bvh = {};
-
   if (!mesh) {
     return false;
   }
 
-  return (BKE_bvhtree_from_mesh_get(&data->shape_bvh, mesh, BVHTREE_FROM_CORNER_TRIS, 4) !=
-          nullptr);
+  data->shape_bvh = MEM_new<blender::bke::BVHTreeFromMesh>(__func__, mesh->bvh_corner_tris());
+  return data->shape_bvh->tree != nullptr;
 }
 
 static void PE_free_shape_tree(PEData *data)
 {
-  free_bvhtree_from_mesh(&data->shape_bvh);
+  MEM_delete(data->shape_bvh);
 }
 
 static void PE_create_random_generator(PEData *data)
@@ -3748,7 +3747,7 @@ void PARTICLE_OT_mirror(wmOperatorType *ot)
  * \{ */
 
 static void brush_comb(PEData *data,
-                       float[4][4] /*mat*/,
+                       float /*mat*/[4][4],
                        float imat[4][4],
                        int point_index,
                        int key_index,
@@ -4071,8 +4070,8 @@ static void brush_puff(PEData *data, int point_index, float mouse_distance)
 }
 
 static void BKE_brush_weight_get(PEData *data,
-                                 float[4][4] /*mat*/,
-                                 float[4][4] /*imat*/,
+                                 float /*mat*/[4][4],
+                                 float /*imat*/[4][4],
                                  int point_index,
                                  int key_index,
                                  PTCacheEditKey * /*key*/,
@@ -4092,7 +4091,7 @@ static void BKE_brush_weight_get(PEData *data,
 
 static void brush_smooth_get(PEData *data,
                              float mat[4][4],
-                             float[4][4] /*imat*/,
+                             float /*imat*/[4][4],
                              int /*point_index*/,
                              int key_index,
                              PTCacheEditKey *key,
@@ -4109,7 +4108,7 @@ static void brush_smooth_get(PEData *data,
 }
 
 static void brush_smooth_do(PEData *data,
-                            float[4][4] /*mat*/,
+                            float /*mat*/[4][4],
                             float imat[4][4],
                             int point_index,
                             int key_index,
@@ -4178,7 +4177,7 @@ static int particle_intersect_mesh(Depsgraph *depsgraph,
     psys_disable_all(ob);
 
     Object *ob_eval = DEG_get_evaluated_object(depsgraph, ob);
-    mesh = (Mesh *)BKE_object_get_evaluated_mesh(ob_eval);
+    mesh = BKE_object_get_evaluated_mesh(ob_eval);
     if (mesh == nullptr) {
       return 0;
     }
@@ -4637,7 +4636,7 @@ static int brush_add(const bContext *C, PEData *data, short number)
         ppa = psys->particles + ptn[0].index;
 
         for (k = 0; k < pset->totaddkey; k++) {
-          thkey = (HairKey *)pa->hair + k;
+          thkey = pa->hair + k;
           thkey->time = pa->time + k * framestep;
 
           key3[0].time = thkey->time / 100.0f;
@@ -4774,7 +4773,7 @@ static void brush_edit_apply(bContext *C, wmOperator *op, PointerRNA *itemptr)
   RNA_float_get_array(itemptr, "mouse", mousef);
   mouse[0] = mousef[0];
   mouse[1] = mousef[1];
-  flip = RNA_boolean_get(itemptr, "pen_flip");
+  flip = RNA_boolean_get(op->ptr, "pen_flip");
 
   if (bedit->first) {
     bedit->lastmouse[0] = mouse[0];
@@ -4800,7 +4799,7 @@ static void brush_edit_apply(bContext *C, wmOperator *op, PointerRNA *itemptr)
     PEData data = bedit->data;
     data.context = C; /* TODO(mai): why isn't this set in bedit->data? */
 
-    view3d_operator_needs_opengl(C);
+    view3d_operator_needs_gpu(C);
     selected = short(count_selected_keys(scene, edit));
 
     dmax = max_ff(fabsf(dx), fabsf(dy));
@@ -5021,7 +5020,6 @@ static void brush_edit_apply_event(bContext *C, wmOperator *op, const wmEvent *e
   RNA_collection_add(op->ptr, "stroke", &itemptr);
 
   RNA_float_set_array(&itemptr, "mouse", mouse);
-  RNA_boolean_set(&itemptr, "pen_flip", event->modifier & KM_SHIFT); /* XXX hardcoded */
 
   /* apply */
   brush_edit_apply(C, op, &itemptr);
@@ -5032,6 +5030,8 @@ static int brush_edit_invoke(bContext *C, wmOperator *op, const wmEvent *event)
   if (!brush_edit_init(C, op)) {
     return OPERATOR_CANCELLED;
   }
+
+  RNA_boolean_set(op->ptr, "pen_flip", event->modifier & KM_SHIFT); /* XXX hardcoded */
 
   brush_edit_apply_event(C, op, event);
 
@@ -5090,6 +5090,9 @@ void PARTICLE_OT_brush_edit(wmOperatorType *ot)
   PropertyRNA *prop;
   prop = RNA_def_collection_runtime(ot->srna, "stroke", &RNA_OperatorStrokeElement, "Stroke", "");
   RNA_def_property_flag(prop, PROP_HIDDEN | PROP_SKIP_SAVE);
+  prop = RNA_def_boolean(
+      ot->srna, "pen_flip", false, "Pen Flip", "Whether a tablet's eraser mode is being used");
+  RNA_def_property_flag(prop, PROP_HIDDEN | PROP_SKIP_SAVE);
 }
 
 /** \} */
@@ -5113,7 +5116,7 @@ static bool shape_cut_poll(bContext *C)
 }
 
 struct PointInsideBVH {
-  BVHTreeFromMesh bvhdata;
+  blender::bke::BVHTreeFromMesh *bvhdata;
   int num_hits;
 };
 
@@ -5124,7 +5127,7 @@ static void point_inside_bvh_cb(void *userdata,
 {
   PointInsideBVH *data = static_cast<PointInsideBVH *>(userdata);
 
-  data->bvhdata.raycast_callback(&data->bvhdata, index, ray, hit);
+  data->bvhdata->raycast_callback(&data->bvhdata, index, ray, hit);
 
   if (hit->index != -1) {
     ++data->num_hits;
@@ -5134,7 +5137,7 @@ static void point_inside_bvh_cb(void *userdata,
 /* true if the point is inside the shape mesh */
 static bool shape_cut_test_point(PEData *data, ParticleEditSettings *pset, ParticleCacheKey *key)
 {
-  BVHTreeFromMesh *shape_bvh = &data->shape_bvh;
+  blender::bke::BVHTreeFromMesh *shape_bvh = data->shape_bvh;
   const float dir[3] = {1.0f, 0.0f, 0.0f};
   PointInsideBVH userdata;
 
@@ -5192,12 +5195,12 @@ static void shape_cut(PEData *data, int pa_index)
       memset(&hit, 0, sizeof(hit));
       hit.index = -1;
       hit.dist = len_shape;
-      BLI_bvhtree_ray_cast(data->shape_bvh.tree,
+      BLI_bvhtree_ray_cast(data->shape_bvh->tree,
                            co_curr_shape,
                            dir_shape,
                            0.0f,
                            &hit,
-                           data->shape_bvh.raycast_callback,
+                           data->shape_bvh->raycast_callback,
                            &data->shape_bvh);
       if (hit.index >= 0) {
         if (hit.dist < len_shape) {

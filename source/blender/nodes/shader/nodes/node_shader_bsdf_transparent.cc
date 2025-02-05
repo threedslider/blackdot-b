@@ -11,7 +11,7 @@ namespace blender::nodes::node_shader_bsdf_transparent_cc {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Color>("Color").default_value({1.0f, 1.0f, 1.0f, 1.0f});
-  b.add_input<decl::Float>("Weight").unavailable();
+  b.add_input<decl::Float>("Weight").available(false);
   b.add_output<decl::Shader>("BSDF");
 }
 
@@ -58,11 +58,17 @@ void register_node_type_sh_bsdf_transparent()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(&ntype, SH_NODE_BSDF_TRANSPARENT, "Transparent BSDF", NODE_CLASS_SHADER);
+  sh_node_type_base(&ntype, "ShaderNodeBsdfTransparent", SH_NODE_BSDF_TRANSPARENT);
+  ntype.ui_name = "Transparent BSDF";
+  ntype.ui_description =
+      "Transparency without refraction, passing straight through the surface as if there were no "
+      "geometry";
+  ntype.enum_name_legacy = "BSDF_TRANSPARENT";
+  ntype.nclass = NODE_CLASS_SHADER;
   ntype.add_ui_poll = object_shader_nodes_poll;
   ntype.declare = file_ns::node_declare;
   ntype.gpu_fn = file_ns::node_shader_gpu_bsdf_transparent;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

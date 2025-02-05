@@ -2,18 +2,23 @@
  *
  * SPDX-License-Identifier: Apache-2.0 */
 
-#ifndef __BLENDER_IMAGE_H__
-#define __BLENDER_IMAGE_H__
+#pragma once
+
+#include "DNA_image_types.h"
 
 #include "RNA_blender_cpp.hh"
 
 #include "scene/image.h"
 
+struct Image;
+struct ImageUser;
+
 CCL_NAMESPACE_BEGIN
 
 class BlenderImageLoader : public ImageLoader {
  public:
-  BlenderImageLoader(BL::Image b_image,
+  BlenderImageLoader(::Image *b_image,
+                     ::ImageUser *b_iuser,
                      const int frame,
                      const int tile_number,
                      const bool is_preview_render);
@@ -28,9 +33,8 @@ class BlenderImageLoader : public ImageLoader {
 
   int get_tile_number() const override;
 
-  BL::Image b_image;
-  int frame;
-  int tile_number;
+  ::Image *b_image;
+  ::ImageUser b_iuser;
   bool free_cache;
 };
 
@@ -51,5 +55,3 @@ class BlenderPointDensityLoader : public ImageLoader {
 };
 
 CCL_NAMESPACE_END
-
-#endif /* __BLENDER_IMAGE_H__ */

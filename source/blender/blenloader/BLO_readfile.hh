@@ -5,6 +5,7 @@
 
 #include "BLI_listbase.h"
 #include "BLI_sys_types.h"
+#include "BLI_utility_mixins.hh"
 
 /** \file
  * \ingroup blenloader
@@ -13,6 +14,7 @@
 
 struct AssetMetaData;
 struct BHead;
+struct BlendfileLinkAppendContext;
 struct BlendHandle;
 struct BlendThumbnail;
 struct FileData;
@@ -50,26 +52,26 @@ enum eBlenFileType {
   // BLENFILETYPE_RUNTIME = 3, /* UNUSED */
 };
 
-struct BlendFileData {
-  Main *main;
-  UserDef *user;
+struct BlendFileData : blender::NonCopyable, blender::NonMovable {
+  Main *main = nullptr;
+  UserDef *user = nullptr;
 
-  int fileflags;
-  int globalf;
+  int fileflags = 0;
+  int globalf = 0;
   /** Typically the actual filepath of the read blend-file, except when recovering
    * save-on-exit/autosave files. In the latter case, it will be the path of the file that
    * generated the auto-saved one being recovered.
    *
    * NOTE: Currently expected to be the same path as #BlendFileData.filepath. */
-  char filepath[1024]; /* 1024 = FILE_MAX */
+  char filepath[1024] = {}; /* 1024 = FILE_MAX */
 
   /** TODO: think this isn't needed anymore? */
-  bScreen *curscreen;
-  Scene *curscene;
+  bScreen *curscreen = nullptr;
+  Scene *curscene = nullptr;
   /** Layer to activate in workspaces when reading without UI. */
-  ViewLayer *cur_view_layer;
+  ViewLayer *cur_view_layer = nullptr;
 
-  eBlenFileType type;
+  eBlenFileType type = eBlenFileType(0);
 };
 
 /**
@@ -210,7 +212,9 @@ void BLO_blendfiledata_free(BlendFileData *bfd);
  *
  * \param new_bmain: the newly read Main data-base.
  */
-void BLO_read_do_version_after_setup(Main *new_bmain, BlendFileReadReport *reports);
+void BLO_read_do_version_after_setup(Main *new_bmain,
+                                     BlendfileLinkAppendContext *lapp_context,
+                                     BlendFileReadReport *reports);
 
 /** \} */
 
@@ -361,7 +365,7 @@ void BLO_read_invalidate_message(BlendHandle *bh, Main *bmain, const char *messa
 enum eBLOLibLinkFlags {
   /** Generate a placeholder (empty ID) if not found in current lib file. */
   BLO_LIBLINK_USE_PLACEHOLDERS = 1 << 16,
-  /** Force loaded ID to be tagged as #LIB_TAG_INDIRECT (used in reload context only). */
+  /** Force loaded ID to be tagged as #ID_TAG_INDIRECT (used in reload context only). */
   BLO_LIBLINK_FORCE_INDIRECT = 1 << 17,
   /** Set fake user on appended IDs. */
   BLO_LIBLINK_APPEND_SET_FAKEUSER = 1 << 19,
@@ -485,7 +489,8 @@ using BLOExpandDoitCallback = void (*)(void *fdhandle, Main *mainvar, void *idv)
 
 /**
  * Loop over all ID data in Main to mark relations.
- * Set (id->tag & LIB_TAG_NEED_EXPAND) to mark expanding. Flags get cleared after expanding.
+ * Set #ID_Readfile_Data::Tags.needs_expanding to mark expanding. Flags get
+ * cleared after expanding.
  *
  * \param fdhandle: usually file-data, or own handle. May be nullptr.
  * \param mainvar: the Main database to expand.
@@ -529,3 +534,69 @@ BlendThumbnail *BLO_thumbnail_from_file(const char *filepath);
  * \return The file version
  */
 short BLO_version_from_file(const char *filepath);
+
+/**
+ * Runtime structure on `ID.runtime.readfile_data` that is available during the readfile process.
+ *
+ * This is intended for short-lived data, for example for things that are detected in an early
+ * phase of versioning that should be used in a later stage of versioning.
+ *
+ * \note This is NOT allocated when 'reading' an undo step, as that doesn't have to deal with
+ * versioning, linking, and the other stuff that this struct was meant for.
+ */
+struct ID_Readfile_Data {
+  struct Tags {
+    /* General ID reading related tags. */
+
+    /**
+     * Mark ID placeholders for linked data-blocks needing to be read from their library
+     * blend-files.
+     */
+    bool is_link_placeholder : 1;
+    /**
+     * Mark IDs needing to be expanded (only done once). See #BLO_expand_main.
+     */
+    bool needs_expanding : 1;
+    /**
+     * Mark IDs needing to be 'lib-linked', i.e. to get their pointers to other data-blocks
+     * updated from the 'UID' values stored in `.blend` files to the new, actual pointers.
+     */
+    bool needs_linking : 1;
+
+    /* Specific ID-type reading/versioning related tags. */
+
+    /**
+     * Set when this ID used a legacy Action, in which case it also should pick
+     * an appropriate slot.
+     *
+     * \see ANIM_versioning.hh
+     */
+    bool action_assignment_needs_slot : 1;
+  } tags;
+};
+
+/**
+ * Return `id->runtime.readfile_data->tags` if the `readfile_data` is allocated,
+ * otherwise return an all-zero set of tags.
+ */
+ID_Readfile_Data::Tags BLO_readfile_id_runtime_tags(ID &id);
+
+/**
+ * Create the `readfile_data` if needed, and return `id->runtime.readfile_data->tags`.
+ *
+ * Use it instead of #BLO_readfile_id_runtime_tags when tags need to be set.
+ */
+ID_Readfile_Data::Tags &BLO_readfile_id_runtime_tags_for_write(ID &id);
+
+/**
+ * Free the ID_Readfile_Data of all IDs in this bmain and all their embedded IDs.
+ *
+ * This is typically called at the end of the versioning process, as after that
+ * `ID.runtime.readfile_data` should no longer be needed.
+ */
+void BLO_readfile_id_runtime_data_free_all(Main &bmain);
+
+/**
+ *  Free the ID_Readfile_Data of this ID. Does _not_ deal with embedded IDs.
+ */
+void BLO_readfile_id_runtime_data_free(ID &id);

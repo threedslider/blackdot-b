@@ -8,8 +8,9 @@
 
 #include "BLI_utildefines.h"
 
-#include "GPU_capabilities.hh"
 #include "GPU_shader.hh"
+
+#include "gpu_shader_private.hh"
 
 /* Cache of built-in shaders (each is created on first use). */
 static GPUShader *builtin_shaders[GPU_SHADER_CFG_LEN][GPU_SHADER_BUILTIN_LEN] = {{nullptr}};
@@ -81,6 +82,10 @@ static const char *builtin_shader_create_info_name(eGPUBuiltinShader shader)
       return "gpu_shader_2D_widget_base_inst";
     case GPU_SHADER_2D_WIDGET_SHADOW:
       return "gpu_shader_2D_widget_shadow";
+    case GPU_SHADER_2D_NODE_SOCKET:
+      return "gpu_shader_2D_node_socket";
+    case GPU_SHADER_2D_NODE_SOCKET_INST:
+      return "gpu_shader_2D_node_socket_inst";
     case GPU_SHADER_2D_NODELINK:
       return "gpu_shader_2D_nodelink";
     case GPU_SHADER_2D_NODELINK_INST:
@@ -89,6 +94,8 @@ static const char *builtin_shader_create_info_name(eGPUBuiltinShader shader)
       return "gpu_shader_gpencil_stroke";
     case GPU_SHADER_SEQUENCER_STRIPS:
       return "gpu_shader_sequencer_strips";
+    case GPU_SHADER_SEQUENCER_THUMBS:
+      return "gpu_shader_sequencer_thumbs";
     case GPU_SHADER_INDEXBUF_POINTS:
       return "gpu_shader_index_2d_array_points";
     case GPU_SHADER_INDEXBUF_LINES:
@@ -116,8 +123,10 @@ static const char *builtin_shader_create_info_name_clipped(eGPUBuiltinShader sha
       return "gpu_shader_3D_line_dashed_uniform_color_clipped";
     case GPU_SHADER_3D_POINT_UNIFORM_SIZE_UNIFORM_COLOR_AA:
       return "gpu_shader_3D_point_uniform_size_uniform_color_aa_clipped";
+    case GPU_SHADER_3D_POLYLINE_UNIFORM_COLOR:
+      return "gpu_shader_3D_polyline_uniform_color_clipped";
     default:
-      BLI_assert_unreachable();
+      BLI_assert_msg(false, "Clipped shader configuration not available.");
       return "";
   }
 }
@@ -127,7 +136,15 @@ GPUShader *GPU_shader_get_builtin_shader_with_config(eGPUBuiltinShader shader,
 {
   BLI_assert(shader < GPU_SHADER_BUILTIN_LEN);
   BLI_assert(sh_cfg < GPU_SHADER_CFG_LEN);
+
+#ifdef __GNUC__
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
   GPUShader **sh_p = &builtin_shaders[sh_cfg][shader];
+#ifdef __GNUC__
+#  pragma GCC diagnostic pop
+#endif
 
   if (*sh_p == nullptr) {
     if (sh_cfg == GPU_SHADER_CFG_DEFAULT) {
@@ -143,11 +160,16 @@ GPUShader *GPU_shader_get_builtin_shader_with_config(eGPUBuiltinShader shader,
          * Ideally this value should be set by the caller. */
         GPU_shader_bind(*sh_p);
         GPU_shader_uniform_1i(*sh_p, "lineSmooth", 1);
+        /* WORKAROUND: See is_polyline declaration. */
+        blender::gpu::unwrap(*sh_p)->is_polyline = true;
       }
     }
     else if (sh_cfg == GPU_SHADER_CFG_CLIPPED) {
       /* In rare cases geometry shaders calculate clipping themselves. */
-      *sh_p = GPU_shader_create_from_info_name(builtin_shader_create_info_name_clipped(shader));
+      const char *info_name_clipped = builtin_shader_create_info_name_clipped(shader);
+      if (!blender::StringRefNull(info_name_clipped).is_empty()) {
+        *sh_p = GPU_shader_create_from_info_name(info_name_clipped);
+      }
     }
     else {
       BLI_assert(0);

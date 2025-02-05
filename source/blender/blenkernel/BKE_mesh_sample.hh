@@ -19,11 +19,13 @@
 #include "BKE_geometry_fields.hh"
 
 struct Mesh;
-struct BVHTreeFromMesh;
 
 namespace blender {
 class RandomNumberGenerator;
+namespace bke {
+struct BVHTreeFromMesh;
 }
+}  // namespace blender
 
 namespace blender::bke::mesh_surface_sample {
 
@@ -99,7 +101,7 @@ int sample_surface_points_spherical(RandomNumberGenerator &rng,
 int sample_surface_points_projected(
     RandomNumberGenerator &rng,
     const Mesh &mesh,
-    BVHTreeFromMesh &mesh_bvhtree,
+    bke::BVHTreeFromMesh &mesh_bvhtree,
     const float2 &sample_pos_re,
     float sample_radius_re,
     FunctionRef<void(const float2 &pos_re, float3 &r_start, float3 &r_end)> region_position_to_ray,
@@ -148,7 +150,7 @@ class BaryWeightFromPositionFn : public mf::MultiFunction {
 
  public:
   BaryWeightFromPositionFn(GeometrySet geometry);
-  void call(const IndexMask &mask, mf::Params params, mf::Context context) const;
+  void call(const IndexMask &mask, mf::Params params, mf::Context context) const override;
 };
 
 /**
@@ -163,7 +165,7 @@ class CornerBaryWeightFromPositionFn : public mf::MultiFunction {
 
  public:
   CornerBaryWeightFromPositionFn(GeometrySet geometry);
-  void call(const IndexMask &mask, mf::Params params, mf::Context context) const;
+  void call(const IndexMask &mask, mf::Params params, mf::Context context) const override;
 };
 
 /**
@@ -183,7 +185,7 @@ class BaryWeightSampleFn : public mf::MultiFunction {
  public:
   BaryWeightSampleFn(GeometrySet geometry, fn::GField src_field);
 
-  void call(const IndexMask &mask, mf::Params params, mf::Context context) const;
+  void call(const IndexMask &mask, mf::Params params, mf::Context context) const override;
 
  private:
   void evaluate_source(fn::GField src_field);

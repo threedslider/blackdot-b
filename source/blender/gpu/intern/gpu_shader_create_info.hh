@@ -13,26 +13,313 @@
 
 #pragma once
 
-#include "BLI_hash.hh"
-#include "BLI_string_ref.hh"
-#include "BLI_vector.hh"
-#include "GPU_common_types.hh"
-#include "GPU_material.hh"
-#include "GPU_texture.hh"
+#if !defined(GPU_SHADER)
+#  include "BLI_hash.hh"
+#  include "BLI_string_ref.hh"
+#  include "BLI_utildefines_variadic.h"
+#  include "BLI_vector.hh"
+#  include "GPU_common_types.hh"
+#  include "GPU_material.hh"
+#  include "GPU_texture.hh"
 
-#include <iostream>
+#  include <iostream>
+#endif
+
+/* Force enable `printf` support in release build. */
+#define GPU_FORCE_ENABLE_SHADER_PRINTF 0
+
+#if !defined(NDEBUG) || GPU_FORCE_ENABLE_SHADER_PRINTF
+#  define GPU_SHADER_PRINTF_ENABLE 1
+#else
+#  define GPU_SHADER_PRINTF_ENABLE 0
+#endif
+#define GPU_SHADER_PRINTF_SLOT 13
+#define GPU_SHADER_PRINTF_MAX_CAPACITY (1024 * 4)
+
+/* Used for primitive expansion. */
+#define GPU_SSBO_INDEX_BUF_SLOT 7
+/* Used for polylines. */
+#define GPU_SSBO_POLYLINE_POS_BUF_SLOT 0
+#define GPU_SSBO_POLYLINE_COL_BUF_SLOT 1
+
+#if defined(GLSL_CPP_STUBS)
+#  define GPU_SHADER_NAMED_INTERFACE_INFO(_interface, _inst_name) \
+    namespace interface::_interface { \
+    struct {
+#  define GPU_SHADER_NAMED_INTERFACE_END(_inst_name) \
+    } \
+    _inst_name; \
+    }
+
+#  define GPU_SHADER_INTERFACE_INFO(_interface) namespace interface::_interface {
+#  define GPU_SHADER_INTERFACE_END() }
+
+#  define GPU_SHADER_CREATE_INFO(_info) \
+    namespace _info { \
+    namespace gl_VertexShader { \
+    } \
+    namespace gl_FragmentShader { \
+    } \
+    namespace gl_ComputeShader { \
+    }
+#  define GPU_SHADER_CREATE_END() }
+
+#  define SHADER_LIBRARY_CREATE_INFO(_info) using namespace _info;
+#  define VERTEX_SHADER_CREATE_INFO(_info) \
+    using namespace ::gl_VertexShader; \
+    using namespace _info::gl_VertexShader; \
+    using namespace _info;
+#  define FRAGMENT_SHADER_CREATE_INFO(_info) \
+    using namespace ::gl_FragmentShader; \
+    using namespace _info::gl_FragmentShader; \
+    using namespace _info;
+#  define COMPUTE_SHADER_CREATE_INFO(_info) \
+    using namespace ::gl_ComputeShader; \
+    using namespace _info::gl_ComputeShader; \
+    using namespace _info;
+
+#elif !defined(GPU_SHADER_CREATE_INFO)
+/* Helps intellisense / auto-completion inside info files. */
+#  define GPU_SHADER_NAMED_INTERFACE_INFO(_interface, _inst_name) \
+    static inline void autocomplete_helper_interface_##_interface() \
+    { \
+      StageInterfaceInfo _interface(#_interface, _inst_name); \
+      _interface
+#  define GPU_SHADER_INTERFACE_INFO(_interface) \
+    static inline void autocomplete_helper_interface_##_interface() \
+    { \
+      StageInterfaceInfo _interface(#_interface); \
+      _interface
+#  define GPU_SHADER_CREATE_INFO(_info) \
+    static inline void autocomplete_helper_info_##_info() \
+    { \
+      ShaderCreateInfo _info(#_info); \
+      _info
+
+#  define GPU_SHADER_NAMED_INTERFACE_END(_inst_name) \
+    ; \
+    }
+#  define GPU_SHADER_INTERFACE_END() \
+    ; \
+    }
+#  define GPU_SHADER_CREATE_END() \
+    ; \
+    }
+
+#endif
+
+#ifndef GLSL_CPP_STUBS
+#  define SMOOTH(type, name) .smooth(Type::type, #name)
+#  define FLAT(type, name) .flat(Type::type, #name)
+#  define NO_PERSPECTIVE(type, name) .no_perspective(Type::type, #name)
+
+/* LOCAL_GROUP_SIZE(int size_x, int size_y = -1, int size_z = -1) */
+#  define LOCAL_GROUP_SIZE(...) .local_group_size(__VA_ARGS__)
+
+#  define VERTEX_IN(slot, type, name) .vertex_in(slot, Type::type, #name)
+#  define VERTEX_OUT(stage_interface) .vertex_out(stage_interface)
+/* TO REMOVE. */
+#  define GEOMETRY_LAYOUT(...) .geometry_layout(__VA_ARGS__)
+#  define GEOMETRY_OUT(stage_interface) .geometry_out(stage_interface)
+
+#  define SUBPASS_IN(slot, type, name, rog) .subpass_in(slot, Type::type, #name, rog)
+
+#  define FRAGMENT_OUT(slot, type, name) .fragment_out(slot, Type::type, #name)
+#  define FRAGMENT_OUT_DUAL(slot, type, name, blend) \
+    .fragment_out(slot, Type::type, #name, DualBlend::blend)
+#  define FRAGMENT_OUT_ROG(slot, type, name, rog) \
+    .fragment_out(slot, Type::type, #name, DualBlend::NONE, rog)
+
+#  define EARLY_FRAGMENT_TEST(enable) .early_fragment_test(enable)
+#  define DEPTH_WRITE(value) .depth_write(value)
+
+#  define SPECIALIZATION_CONSTANT(type, name, default_value) \
+    .specialization_constant(Type::type, #name, default_value)
+
+#  define PUSH_CONSTANT(type, name) .push_constant(Type::type, #name)
+#  define PUSH_CONSTANT_ARRAY(type, name, array_size) .push_constant(Type::type, #name, array_size)
+
+#  define UNIFORM_BUF(slot, type_name, name) .uniform_buf(slot, #type_name, #name)
+#  define UNIFORM_BUF_FREQ(slot, type_name, name, freq) \
+    .uniform_buf(slot, #type_name, #name, Frequency::freq)
+
+#  define STORAGE_BUF(slot, qualifiers, type_name, name) \
+    .storage_buf(slot, Qualifier::qualifiers, STRINGIFY(type_name), #name)
+#  define STORAGE_BUF_FREQ(slot, qualifiers, type_name, name, freq) \
+    .storage_buf(slot, Qualifier::qualifiers, STRINGIFY(type_name), #name, Frequency::freq)
+
+#  define SAMPLER(slot, type, name) .sampler(slot, ImageType::type, #name)
+#  define SAMPLER_FREQ(slot, type, name, freq) \
+    .sampler(slot, ImageType::type, #name, Frequency::freq)
+
+#  define IMAGE(slot, format, qualifiers, type, name) \
+    .image(slot, format, Qualifier::qualifiers, ImageType::type, #name)
+#  define IMAGE_FREQ(slot, format, qualifiers, type, name, freq) \
+    .image(slot, format, Qualifier::qualifiers, ImageType::type, #name, Frequency::freq)
+
+#  define BUILTINS(builtin) .builtins(builtin)
+
+#  define VERTEX_SOURCE(filename) .vertex_source(filename)
+#  define GEOMETRY_SOURCE(filename) .geometry_source(filename)
+#  define FRAGMENT_SOURCE(filename) .fragment_source(filename)
+#  define COMPUTE_SOURCE(filename) .compute_source(filename)
+
+#  define DEFINE(name) .define(name)
+#  define DEFINE_VALUE(name, value) .define(name, value)
+
+#  define DO_STATIC_COMPILATION() .do_static_compilation(true)
+#  define AUTO_RESOURCE_LOCATION() .auto_resource_location(true)
+
+/* TO REMOVE. */
+#  define METAL_BACKEND_ONLY() .metal_backend_only(true)
+
+#  define ADDITIONAL_INFO(info_name) .additional_info(#info_name)
+#  define TYPEDEF_SOURCE(filename) .typedef_source(filename)
+
+#  define MTL_MAX_TOTAL_THREADS_PER_THREADGROUP(value) \
+    .mtl_max_total_threads_per_threadgroup(value)
+
+#else
+
+#  define READ const
+#  define WRITE
+#  define READ_WRITE
+
+#  define _FLOAT_BUFFER(T) T##Buffer
+#  define _FLOAT_1D(T) T##1D
+#  define _FLOAT_1D_ARRAY(T) T##1DArray
+#  define _FLOAT_2D(T) T##2D
+#  define _FLOAT_2D_ARRAY(T) T##2DArray
+#  define _FLOAT_3D(T) T##3D
+#  define _FLOAT_CUBE(T) T##Cube
+#  define _FLOAT_CUBE_ARRAY(T) T##CubeArray
+#  define _INT_BUFFER(T) i##T##Buffer
+#  define _INT_1D(T) i##T##1D
+#  define _INT_1D_ARRAY(T) i##T##1DArray
+#  define _INT_2D(T) i##T##2D
+#  define _INT_2D_ATOMIC(T) i##T##2D
+#  define _INT_2D_ARRAY(T) i##T##2DArray
+#  define _INT_2D_ARRAY_ATOMIC(T) i##T##2DArray
+#  define _INT_3D(T) i##T##3D
+#  define _INT_3D_ATOMIC(T) i##T##3D
+#  define _INT_CUBE(T) i##T##Cube
+#  define _INT_CUBE_ARRAY(T) i##T##CubeArray
+#  define _UINT_BUFFER(T) u##T##Buffer
+#  define _UINT_1D(T) u##T##1D
+#  define _UINT_1D_ARRAY(T) u##T##1DArray
+#  define _UINT_2D(T) u##T##2D
+#  define _UINT_2D_ATOMIC(T) u##T##2D
+#  define _UINT_2D_ARRAY(T) u##T##2DArray
+#  define _UINT_2D_ARRAY_ATOMIC(T) u##T##2DArray
+#  define _UINT_3D(T) u##T##3D
+#  define _UINT_3D_ATOMIC(T) u##T##3D
+#  define _UINT_CUBE(T) u##T##Cube
+#  define _UINT_CUBE_ARRAY(T) u##T##CubeArray
+#  define _SHADOW_2D(T) T##2DShadow
+#  define _SHADOW_2D_ARRAY(T) T##2DArrayShadow
+#  define _SHADOW_CUBE(T) T##CubeShadow
+#  define _SHADOW_CUBE_ARRAY(T) T##CubeArrayShadow
+#  define _DEPTH_2D(T) T##2D
+#  define _DEPTH_2D_ARRAY(T) T##2DArray
+#  define _DEPTH_CUBE(T) T##Cube
+#  define _DEPTH_CUBE_ARRAY(T) T##CubeArray
+
+#  define SMOOTH(type, name) type name = {};
+#  define FLAT(type, name) type name = {};
+#  define NO_PERSPECTIVE(type, name) type name = {};
+
+/* LOCAL_GROUP_SIZE(int size_x, int size_y = -1, int size_z = -1) */
+#  define LOCAL_GROUP_SIZE(...)
+
+#  define VERTEX_IN(slot, type, name) \
+    namespace gl_VertexShader { \
+    const type name = {}; \
+    }
+#  define VERTEX_OUT(stage_interface) using namespace interface::stage_interface;
+/* TO REMOVE. */
+#  define GEOMETRY_LAYOUT(...)
+#  define GEOMETRY_OUT(stage_interface) using namespace interface::stage_interface;
+
+#  define SUBPASS_IN(slot, type, name, rog) const type name = {};
+
+#  define FRAGMENT_OUT(slot, type, name) \
+    namespace gl_FragmentShader { \
+    type name; \
+    }
+#  define FRAGMENT_OUT_DUAL(slot, type, name, blend) \
+    namespace gl_FragmentShader { \
+    type name; \
+    }
+#  define FRAGMENT_OUT_ROG(slot, type, name, rog) \
+    namespace gl_FragmentShader { \
+    type name; \
+    }
+
+#  define EARLY_FRAGMENT_TEST(enable)
+#  define DEPTH_WRITE(value)
+
+#  define SPECIALIZATION_CONSTANT(type, name, default_value) \
+    constexpr type name = type(default_value);
+
+#  define PUSH_CONSTANT(type, name) extern const type name;
+#  define PUSH_CONSTANT_ARRAY(type, name, array_size) extern const type name[array_size];
+
+#  define UNIFORM_BUF(slot, type_name, name) extern const type_name name;
+#  define UNIFORM_BUF_FREQ(slot, type_name, name, freq) extern const type_name name;
+
+#  define STORAGE_BUF(slot, qualifiers, type_name, name) extern qualifiers type_name name;
+#  define STORAGE_BUF_FREQ(slot, qualifiers, type_name, name, freq) \
+    extern qualifiers type_name name;
+
+#  define SAMPLER(slot, type, name) _##type(sampler) name;
+#  define SAMPLER_FREQ(slot, type, name, freq) _##type(sampler) name;
+
+#  define IMAGE(slot, format, qualifiers, type, name) qualifiers _##type(image) name;
+#  define IMAGE_FREQ(slot, format, qualifiers, type, name, freq) qualifiers _##type(image) name;
+
+#  define BUILTINS(builtin)
+
+#  define VERTEX_SOURCE(filename)
+#  define GEOMETRY_SOURCE(filename)
+#  define FRAGMENT_SOURCE(filename)
+#  define COMPUTE_SOURCE(filename)
+
+#  define DEFINE(name)
+#  define DEFINE_VALUE(name, value)
+
+#  define DO_STATIC_COMPILATION()
+#  define AUTO_RESOURCE_LOCATION()
+
+/* TO REMOVE. */
+#  define METAL_BACKEND_ONLY()
+
+#  define ADDITIONAL_INFO(info_name) \
+    using namespace info_name; \
+    using namespace info_name::gl_FragmentShader; \
+    using namespace info_name::gl_VertexShader;
+
+#  define TYPEDEF_SOURCE(filename)
+
+#  define MTL_MAX_TOTAL_THREADS_PER_THREADGROUP(value)
+#endif
+
+#define _INFO_EXPAND2(a, b) ADDITIONAL_INFO(a) ADDITIONAL_INFO(b)
+#define _INFO_EXPAND3(a, b, c) _INFO_EXPAND2(a, b) ADDITIONAL_INFO(c)
+#define _INFO_EXPAND4(a, b, c, d) _INFO_EXPAND3(a, b, c) ADDITIONAL_INFO(d)
+#define _INFO_EXPAND5(a, b, c, d, e) _INFO_EXPAND4(a, b, c, d) ADDITIONAL_INFO(e)
+#define _INFO_EXPAND6(a, b, c, d, e, f) _INFO_EXPAND5(a, b, c, d, e) ADDITIONAL_INFO(f)
+
+#define ADDITIONAL_INFO_EXPAND(...) VA_NARGS_CALL_OVERLOAD(_INFO_EXPAND, __VA_ARGS__)
+
+#define CREATE_INFO_VARIANT(name, ...) \
+  GPU_SHADER_CREATE_INFO(name) \
+  DO_STATIC_COMPILATION() \
+  ADDITIONAL_INFO_EXPAND(__VA_ARGS__) \
+  GPU_SHADER_CREATE_END()
+
+#if !defined(GLSL_CPP_STUBS)
 
 namespace blender::gpu::shader {
-
-/* Helps intellisense / auto-completion. */
-#ifndef GPU_SHADER_CREATE_INFO
-#  define GPU_SHADER_INTERFACE_INFO(_interface, _inst_name) \
-    StageInterfaceInfo _interface(#_interface, _inst_name); \
-    _interface
-#  define GPU_SHADER_CREATE_INFO(_info) \
-    ShaderCreateInfo _info(#_info); \
-    _info
-#endif
 
 /* All of these functions is a bit out of place */
 static inline Type to_type(const eGPUType type)
@@ -174,10 +461,10 @@ enum class BuiltinBits {
   TEXTURE_ATOMIC = (1 << 18),
 
   /* Not a builtin but a flag we use to tag shaders that use the debug features. */
+  USE_PRINTF = (1 << 28),
   USE_DEBUG_DRAW = (1 << 29),
-  USE_DEBUG_PRINT = (1 << 30),
 };
-ENUM_OPERATORS(BuiltinBits, BuiltinBits::USE_DEBUG_PRINT);
+ENUM_OPERATORS(BuiltinBits, BuiltinBits::USE_DEBUG_DRAW);
 
 /**
  * Follow convention described in:
@@ -255,19 +542,22 @@ enum class Qualifier {
 };
 ENUM_OPERATORS(Qualifier, Qualifier::QUALIFIER_MAX);
 
+/** Maps to different descriptor sets. */
 enum class Frequency {
   BATCH = 0,
   PASS,
+  /** Special frequency tag that will automatically source storage buffers from GPUBatch. */
+  GEOMETRY,
 };
 
-/* Dual Source Blending Index. */
+/** Dual Source Blending Index. */
 enum class DualBlend {
   NONE = 0,
   SRC_0,
   SRC_1,
 };
 
-/* Interpolation qualifiers. */
+/** Interpolation qualifiers. */
 enum class Interpolation {
   SMOOTH = 0,
   FLAT,
@@ -308,9 +598,9 @@ struct StageInterfaceInfo {
   /** List of all members of the interface. */
   Vector<InOut> inouts;
 
-  StageInterfaceInfo(const char *name_, const char *instance_name_)
+  StageInterfaceInfo(const char *name_, const char *instance_name_ = "")
       : name(name_), instance_name(instance_name_){};
-  ~StageInterfaceInfo(){};
+  ~StageInterfaceInfo() = default;
 
   using Self = StageInterfaceInfo;
 
@@ -367,24 +657,24 @@ struct ShaderCreateInfo {
   /** Manually set builtins. */
   BuiltinBits builtins_ = BuiltinBits::NONE;
   /** Manually set generated code. */
-  std::string vertex_source_generated = "";
-  std::string fragment_source_generated = "";
-  std::string compute_source_generated = "";
-  std::string geometry_source_generated = "";
-  std::string typedef_source_generated = "";
+  std::string vertex_source_generated;
+  std::string fragment_source_generated;
+  std::string compute_source_generated;
+  std::string geometry_source_generated;
+  std::string typedef_source_generated;
   /** Manually set generated dependencies. */
-  Vector<const char *, 0> dependencies_generated;
+  Vector<StringRefNull, 0> dependencies_generated;
 
-#define TEST_EQUAL(a, b, _member) \
-  if (!((a)._member == (b)._member)) { \
-    return false; \
-  }
+#  define TEST_EQUAL(a, b, _member) \
+    if (!((a)._member == (b)._member)) { \
+      return false; \
+    }
 
-#define TEST_VECTOR_EQUAL(a, b, _vector) \
-  TEST_EQUAL(a, b, _vector.size()); \
-  for (auto i : _vector.index_range()) { \
-    TEST_EQUAL(a, b, _vector[i]); \
-  }
+#  define TEST_VECTOR_EQUAL(a, b, _vector) \
+    TEST_EQUAL(a, b, _vector.size()); \
+    for (auto i : _vector.index_range()) { \
+      TEST_EQUAL(a, b, _vector[i]); \
+    }
 
   struct VertIn {
     int index;
@@ -408,7 +698,7 @@ struct ShaderCreateInfo {
     /** Set to -1 by default to check if used. */
     int max_vertices = -1;
 
-    bool operator==(const GeometryStageLayout &b)
+    bool operator==(const GeometryStageLayout &b) const
     {
       TEST_EQUAL(*this, b, primitive_in);
       TEST_EQUAL(*this, b, invocations);
@@ -424,7 +714,7 @@ struct ShaderCreateInfo {
     int local_size_y = -1;
     int local_size_z = -1;
 
-    bool operator==(const ComputeStageLayout &b)
+    bool operator==(const ComputeStageLayout &b) const
     {
       TEST_EQUAL(*this, b, local_size_x);
       TEST_EQUAL(*this, b, local_size_y);
@@ -535,9 +825,34 @@ struct ShaderCreateInfo {
    * Resources are grouped by frequency of change.
    * Pass resources are meant to be valid for the whole pass.
    * Batch resources can be changed in a more granular manner (per object/material).
-   * Mis-usage will only produce suboptimal performance.
+   * Geometry resources can be changed in a very granular manner (per draw-call).
+   * Misuse will only produce suboptimal performance.
    */
-  Vector<Resource> pass_resources_, batch_resources_;
+  Vector<Resource> pass_resources_, batch_resources_, geometry_resources_;
+
+  Vector<Resource> &resources_get_(Frequency freq)
+  {
+    switch (freq) {
+      case Frequency::PASS:
+        return pass_resources_;
+      case Frequency::BATCH:
+        return batch_resources_;
+      case Frequency::GEOMETRY:
+        return geometry_resources_;
+    }
+    BLI_assert_unreachable();
+    return pass_resources_;
+  }
+
+  /* Return all resources regardless of their frequency. */
+  Vector<Resource> resources_get_all_() const
+  {
+    Vector<Resource> all_resources;
+    all_resources.extend(pass_resources_);
+    all_resources.extend(batch_resources_);
+    all_resources.extend(geometry_resources_);
+    return all_resources;
+  }
 
   Vector<StageInterfaceInfo *> vertex_out_interfaces_;
   Vector<StageInterfaceInfo *> geometry_out_interfaces_;
@@ -575,13 +890,13 @@ struct ShaderCreateInfo {
   Vector<const char *> tf_names_;
 
   /* Api-specific parameters. */
-#ifdef WITH_METAL_BACKEND
+#  ifdef WITH_METAL_BACKEND
   ushort mtl_max_threads_per_threadgroup_ = 0;
-#endif
+#  endif
 
  public:
   ShaderCreateInfo(const char *name) : name_(name){};
-  ~ShaderCreateInfo(){};
+  ~ShaderCreateInfo() = default;
 
   using Self = ShaderCreateInfo;
 
@@ -709,14 +1024,14 @@ struct ShaderCreateInfo {
     constant.name = name;
     switch (type) {
       case Type::INT:
-        constant.value.i = static_cast<int>(default_value);
+        constant.value.i = int(default_value);
         break;
       case Type::BOOL:
       case Type::UINT:
-        constant.value.u = static_cast<uint>(default_value);
+        constant.value.u = uint(default_value);
         break;
       case Type::FLOAT:
-        constant.value.f = static_cast<float>(default_value);
+        constant.value.f = float(default_value);
         break;
       default:
         BLI_assert_msg(0, "Only scalar types can be used as constants");
@@ -745,7 +1060,7 @@ struct ShaderCreateInfo {
     Resource res(Resource::BindType::UNIFORM_BUFFER, slot);
     res.uniformbuf.name = name;
     res.uniformbuf.type_name = type_name;
-    ((freq == Frequency::PASS) ? pass_resources_ : batch_resources_).append(res);
+    resources_get_(freq).append(res);
     interface_names_size_ += name.size() + 1;
     return *(Self *)this;
   }
@@ -760,7 +1075,7 @@ struct ShaderCreateInfo {
     res.storagebuf.qualifiers = qualifiers;
     res.storagebuf.type_name = type_name;
     res.storagebuf.name = name;
-    ((freq == Frequency::PASS) ? pass_resources_ : batch_resources_).append(res);
+    resources_get_(freq).append(res);
     interface_names_size_ += name.size() + 1;
     return *(Self *)this;
   }
@@ -777,7 +1092,7 @@ struct ShaderCreateInfo {
     res.image.qualifiers = qualifiers;
     res.image.type = type;
     res.image.name = name;
-    ((freq == Frequency::PASS) ? pass_resources_ : batch_resources_).append(res);
+    resources_get_(freq).append(res);
     interface_names_size_ += name.size() + 1;
     return *(Self *)this;
   }
@@ -794,7 +1109,7 @@ struct ShaderCreateInfo {
     /* Produces ASAN errors for the moment. */
     // res.sampler.sampler = sampler;
     UNUSED_VARS(sampler);
-    ((freq == Frequency::PASS) ? pass_resources_ : batch_resources_).append(res);
+    resources_get_(freq).append(res);
     interface_names_size_ += name.size() + 1;
     return *(Self *)this;
   }
@@ -977,11 +1292,11 @@ struct ShaderCreateInfo {
    * front. Maximum value is 1024. */
   Self &mtl_max_total_threads_per_threadgroup(ushort max_total_threads_per_threadgroup)
   {
-#ifdef WITH_METAL_BACKEND
+#  ifdef WITH_METAL_BACKEND
     mtl_max_threads_per_threadgroup_ = max_total_threads_per_threadgroup;
-#else
+#  else
     UNUSED_VARS(max_total_threads_per_threadgroup);
-#endif
+#  endif
     return *(Self *)this;
   }
 
@@ -994,8 +1309,10 @@ struct ShaderCreateInfo {
    * descriptors. This avoids tedious traversal in shader source creation.
    * \{ */
 
-  /* WARNING: Recursive. */
-  void finalize();
+  /* WARNING: Recursive evaluation is not thread safe.
+   * Non-recursive evaluation expects their dependencies to be already finalized.
+   * (All statically declared CreateInfos are automatically finalized at startup) */
+  void finalize(const bool recursive = false);
 
   std::string check_error() const;
   bool is_vulkan_compatible() const;
@@ -1013,7 +1330,7 @@ struct ShaderCreateInfo {
 
   /* Comparison operator for GPUPass cache. We only compare if it will create the same shader
    * code. So we do not compare name and some other internal stuff. */
-  bool operator==(const ShaderCreateInfo &b)
+  bool operator==(const ShaderCreateInfo &b) const
   {
     TEST_EQUAL(*this, b, builtins_);
     TEST_EQUAL(*this, b, vertex_source_generated);
@@ -1026,6 +1343,7 @@ struct ShaderCreateInfo {
     TEST_VECTOR_EQUAL(*this, b, fragment_outputs_);
     TEST_VECTOR_EQUAL(*this, b, pass_resources_);
     TEST_VECTOR_EQUAL(*this, b, batch_resources_);
+    TEST_VECTOR_EQUAL(*this, b, geometry_resources_);
     TEST_VECTOR_EQUAL(*this, b, vertex_out_interfaces_);
     TEST_VECTOR_EQUAL(*this, b, geometry_out_interfaces_);
     TEST_VECTOR_EQUAL(*this, b, push_constants_);
@@ -1065,10 +1383,13 @@ struct ShaderCreateInfo {
     };
 
     /* TODO(@fclem): Order the resources. */
-    for (auto &res : info.batch_resources_) {
+    for (const auto &res : info.batch_resources_) {
       print_resource(res);
     }
-    for (auto &res : info.pass_resources_) {
+    for (const auto &res : info.pass_resources_) {
+      print_resource(res);
+    }
+    for (const auto &res : info.geometry_resources_) {
       print_resource(res);
     }
     return stream;
@@ -1076,12 +1397,17 @@ struct ShaderCreateInfo {
 
   bool has_resource_type(Resource::BindType bind_type) const
   {
-    for (auto &res : batch_resources_) {
+    for (const auto &res : batch_resources_) {
       if (res.bind_type == bind_type) {
         return true;
       }
     }
-    for (auto &res : pass_resources_) {
+    for (const auto &res : pass_resources_) {
+      if (res.bind_type == bind_type) {
+        return true;
+      }
+    }
+    for (const auto &res : geometry_resources_) {
       if (res.bind_type == bind_type) {
         return true;
       }
@@ -1096,8 +1422,8 @@ struct ShaderCreateInfo {
 
   /** \} */
 
-#undef TEST_EQUAL
-#undef TEST_VECTOR_EQUAL
+#  undef TEST_EQUAL
+#  undef TEST_VECTOR_EQUAL
 };
 
 }  // namespace blender::gpu::shader
@@ -1114,3 +1440,5 @@ template<> struct DefaultHash<Vector<blender::gpu::shader::SpecializationConstan
   }
 };
 }  // namespace blender
+
+#endif

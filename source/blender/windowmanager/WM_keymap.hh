@@ -11,7 +11,6 @@
 #include <optional>
 #include <string>
 
-#include "BLI_utildefines.h"
 #include "DNA_windowmanager_types.h"
 #include "WM_types.hh"
 
@@ -87,7 +86,7 @@ wmKeyMap *WM_keymap_find_all_spaceid_or_empty(wmWindowManager *wm,
                                               int spaceid,
                                               int regionid);
 wmKeyMap *WM_keymap_active(const wmWindowManager *wm, wmKeyMap *keymap);
-void WM_keymap_remove(wmKeyConfig *keyconfig, wmKeyMap *keymap);
+void WM_keymap_remove(wmKeyConfig *keyconf, wmKeyMap *keymap);
 bool WM_keymap_poll(bContext *C, wmKeyMap *keymap);
 
 wmKeyMapItem *WM_keymap_item_find_id(wmKeyMap *keymap, int id);

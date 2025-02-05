@@ -26,12 +26,11 @@
 #include "UI_interface.hh"
 #include "UI_resources.hh"
 
-#include "MEM_guardedalloc.h"
-
 #include "MOD_ui_common.hh"
 
 #include "RE_texture.h"
 
+#include "RNA_access.hh"
 #include "RNA_prototypes.hh"
 
 #include "BLI_math_vector.h"
@@ -76,7 +75,9 @@ static void foreach_ID_link(ModifierData *md, Object *ob, IDWalkFunc walk, void 
 
 static void foreach_tex_link(ModifierData *md, Object *ob, TexWalkFunc walk, void *user_data)
 {
-  walk(user_data, ob, md, "texture");
+  PointerRNA ptr = RNA_pointer_create_discrete(&ob->id, &RNA_Modifier, md);
+  PropertyRNA *prop = RNA_struct_find_property(&ptr, "texture");
+  walk(user_data, ob, md, &ptr, prop);
 }
 
 static bool depends_on_time(Scene * /*scene*/, ModifierData *md)
@@ -98,14 +99,14 @@ static void panel_draw(const bContext *C, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
 
-  uiTemplateID(layout, C, ptr, "texture", "texture.new", nullptr, nullptr, 0, false, nullptr);
+  uiTemplateID(layout, C, ptr, "texture", "texture.new", nullptr, nullptr);
   uiItemR(layout, ptr, "texture_map_mode", UI_ITEM_NONE, IFACE_("Texture Mapping"), ICON_NONE);
 
   if (vdmd->texture_map_mode == MOD_VOLUME_DISPLACE_MAP_OBJECT) {
     uiItemR(layout, ptr, "texture_map_object", UI_ITEM_NONE, IFACE_("Object"), ICON_NONE);
   }
 
-  uiItemR(layout, ptr, "strength", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "strength", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   uiItemR(layout, ptr, "texture_sample_radius", UI_ITEM_NONE, IFACE_("Sample Radius"), ICON_NONE);
   uiItemR(layout, ptr, "texture_mid_level", UI_ITEM_NONE, IFACE_("Mid Level"), ICON_NONE);
 

@@ -39,7 +39,6 @@ class AssetCatalogDefinitionFile {
 
   const CatalogFilePath file_path;
 
- public:
   AssetCatalogDefinitionFile(const CatalogFilePath &file_path);
 
   /**
@@ -67,7 +66,7 @@ class AssetCatalogDefinitionFile {
 
   using AssetCatalogParsedFn = FunctionRef<bool(std::unique_ptr<AssetCatalog>)>;
   void parse_catalog_file(const CatalogFilePath &catalog_definition_file_path,
-                          AssetCatalogParsedFn callback);
+                          AssetCatalogParsedFn catalog_loaded_callback);
 
   std::unique_ptr<AssetCatalogDefinitionFile> copy_and_remap(
       const OwningAssetCatalogMap &catalogs, const OwningAssetCatalogMap &deleted_catalogs) const;

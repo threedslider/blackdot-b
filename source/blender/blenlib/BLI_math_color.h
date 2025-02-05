@@ -45,6 +45,14 @@ void cpack_to_rgb(unsigned int col, float *r_r, float *r_g, float *r_b);
 /** \} */
 
 /* -------------------------------------------------------------------- */
+/** \name Conversion to RGBA
+ * \{ */
+
+void hex_to_rgba(const char *hexcol, float *r_r, float *r_g, float *r_b, float *r_a);
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
 /** \name Conversion from RGB
  * \{ */
 
@@ -120,16 +128,6 @@ MINLINE void premul_float_to_straight_uchar(unsigned char *result, const float c
  * \{ */
 
 /**
- * If the requested RGB shade contains a negative weight for
- * one of the primaries, it lies outside the color gamut
- * accessible from the given triple of primaries.  Desaturate
- * it by adding white, equal quantities of R, G, and B, enough
- * to make RGB all positive. The function returns 1 if the
- * components were modified, zero otherwise.
- */
-int constrain_rgb(float *r, float *g, float *b);
-void minmax_rgb(short c[3]);
-/**
  * Clamp `hsv` to usable values.
  */
 void hsv_clamp_v(float hsv[3], float v_max);
@@ -149,21 +147,13 @@ void rgb_float_to_uchar(unsigned char r_col[3], const float col_f[3]);
 void rgba_float_to_uchar(unsigned char r_col[4], const float col_f[4]);
 
 /**
- * ITU-R BT.709 primaries
- * https://en.wikipedia.org/wiki/Relative_luminance
+ * Compute luminance using Rec.709 primaries, for sRGB and linear Rec.709.
  *
- * Real values are:
- * `Y = 0.2126390059(R) + 0.7151686788(G) + 0.0721923154(B)`
- * according to: "Derivation of Basic Television Color Equations", RP 177-1993
- *
- * As this sums slightly above 1.0, the document recommends to use:
- * `0.2126(R) + 0.7152(G) + 0.0722(B)`, as used here.
- *
- * The high precision values are used to calculate the rounded byte weights so they add up to 255:
- * `54(R) + 182(G) + 19(B)`
+ * Only use for colors known to be in sRGB space, like user interface and themes.
+ * Scene colors should use #IMB_colormanagement_get_luminance instead.
  */
-MINLINE float rgb_to_grayscale(const float rgb[3]);
-MINLINE unsigned char rgb_to_grayscale_byte(const unsigned char rgb[3]);
+MINLINE float srgb_to_grayscale(const float rgb[3]);
+MINLINE unsigned char srgb_to_grayscale_byte(const unsigned char rgb[3]);
 
 MINLINE int compare_rgb_uchar(const unsigned char col_a[3],
                               const unsigned char col_b[3],
@@ -188,19 +178,6 @@ MINLINE void rgba_float_args_set(float col[4], float r, float g, float b, float 
 MINLINE void rgba_uchar_args_test_set(
     unsigned char col[4], unsigned char r, unsigned char g, unsigned char b, unsigned char a);
 MINLINE void cpack_cpy_3ub(unsigned char r_col[3], unsigned int pack);
-
-/** \} */
-
-/* -------------------------------------------------------------------- */
-/** \name lift/gamma/gain / ASC-CDL conversion
- * \{ */
-
-void lift_gamma_gain_to_asc_cdl(const float *lift,
-                                const float *gamma,
-                                const float *gain,
-                                float *offset,
-                                float *slope,
-                                float *power);
 
 /** \} */
 

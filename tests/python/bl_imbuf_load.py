@@ -2,6 +2,10 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+__all__ = (
+    "main",
+)
+
 import os
 import pathlib
 import sys
@@ -45,9 +49,9 @@ class ImBufTest(AbstractImBufTest):
                 expected_metadata = ref_metadata_path.read_text(encoding="utf-8")
 
                 failed = not (actual_metadata == expected_metadata)
-            except BaseException as e:
+            except Exception as ex:
                 if self.verbose:
-                    print_message(e.output.decode("utf-8", 'ignore'))
+                    print_message(ex.output.decode("utf-8", 'ignore'))
                 failed = True
         else:
             if not self.update:

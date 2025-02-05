@@ -16,10 +16,9 @@
 #include "GPU_shader.hh"
 #include "intern/gpu_shader_create_info.hh"
 
-#include "../generic/py_capi_utils.h"
-#include "../generic/python_compat.h"
+#include "../generic/py_capi_utils.hh"
+#include "../generic/python_compat.hh"
 
-#include "gpu_py.hh"
 #include "gpu_py_shader.hh" /* own include */
 #include "gpu_py_texture.hh"
 
@@ -234,7 +233,7 @@ static bool pygpu_interface_info_get_args(BPyGPUStageInterfaceInfo *self,
   }
 
 #ifdef USE_GPU_PY_REFERENCES
-  PyList_Append(self->references, (PyObject *)py_name);
+  PyList_Append(self->references, py_name);
 #endif
 
   *r_type = (Type)pygpu_type.value_found;
@@ -247,7 +246,7 @@ PyDoc_STRVAR(
     pygpu_interface_info_smooth_doc,
     ".. method:: smooth(type, name)\n"
     "\n"
-    "   Add an attribute with qualifier of type `smooth` to the interface block.\n"
+    "   Add an attribute with qualifier of type *smooth* to the interface block.\n"
     "\n"
     "   :arg type: One of these types:\n"
     "\n" PYDOC_TYPE_LIST
@@ -273,7 +272,7 @@ PyDoc_STRVAR(
     pygpu_interface_info_flat_doc,
     ".. method:: flat(type, name)\n"
     "\n"
-    "   Add an attribute with qualifier of type `flat` to the interface block.\n"
+    "   Add an attribute with qualifier of type ``flat`` to the interface block.\n"
     "\n"
     "   :arg type: One of these types:\n"
     "\n" PYDOC_TYPE_LIST
@@ -299,7 +298,7 @@ PyDoc_STRVAR(
     pygpu_interface_info_no_perspective_doc,
     ".. method:: no_perspective(type, name)\n"
     "\n"
-    "   Add an attribute with qualifier of type `no_perspective` to the interface block.\n"
+    "   Add an attribute with qualifier of type ``no_perspective`` to the interface block.\n"
     "\n"
     "   :arg type: One of these types:\n"
     "\n" PYDOC_TYPE_LIST
@@ -426,7 +425,7 @@ static void pygpu_interface_info__tp_dealloc(PyObject *self)
   }
 #endif
 
-  Py_TYPE(self)->tp_free((PyObject *)self);
+  Py_TYPE(self)->tp_free(self);
 }
 
 PyDoc_STRVAR(
@@ -638,12 +637,14 @@ PyDoc_STRVAR(
     pygpu_shader_info_uniform_buf_doc,
     ".. method:: uniform_buf(slot, type_name, name)\n"
     "\n"
-    "   Specify a uniform variable whose type can be one of those declared in `typedef_source`.\n"
+    "   Specify a uniform variable whose type can be one of those declared in "
+    ":meth:`gpu.types.GPUShaderCreateInfo.typedef_source`.\n"
     "\n"
     "   :arg slot: The uniform variable index.\n"
     "   :type slot: int\n"
-    "   :arg type_name: Name of the data type. It can be a struct type defined in the source "
-    "passed through the :meth:`gpu.types.GPUShaderCreateInfo.typedef_source`.\n"
+    "   :arg type_name: Name of the data type. "
+    "It can be a struct type defined in the source passed through the "
+    ":meth:`gpu.types.GPUShaderCreateInfo.typedef_source`.\n"
     "   :type type_name: str\n"
     "   :arg name: The uniform variable name.\n"
     "   :type name: str\n");
@@ -692,7 +693,7 @@ PyDoc_STRVAR(
     "read or written. Possible values are:\n"
     "" PYDOC_QUALIFIERS
     ""
-    "   :type qualifiers: set\n");
+    "   :type qualifiers: set[str]\n");
 static PyObject *pygpu_shader_info_image(BPyGPUShaderCreateInfo *self,
                                          PyObject *args,
                                          PyObject *kwds)
@@ -891,9 +892,8 @@ PyDoc_STRVAR(
     "   :type type: str\n"
     "   :arg name: Name of the constant.\n"
     "   :type name: str\n"
-    "   :arg size: If not zero, indicates that the constant is an array with the "
-    "specified size.\n"
-    "   :type size: uint\n");
+    "   :arg size: If not zero, indicates that the constant is an array with the specified size.\n"
+    "   :type size: int\n");
 static PyObject *pygpu_shader_info_push_constant(BPyGPUShaderCreateInfo *self,
                                                  PyObject *args,
                                                  PyObject *kwds)
@@ -1296,7 +1296,7 @@ static void pygpu_shader_info__tp_dealloc(PyObject *self)
 
 #endif
 
-  Py_TYPE(self)->tp_free((PyObject *)self);
+  Py_TYPE(self)->tp_free(self);
 }
 
 PyDoc_STRVAR(

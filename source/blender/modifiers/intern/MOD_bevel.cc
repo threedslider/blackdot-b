@@ -8,8 +8,6 @@
 
 #include <algorithm>
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_math_vector.h"
 #include "BLI_utildefines.h"
 
@@ -20,6 +18,7 @@
 #include "DNA_object_types.h"
 #include "DNA_screen_types.h"
 
+#include "BKE_attribute.hh"
 #include "BKE_curveprofile.h"
 #include "BKE_deform.hh"
 #include "BKE_mesh.hh"
@@ -29,6 +28,7 @@
 #include "UI_resources.hh"
 
 #include "RNA_access.hh"
+#include "RNA_define.hh"
 #include "RNA_prototypes.hh"
 
 #include "MOD_ui_common.hh"
@@ -71,11 +71,45 @@ static void required_data_mask(ModifierData *md, CustomData_MeshMasks *r_cddata_
   }
 }
 
+static std::string ensure_weight_attribute_meta_data(Mesh &mesh,
+                                                     const blender::StringRef name,
+                                                     const blender::bke::AttrDomain domain,
+                                                     bool &r_attr_converted)
+{
+  using namespace blender;
+  if (!blender::bke::allow_procedural_attribute_access(name)) {
+    return "";
+  }
+  bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
+  const std::optional<bke::AttributeMetaData> meta_data = attributes.lookup_meta_data(name);
+  if (!meta_data) {
+    r_attr_converted = false;
+    return name;
+  }
+  if (meta_data->domain == domain && meta_data->data_type == CD_PROP_FLOAT) {
+    r_attr_converted = false;
+    return name;
+  }
+
+  Array<float> weight(attributes.domain_size(domain));
+  attributes.lookup<float>(name, domain).varray.materialize(weight);
+  const std::string new_name = BKE_attribute_calc_unique_name(AttributeOwner::from_id(&mesh.id),
+                                                              name);
+  attributes.add<float>(
+      new_name, domain, bke::AttributeInitVArray(VArray<float>::ForSpan(weight)));
+  r_attr_converted = true;
+  return new_name;
+}
+
 /*
  * This calls the new bevel code (added since 2.64)
  */
 static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
 {
+  using namespace blender;
+  if (mesh->verts_num == 0) {
+    return mesh;
+  }
   Mesh *result;
   BMesh *bm;
   BMIter iter;
@@ -112,6 +146,13 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   convert_params.cd_mask_extra.emask = CD_MASK_ORIGINDEX;
   convert_params.cd_mask_extra.pmask = CD_MASK_ORIGINDEX;
 
+  bool vert_weight_converted;
+  const std::string vert_weight_name = ensure_weight_attribute_meta_data(
+      *mesh, bmd->vertex_weight_name, bke::AttrDomain::Point, vert_weight_converted);
+  bool edge_weight_converted;
+  const std::string edge_weight_name = ensure_weight_attribute_meta_data(
+      *mesh, bmd->edge_weight_name, bke::AttrDomain::Edge, edge_weight_converted);
+
   bm = BKE_mesh_to_bmesh_ex(mesh, &create_params, &convert_params);
 
   if ((bmd->lim_flags & MOD_BEVEL_VGROUP) && bmd->defgrp_name[0]) {
@@ -119,9 +160,9 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   }
 
   const int bweight_offset_vert = CustomData_get_offset_named(
-      &bm->vdata, CD_PROP_FLOAT, "bevel_weight_vert");
+      &bm->vdata, CD_PROP_FLOAT, vert_weight_name);
   const int bweight_offset_edge = CustomData_get_offset_named(
-      &bm->edata, CD_PROP_FLOAT, "bevel_weight_edge");
+      &bm->edata, CD_PROP_FLOAT, edge_weight_name);
 
   if (bmd->affect_type == MOD_BEVEL_AFFECT_VERTICES) {
     BM_ITER_MESH (v, &iter, bm, BM_VERTS_OF_MESH) {
@@ -209,7 +250,9 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
                 miter_inner,
                 spread,
                 bmd->custom_profile,
-                bmd->vmesh_method);
+                bmd->vmesh_method,
+                bweight_offset_vert,
+                bweight_offset_edge);
 
   result = BKE_mesh_from_bmesh_for_eval_nomain(bm, nullptr, mesh);
 
@@ -218,6 +261,13 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
              bm->ftoolflagpool == nullptr);
 
   BM_mesh_free(bm);
+
+  if (vert_weight_converted) {
+    result->attributes_for_write().remove(vert_weight_name);
+  }
+  if (edge_weight_converted) {
+    result->attributes_for_write().remove(edge_weight_name);
+  }
 
   blender::geometry::debug_randomize_mesh_order(result);
 
@@ -246,33 +296,37 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   bool edge_bevel = RNA_enum_get(ptr, "affect") != MOD_BEVEL_AFFECT_VERTICES;
 
-  uiItemR(layout, ptr, "affect", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "affect", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
   uiLayoutSetPropSep(layout, true);
 
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "offset_type", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "offset_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (RNA_enum_get(ptr, "offset_type") == BEVEL_AMT_PERCENT) {
-    uiItemR(col, ptr, "width_pct", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(col, ptr, "width_pct", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   else {
     uiItemR(col, ptr, "width", UI_ITEM_NONE, IFACE_("Amount"), ICON_NONE);
   }
 
-  uiItemR(layout, ptr, "segments", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "segments", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   uiItemS(layout);
 
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "limit_method", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "limit_method", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   int limit_method = RNA_enum_get(ptr, "limit_method");
   if (limit_method == MOD_BEVEL_ANGLE) {
     sub = uiLayoutColumn(col, false);
     uiLayoutSetActive(sub, edge_bevel);
-    uiItemR(col, ptr, "angle_limit", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(col, ptr, "angle_limit", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  }
+  else if (limit_method == MOD_BEVEL_WEIGHT) {
+    const char *prop_name = edge_bevel ? "edge_weight" : "vertex_weight";
+    uiItemR(col, ptr, prop_name, UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   else if (limit_method == MOD_BEVEL_VGROUP) {
-    modifier_vgroup_ui(col, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", nullptr);
+    modifier_vgroup_ui(col, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
   }
 
   modifier_panel_end(layout, ptr);
@@ -290,7 +344,7 @@ static void profile_panel_draw(const bContext * /*C*/, Panel *panel)
   int miter_outer = RNA_enum_get(ptr, "miter_outer");
   bool edge_bevel = RNA_enum_get(ptr, "affect") != MOD_BEVEL_AFFECT_VERTICES;
 
-  uiItemR(layout, ptr, "profile_type", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "profile_type", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
   uiLayoutSetPropSep(layout, true);
 
@@ -337,17 +391,17 @@ static void geometry_panel_draw(const bContext * /*C*/, Panel *panel)
   if (RNA_enum_get(ptr, "miter_inner") == BEVEL_MITER_ARC) {
     row = uiLayoutRow(layout, false);
     uiLayoutSetActive(row, edge_bevel);
-    uiItemR(row, ptr, "spread", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(row, ptr, "spread", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   uiItemS(layout);
 
   row = uiLayoutRow(layout, false);
   uiLayoutSetActive(row, edge_bevel);
   uiItemR(row, ptr, "vmesh_method", UI_ITEM_NONE, IFACE_("Intersections"), ICON_NONE);
-  uiItemR(layout, ptr, "use_clamp_overlap", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "use_clamp_overlap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   row = uiLayoutRow(layout, false);
   uiLayoutSetActive(row, edge_bevel);
-  uiItemR(row, ptr, "loop_slide", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(row, ptr, "loop_slide", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void shading_panel_draw(const bContext * /*C*/, Panel *panel)
@@ -361,15 +415,15 @@ static void shading_panel_draw(const bContext * /*C*/, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "harden_normals", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "harden_normals", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   col = uiLayoutColumnWithHeading(layout, true, IFACE_("Mark"));
   uiLayoutSetActive(col, edge_bevel);
   uiItemR(col, ptr, "mark_seam", UI_ITEM_NONE, IFACE_("Seam"), ICON_NONE);
   uiItemR(col, ptr, "mark_sharp", UI_ITEM_NONE, IFACE_("Sharp"), ICON_NONE);
 
-  uiItemR(layout, ptr, "material", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "face_strength_mode", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "material", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "face_strength_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void panel_register(ARegionType *region_type)

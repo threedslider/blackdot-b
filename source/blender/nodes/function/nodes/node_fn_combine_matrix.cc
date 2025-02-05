@@ -2,8 +2,6 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BLI_math_matrix.hh"
-
 #include "NOD_inverse_eval_params.hh"
 #include "NOD_value_elem_eval.hh"
 
@@ -236,13 +234,17 @@ static void node_eval_inverse(inverse_eval::InverseEvalParams &params)
 static void node_register()
 {
   static blender::bke::bNodeType ntype;
-  fn_node_type_base(&ntype, FN_NODE_COMBINE_MATRIX, "Combine Matrix", NODE_CLASS_CONVERTER);
+  fn_node_type_base(&ntype, "FunctionNodeCombineMatrix", FN_NODE_COMBINE_MATRIX);
+  ntype.ui_name = "Combine Matrix";
+  ntype.ui_description = "Construct a 4x4 matrix from its individual values";
+  ntype.enum_name_legacy = "COMBINE_MATRIX";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
   ntype.build_multi_function = node_build_multi_function;
   ntype.eval_elem = node_eval_elem;
   ntype.eval_inverse_elem = node_eval_inverse_elem;
   ntype.eval_inverse = node_eval_inverse;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

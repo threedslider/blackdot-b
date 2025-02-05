@@ -10,11 +10,13 @@
 
 struct ARegion;
 struct ARegionType;
+struct ListBase;
 struct Object;
 struct Scene;
 struct SpaceAction;
 struct bAnimContext;
 struct bContext;
+struct wmKeyConfig;
 struct wmOperatorType;
 
 /* internal exports only */
@@ -33,11 +35,14 @@ void action_buttons_register(ARegionType *art);
 void draw_channel_names(bContext *C,
                         bAnimContext *ac,
                         ARegion *region,
-                        const ListBase /* bAnimListElem */ &anim_data);
+                        const ListBase /*bAnimListElem*/ &anim_data);
 /**
  * Draw keyframes in each channel.
  */
-void draw_channel_strips(bAnimContext *ac, SpaceAction *saction, ARegion *region);
+void draw_channel_strips(bAnimContext *ac,
+                         SpaceAction *saction,
+                         ARegion *region,
+                         ListBase /* bAnimListElem */ *anim_data);
 
 void timeline_draw_cache(const SpaceAction *saction, const Object *ob, const Scene *scene);
 

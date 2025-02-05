@@ -3,9 +3,21 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # ./blender.bin --background --python tests/python/bl_blendfile_versioning.py ..
-import bpy
+
+# WARNING(@ideasman42): some blend files causes the tests to fail (seemingly) at random (on Linux & macOS at least).
+# Take care when adding new files as they may break on other platforms, frequently but not on every execution.
+#
+# This needs to be investigated!
+
+__all__ = (
+    "main",
+)
+
 import os
+import platform
 import sys
+
+import bpy
 
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 from bl_blendfile_utils import TestHelper
@@ -43,6 +55,12 @@ class TestBlendFileOpenAllTestFiles(TestHelper):
             "ram_glsl.blend",
         }
 
+        # Directories to exclude relative to `./tests/data/`.
+        self.excluded_dirs = ()
+
+        assert all(p.endswith("/") for p in self.excluded_dirs)
+        self.excluded_dirs = tuple(p.replace("/", os.sep) for p in self.excluded_dirs)
+
         # Generate the slice of blendfile paths that this instance of the test should process.
         blendfile_paths = [p for p in self.iter_blendfiles_from_directory(self.args.src_test_dir)]
         # `os.scandir()` used by `iter_blendfiles_from_directory` does not
@@ -65,30 +83,48 @@ class TestBlendFileOpenAllTestFiles(TestHelper):
         slice_stride_base = total_len // slice_range
         slice_stride_remain = total_len % slice_range
 
-        def gen_indices(i): return (
-            (i * (slice_stride_base + 1))
-            if i < slice_stride_remain else
-            (slice_stride_remain * (slice_stride_base + 1)) + ((i - slice_stride_remain) * slice_stride_base)
-        )
+        def gen_indices(i):
+            return (
+                (i * (slice_stride_base + 1))
+                if i < slice_stride_remain else
+                (slice_stride_remain * (slice_stride_base + 1)) + ((i - slice_stride_remain) * slice_stride_base)
+            )
         slice_indices = [(gen_indices(i), gen_indices(i + 1)) for i in range(slice_range)]
         return slice_indices[slice_index]
 
+    def skip_path_check(self, bfp):
+        if os.path.basename(bfp) in self.excluded_paths:
+            return True
+        if self.excluded_dirs:
+            assert bfp.startswith(self.args.src_test_dir)
+            bfp_relative = bfp[len(self.args.src_test_dir):].rstrip(os.sep)
+            if bfp_relative.startswith(*self.excluded_dirs):
+                return True
+        return False
+
     def test_open(self):
         for bfp in self.blendfile_paths:
-            if os.path.basename(bfp) in self.excluded_paths:
+            if self.skip_path_check(bfp):
                 continue
+            if not self.args.is_quiet:
+                print(f"Trying to open {bfp}", flush=True)
             bpy.ops.wm.read_homefile(use_empty=True, use_factory_startup=True)
             bpy.ops.wm.open_mainfile(filepath=bfp, load_ui=False)
 
     def link_append(self, do_link):
+        operation_name = "link" if do_link else "append"
         for bfp in self.blendfile_paths:
-            if os.path.basename(bfp) in self.excluded_paths:
+            if self.skip_path_check(bfp):
                 continue
             bpy.ops.wm.read_homefile(use_empty=True, use_factory_startup=True)
             with bpy.data.libraries.load(bfp, link=do_link) as (lib_in, lib_out):
                 if len(lib_in.collections):
+                    if not self.args.is_quiet:
+                        print(f"Trying to {operation_name} {bfp}/Collection/{lib_in.collections[0]}", flush=True)
                     lib_out.collections.append(lib_in.collections[0])
                 elif len(lib_in.objects):
+                    if not self.args.is_quiet:
+                        print(f"Trying to {operation_name} {bfp}/Object/{lib_in.objects[0]}", flush=True)
                     lib_out.objects.append(lib_in.objects[0])
 
     def test_link(self):
@@ -119,6 +155,15 @@ def argparse_create():
     )
 
     parser.add_argument(
+        "--quiet",
+        dest="is_quiet",
+        type=bool,
+        default=False,
+        help="Whether to quiet prints of all blendfile read/link attempts",
+        required=False,
+    )
+
+    parser.add_argument(
         "--slice-range",
         dest="slice_range",
         type=int,
@@ -143,8 +188,8 @@ def argparse_create():
 def main():
     args = argparse_create().parse_args()
 
-    assert(args.slice_range > 0)
-    assert(0 <= args.slice_index < args.slice_range)
+    assert args.slice_range > 0
+    assert 0 <= args.slice_index < args.slice_range
 
     for Test in TESTS:
         Test(args).run_all_tests()

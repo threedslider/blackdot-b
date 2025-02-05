@@ -9,6 +9,7 @@
 #include "BKE_ocean.h"
 #include "ocean_intern.h"
 
+#include <algorithm>
 #include <cmath>
 
 #ifdef WITH_OCEANSIM
@@ -62,7 +63,7 @@ static float ocean_spectrum_wind_and_damp(const Ocean *oc,
   const float k_mag_inv = 1.0f / k2;
   const float k_dot_w = (kx * k_mag_inv * oc->_wx) + (kz * k_mag_inv * oc->_wz);
 
-  /* Bias towards wind dir. */
+  /* Bias towards wind direction. */
   float newval = val * pow(fabs(k_dot_w), oc->_wind_alignment);
 
   /* Eliminate wavelengths smaller than cutoff. */
@@ -91,12 +92,8 @@ static float jonswap(const Ocean *oc, const float k2)
   /* Strictly, this should be a random value from a Gaussian (mean 3.3, variance 0.67),
    * clamped 1.0 to 6.0. */
   float m_gamma = oc->_sharpen_peak_jonswap;
-  if (m_gamma < 1.0) {
-    m_gamma = 1.00;
-  }
-  if (m_gamma > 6.0) {
-    m_gamma = 6.0;
-  }
+  m_gamma = std::max<double>(m_gamma, 1.0);
+  m_gamma = std::min<double>(m_gamma, 6.0);
 
   const float m_windspeed = oc->_V;
 

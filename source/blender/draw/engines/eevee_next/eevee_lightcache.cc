@@ -31,7 +31,6 @@
 
 #include "wm_window.hh"
 
-#include "eevee_engine.h"
 #include "eevee_instance.hh"
 
 #include "eevee_lightcache.hh"
@@ -144,7 +143,7 @@ class LightBake {
   /**
    * Called from worker thread.
    */
-  void run(bool *stop = nullptr, bool *do_update = nullptr, float *progress = nullptr)
+  void run(const bool *stop = nullptr, bool *do_update = nullptr, float *progress = nullptr)
   {
     DEG_graph_relations_update(depsgraph_);
     DEG_evaluate_on_framechange(depsgraph_, frame_);
@@ -186,9 +185,9 @@ class LightBake {
             }
           });
 
-      if (instance_->info != "") {
+      if (StringRefNull(instance_->info_get()) != "") {
         /* Pipe report to operator. */
-        report_ = instance_->info;
+        report_ = instance_->info_get();
       }
 
       if ((G.is_break == true) || (stop != nullptr && *stop == true)) {

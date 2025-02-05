@@ -14,6 +14,7 @@
 #include "GPU_index_buffer.hh"
 #include "GPU_shader.hh"
 #include "GPU_shader_shared.hh"
+#include "GPU_state.hh"
 #include "GPU_texture.hh"
 #include "GPU_vertex_buffer.hh"
 #include "GPU_vertex_format.hh"
@@ -384,7 +385,7 @@ static void gpu_shader_lib_test(const char *test_src_name, const char *additiona
     if (ELEM(test.status, TEST_STATUS_NONE, TEST_STATUS_PASSED)) {
       continue;
     }
-    else if (test.status == TEST_STATUS_FAILED) {
+    if (test.status == TEST_STATUS_FAILED) {
       ADD_FAILURE_AT(test_src_name, test.line)
           << "Value of: " << print_test_line(test_src, test.line) << "\n"
           << "  Actual: " << print_test_data(test.expect, TestType(test.type)) << "\n"
@@ -414,11 +415,15 @@ GPU_TEST(math_lib)
 
 static void test_eevee_lib()
 {
+  /* TODO(fclem): Not passing currently. Need to be updated. */
   // gpu_shader_lib_test("eevee_shadow_test.glsl", "eevee_shared");
   gpu_shader_lib_test("eevee_occupancy_test.glsl");
   gpu_shader_lib_test("eevee_horizon_scan_test.glsl");
+#ifndef __APPLE__ /* PSOs fail to compile on Mac. Try to port them to compute shader to see if it \
+                   * fixes the issue. */
   gpu_shader_lib_test("eevee_gbuffer_normal_test.glsl", "eevee_shared");
   gpu_shader_lib_test("eevee_gbuffer_closure_test.glsl", "eevee_shared");
+#endif
 }
 GPU_TEST(eevee_lib)
 

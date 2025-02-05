@@ -44,6 +44,7 @@
 #include "interface_regions_intern.hh"
 
 using blender::StringRef;
+using blender::StringRefNull;
 
 /* -------------------------------------------------------------------- */
 /** \name Utility Functions
@@ -279,7 +280,7 @@ static uiBlock *ui_block_func_POPUP(bContext *C, uiPopupBlockHandle *handle, voi
 
   /* in some cases we create the block before the region,
    * so we set it delayed here if necessary */
-  if (BLI_findindex(&handle->region->uiblocks, block) == -1) {
+  if (BLI_findindex(&handle->region->runtime->uiblocks, block) == -1) {
     UI_block_region_set(block, handle->region);
   }
 
@@ -675,9 +676,13 @@ void UI_popup_block_invoke_ex(
       C, nullptr, nullptr, func, nullptr, arg, arg_free, can_refresh);
   handle->popup = true;
 
+  /* Clear the status bar. */
+  WorkspaceStatus status(C);
+  status.item(" ", ICON_NONE);
+
   UI_popup_handlers_add(C, &window->modalhandlers, handle, 0);
   UI_block_active_only_flagged_buttons(
-      C, handle->region, static_cast<uiBlock *>(handle->region->uiblocks.first));
+      C, handle->region, static_cast<uiBlock *>(handle->region->runtime->uiblocks.first));
   WM_event_add_mousemove(window);
 }
 
@@ -706,9 +711,13 @@ void UI_popup_block_ex(bContext *C,
   handle->cancel_func = cancel_func;
   // handle->opcontext = opcontext;
 
+  /* Clear the status bar. */
+  WorkspaceStatus status(C);
+  status.item(" ", ICON_NONE);
+
   UI_popup_handlers_add(C, &window->modalhandlers, handle, 0);
   UI_block_active_only_flagged_buttons(
-      C, handle->region, static_cast<uiBlock *>(handle->region->uiblocks.first));
+      C, handle->region, static_cast<uiBlock *>(handle->region->runtime->uiblocks.first));
   WM_event_add_mousemove(window);
 }
 
@@ -777,24 +786,20 @@ void UI_popup_block_template_confirm(uiBlock *block,
 
 void UI_popup_block_template_confirm_op(uiLayout *layout,
                                         wmOperatorType *ot,
-                                        const char *confirm_text,
-                                        const char *cancel_text,
+                                        const std::optional<StringRef> confirm_text_opt,
+                                        const std::optional<StringRef> cancel_text_opt,
                                         const int icon,
                                         bool cancel_default,
                                         PointerRNA *r_ptr)
 {
   uiBlock *block = uiLayoutGetBlock(layout);
 
-  if (confirm_text == nullptr) {
-    confirm_text = IFACE_("OK");
-  }
-  if (cancel_text == nullptr) {
-    cancel_text = IFACE_("Cancel");
-  }
+  const StringRef confirm_text = confirm_text_opt.value_or(IFACE_("OK"));
+  const StringRef cancel_text = cancel_text_opt.value_or(IFACE_("Cancel"));
 
   /* Use a split so both buttons are the same size. */
-  const bool show_confirm = confirm_text[0] != '\0';
-  const bool show_cancel = cancel_text[0] != '\0';
+  const bool show_confirm = !confirm_text.is_empty();
+  const bool show_cancel = !cancel_text.is_empty();
   uiLayout *row = (show_confirm && show_cancel) ? uiLayoutSplit(layout, 0.5f, false) : layout;
 
   /* When only one button is shown, make it default. */
@@ -887,12 +892,14 @@ void UI_popup_block_close(bContext *C, wmWindow *win, uiBlock *block)
       }
     }
   }
+
+  ED_workspace_status_text(C, nullptr);
 }
 
 bool UI_popup_block_name_exists(const bScreen *screen, const blender::StringRef name)
 {
   LISTBASE_FOREACH (const ARegion *, region, &screen->regionbase) {
-    LISTBASE_FOREACH (const uiBlock *, block, &region->uiblocks) {
+    LISTBASE_FOREACH (const uiBlock *, block, &region->runtime->uiblocks) {
       if (block->name == name) {
         return true;
       }

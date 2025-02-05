@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "BLI_math_vector_types.hh"
 #include "BLI_span.hh"
 
 #include "DNA_modifier_types.h"
@@ -46,14 +47,19 @@ Mesh *volume_to_mesh(const openvdb::GridBase &grid,
 
 Mesh *volume_grid_to_mesh(const openvdb::GridBase &grid, float threshold, float adaptivity);
 
+struct VolumeToMeshDataResult {
+  OpenVDBMeshData data;
+  std::string error;
+};
+
 /**
  * Convert an OpenVDB volume grid to corresponding mesh data: vertex positions and quad and
  * triangle indices.
  */
-OpenVDBMeshData volume_to_mesh_data(const openvdb::GridBase &grid,
-                                    const VolumeToMeshResolution &resolution,
-                                    float threshold,
-                                    float adaptivity);
+VolumeToMeshDataResult volume_to_mesh_data(const openvdb::GridBase &grid,
+                                           const VolumeToMeshResolution &resolution,
+                                           float threshold,
+                                           float adaptivity);
 
 /**
  * Convert mesh data from the format provided by OpenVDB into Blender's #Mesh data structure.

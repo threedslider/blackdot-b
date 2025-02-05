@@ -9,7 +9,7 @@
 #include "BKE_blender.hh"
 #include "BKE_preferences.h"
 
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string_ref.hh"
 
 #include "DNA_asset_types.h"
@@ -19,12 +19,12 @@
 
 #include "AS_asset_library.hh"
 #include "AS_essentials_library.hh"
-#include "asset_library_all.hh"
-#include "asset_library_essentials.hh"
-#include "asset_library_from_preferences.hh"
-#include "asset_library_on_disk.hh"
-#include "asset_library_runtime.hh"
+#include "all_library.hh"
 #include "asset_library_service.hh"
+#include "essentials_library.hh"
+#include "on_disk_library.hh"
+#include "preferences_on_disk_library.hh"
+#include "runtime_library.hh"
 #include "utils.hh"
 
 /* When enabled, use a pre file load handler (#BKE_CB_EVT_LOAD_PRE) callback to destroy the asset
@@ -90,7 +90,7 @@ AssetLibrary *AssetLibraryService::get_asset_library(
     case ASSET_LIBRARY_ALL:
       return this->get_asset_library_all(bmain);
     case ASSET_LIBRARY_CUSTOM: {
-      bUserAssetLibrary *custom_library = this->find_custom_asset_library_from_library_ref(
+      bUserAssetLibrary *custom_library = find_custom_asset_library_from_library_ref(
           library_reference);
       if (!custom_library) {
         return nullptr;
@@ -205,14 +205,14 @@ void AssetLibraryService::reload_all_library_catalogs_if_dirty()
   }
 }
 
+void AssetLibraryService::destroy_runtime_current_file_library()
+{
+  AssetLibraryService &library_service = *AssetLibraryService::get();
+  library_service.current_file_library_ = nullptr;
+}
+
 AssetLibrary *AssetLibraryService::get_asset_library_all(const Main *bmain)
 {
-  if (all_library_) {
-    CLOG_INFO(&LOG, 2, "get all lib (cached)");
-    all_library_->refresh_catalogs();
-    return all_library_.get();
-  }
-
   /* (Re-)load all other asset libraries. */
   for (AssetLibraryReference &library_ref : all_valid_asset_library_refs()) {
     /* Skip self :) */
@@ -224,10 +224,15 @@ AssetLibrary *AssetLibraryService::get_asset_library_all(const Main *bmain)
     this->get_asset_library(bmain, library_ref);
   }
 
-  CLOG_INFO(&LOG, 2, "get all lib (loaded)");
-  all_library_ = std::make_unique<AllAssetLibrary>();
+  if (!all_library_) {
+    CLOG_INFO(&LOG, 2, "get all lib (loaded)");
+    all_library_ = std::make_unique<AllAssetLibrary>();
+  }
+  else {
+    CLOG_INFO(&LOG, 2, "get all lib (cached)");
+  }
 
-  /* Don't reload catalogs on this initial read, they've just been loaded above. */
+  /* Don't reload catalogs, they've just been loaded above. */
   all_library_->rebuild_catalogs_from_nested(/*reload_nested_catalogs=*/false);
 
   return all_library_.get();
@@ -261,8 +266,8 @@ std::string AssetLibraryService::resolve_asset_weak_reference_to_library_path(
 
   switch (eAssetLibraryType(asset_reference.asset_library_type)) {
     case ASSET_LIBRARY_CUSTOM: {
-      bUserAssetLibrary *custom_lib =
-          this->find_custom_preferences_asset_library_from_asset_weak_ref(asset_reference);
+      bUserAssetLibrary *custom_lib = find_custom_preferences_asset_library_from_asset_weak_ref(
+          asset_reference);
       if (custom_lib) {
         library_dirpath = custom_lib->dirpath;
         break;
@@ -348,13 +353,14 @@ std::string AssetLibraryService::normalize_asset_weak_reference_relative_asset_i
                                    group_name_sep_pos + 1);
 }
 
-/* TODO currently only works for asset libraries on disk (custom or essentials asset libraries).
- * Once there is a proper registry of asset libraries, this could contain an asset library locator
- * and/or identifier, so a full path (not necessarily file path) can be built for all asset
- * libraries. */
 std::string AssetLibraryService::resolve_asset_weak_reference_to_full_path(
     const AssetWeakReference &asset_reference)
 {
+  /* TODO currently only works for asset libraries on disk (custom or essentials asset libraries).
+   * Once there is a proper registry of asset libraries, this could contain an asset library
+   * locator and/or identifier, so a full path (not necessarily file path) can be built for all
+   * asset libraries. */
+
   if (asset_reference.relative_asset_identifier[0] == '\0') {
     return "";
   }

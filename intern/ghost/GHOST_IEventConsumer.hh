@@ -24,7 +24,7 @@ class GHOST_IEventConsumer {
   /**
    * Destructor.
    */
-  virtual ~GHOST_IEventConsumer() {}
+  virtual ~GHOST_IEventConsumer() = default;
 
   /**
    * This method is called by the system when it has events to dispatch.
@@ -34,7 +34,5 @@ class GHOST_IEventConsumer {
    */
   virtual bool processEvent(const GHOST_IEvent *event) = 0;
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("GHOST:GHOST_IEventConsumer")
-#endif
 };

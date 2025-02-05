@@ -22,17 +22,17 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_alloca.h"
+#include "BLI_linklist.h"
 #include "BLI_math_geom.h"
 #include "BLI_math_vector.h"
 #include "BLI_memarena.h"
 #include "BLI_sort_utils.h"
 #include "BLI_utildefines.h"
 
-#include "BLI_linklist_stack.h"
 #include "BLI_utildefines_stack.h"
 
 #include "BLI_buffer.h"
-#include "BLI_kdopbvh.h"
+#include "BLI_kdopbvh.hh"
 
 #include "bmesh.hh"
 #include "intern/bmesh_private.hh"
@@ -41,7 +41,7 @@
 
 #include "tools/bmesh_edgesplit.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /*
  * Some of these depend on each other:
@@ -246,7 +246,7 @@ static void face_edges_split(BMesh *bm,
   UNUSED_VARS(use_island_connect, mem_arena_edgenet);
 #  endif
 
-  BM_face_split_edgenet(bm, f, edge_arr, int(edge_arr_len), nullptr, nullptr);
+  BM_face_split_edgenet(bm, f, edge_arr, int(edge_arr_len), nullptr);
 }
 #endif
 

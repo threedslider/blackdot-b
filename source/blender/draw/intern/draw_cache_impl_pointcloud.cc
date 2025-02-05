@@ -12,10 +12,8 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "BLI_color.hh"
 #include "BLI_listbase.h"
-#include "BLI_math_base.h"
-#include "BLI_math_color.hh"
-#include "BLI_math_vector.h"
 #include "BLI_task.hh"
 #include "BLI_utildefines.h"
 
@@ -23,6 +21,7 @@
 #include "DNA_pointcloud_types.h"
 
 #include "BKE_attribute.hh"
+#include "BKE_material.hh"
 #include "BKE_pointcloud.hh"
 
 #include "GPU_batch.hh"
@@ -100,7 +99,7 @@ static bool pointcloud_batch_cache_valid(PointCloud &pointcloud)
   if (cache == nullptr) {
     return false;
   }
-  if (cache->eval_cache.mat_len != DRW_pointcloud_material_count_get(&pointcloud)) {
+  if (cache->eval_cache.mat_len != BKE_id_material_used_with_fallback_eval(pointcloud.id)) {
     return false;
   }
   return cache->is_dirty == false;
@@ -118,7 +117,7 @@ static void pointcloud_batch_cache_init(PointCloud &pointcloud)
     cache->eval_cache = {};
   }
 
-  cache->eval_cache.mat_len = DRW_pointcloud_material_count_get(&pointcloud);
+  cache->eval_cache.mat_len = BKE_id_material_used_with_fallback_eval(pointcloud.id);
   cache->eval_cache.surface_per_mat = static_cast<gpu::Batch **>(
       MEM_callocN(sizeof(gpu::Batch *) * cache->eval_cache.mat_len, __func__));
 
@@ -417,11 +416,6 @@ gpu::VertBuf **DRW_pointcloud_evaluated_attribute(PointCloud *pointcloud, const 
     return nullptr;
   }
   return &cache.eval_cache.attributes_buf[request_i];
-}
-
-int DRW_pointcloud_material_count_get(const PointCloud *pointcloud)
-{
-  return max_ii(1, pointcloud->totcol);
 }
 
 void DRW_pointcloud_batch_cache_create_requested(Object *ob)

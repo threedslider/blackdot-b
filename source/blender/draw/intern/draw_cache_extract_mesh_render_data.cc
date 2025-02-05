@@ -8,24 +8,19 @@
  * \brief Extraction of Mesh data into VBO to feed to GPU.
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_array.hh"
 #include "BLI_array_utils.hh"
 #include "BLI_enumerable_thread_specific.hh"
-#include "BLI_index_mask.hh"
-#include "BLI_math_matrix.h"
+#include "BLI_math_geom.h"
 #include "BLI_task.hh"
 #include "BLI_virtual_array.hh"
 
 #include "BKE_attribute.hh"
 #include "BKE_editmesh.hh"
 #include "BKE_editmesh_cache.hh"
+#include "BKE_material.hh"
 #include "BKE_mesh.hh"
-#include "BKE_mesh_runtime.hh"
 #include "BKE_object.hh"
-
-#include "GPU_batch.hh"
 
 #include "ED_mesh.hh"
 
@@ -122,12 +117,10 @@ static void mesh_render_data_loose_edges_bm(const MeshRenderData &mr,
 
 static void mesh_render_data_loose_geom_build(const MeshRenderData &mr, MeshBufferCache &cache)
 {
-  if (mr.extract_type != MR_EXTRACT_BMESH) {
-    /* Mesh */
+  if (mr.extract_type == MeshExtractType::Mesh) {
     mesh_render_data_loose_geom_mesh(mr, cache);
   }
   else {
-    /* #BMesh */
     BMesh &bm = *mr.bm;
     mesh_render_data_loose_verts_bm(mr, cache, bm);
     mesh_render_data_loose_edges_bm(mr, cache, bm);
@@ -199,7 +192,7 @@ static void accumululate_material_counts_mesh(
             }
             return count;
           },
-          std::plus<int>());
+          std::plus<>());
     }
     else {
       all_tri_counts.local().first() = poly_to_tri_count(mr.faces_num, mr.corners_num);
@@ -233,7 +226,7 @@ static Array<int> mesh_render_data_mat_tri_len_build(const MeshRenderData &mr)
   threading::EnumerableThreadSpecific<Array<int>> all_tri_counts(
       [&]() { return Array<int>(mr.materials_num, 0); });
 
-  if (mr.extract_type == MR_EXTRACT_BMESH) {
+  if (mr.extract_type == MeshExtractType::BMesh) {
     accumululate_material_counts_bm(*mr.bm, all_tri_counts);
   }
   else {
@@ -339,7 +332,7 @@ static SortedFaceData mesh_render_data_faces_sorted_build(const MeshRenderData &
   cache.visible_tris_num = material_tri_starts.last();
 
   /* Sort per material. */
-  if (mr.extract_type == MR_EXTRACT_BMESH) {
+  if (mr.extract_type == MeshExtractType::BMesh) {
     cache.face_tri_offsets = calc_face_tri_starts_bmesh(mr, material_tri_starts);
   }
   else {
@@ -458,7 +451,7 @@ static bke::MeshNormalDomain bmesh_normals_domain(BMesh *bm)
     return bke::MeshNormalDomain::Point;
   }
 
-  if (CustomData_has_layer(&bm->ldata, CD_CUSTOMLOOPNORMAL)) {
+  if (CustomData_has_layer_named(&bm->ldata, CD_PROP_INT16_2D, "custom_normal")) {
     return bke::MeshNormalDomain::Corner;
   }
 
@@ -489,12 +482,13 @@ static bke::MeshNormalDomain bmesh_normals_domain(BMesh *bm)
 
 void mesh_render_data_update_corner_normals(MeshRenderData &mr)
 {
-  if (mr.extract_type != MR_EXTRACT_BMESH) {
+  if (mr.extract_type == MeshExtractType::Mesh) {
     mr.corner_normals = mr.mesh->corner_normals();
   }
   else {
     mr.bm_loop_normals.reinitialize(mr.corners_num);
-    const int clnors_offset = CustomData_get_offset(&mr.bm->ldata, CD_CUSTOMLOOPNORMAL);
+    const int clnors_offset = CustomData_get_offset_named(
+        &mr.bm->ldata, CD_PROP_INT16_2D, "custom_normal");
     BM_loops_calc_normal_vcos(mr.bm,
                               mr.bm_vert_coords,
                               mr.bm_vert_normals,
@@ -510,12 +504,12 @@ void mesh_render_data_update_corner_normals(MeshRenderData &mr)
 
 void mesh_render_data_update_face_normals(MeshRenderData &mr)
 {
-  if (mr.extract_type != MR_EXTRACT_BMESH) {
+  if (mr.extract_type == MeshExtractType::Mesh) {
     /* Eager calculation of face normals can reduce waiting on the lazy cache's lock. */
     mr.face_normals = mr.mesh->face_normals();
   }
   else {
-    /* Use #BMFace.no instead. */
+    /* Use #BMFace.no. */
   }
 }
 
@@ -532,7 +526,6 @@ std::unique_ptr<MeshRenderData> mesh_render_data_create(Object &object,
                                                         Mesh &mesh,
                                                         const bool is_editmode,
                                                         const bool is_paint_mode,
-                                                        const bool edit_mode_active,
                                                         const float4x4 &object_to_world,
                                                         const bool do_final,
                                                         const bool do_uvedit,
@@ -541,24 +534,23 @@ std::unique_ptr<MeshRenderData> mesh_render_data_create(Object &object,
 {
   std::unique_ptr<MeshRenderData> mr = std::make_unique<MeshRenderData>();
   mr->toolsettings = ts;
-  mr->materials_num = mesh_render_mat_len_get(object, mesh);
+  mr->materials_num = BKE_object_material_used_with_fallback_eval(object);
 
   mr->object_to_world = object_to_world;
 
   mr->use_hide = use_hide;
 
-  if (is_editmode) {
-    const Mesh *editmesh_eval_final = BKE_object_get_editmesh_eval_final(&object);
-    const Mesh *editmesh_eval_cage = BKE_object_get_editmesh_eval_cage(&object);
+  const Mesh *editmesh_orig = BKE_object_get_pre_modified_mesh(&object);
+  if (is_editmode && editmesh_orig) {
+    const Mesh *eval_cage = BKE_object_get_editmesh_eval_cage(&object);
 
-    BLI_assert(editmesh_eval_cage && editmesh_eval_final);
-    mr->bm = mesh.runtime->edit_mesh->bm;
-    mr->edit_bmesh = mesh.runtime->edit_mesh.get();
-    mr->mesh = (do_final) ? editmesh_eval_final : editmesh_eval_cage;
-    mr->edit_data = edit_mode_active ? mr->mesh->runtime->edit_data.get() : nullptr;
+    mr->bm = editmesh_orig->runtime->edit_mesh->bm;
+    mr->edit_bmesh = editmesh_orig->runtime->edit_mesh.get();
+    mr->mesh = (do_final) ? &mesh : eval_cage;
+    mr->edit_data = is_editmode ? mr->mesh->runtime->edit_data.get() : nullptr;
 
     /* If there is no distinct cage, hide unmapped edges that can't be selected. */
-    mr->hide_unmapped_edges = !do_final || editmesh_eval_final == editmesh_eval_cage;
+    mr->hide_unmapped_edges = !do_final || &mesh == eval_cage;
 
     if (bke::EditMeshData *emd = mr->edit_data) {
       if (!emd->vert_positions.is_empty()) {
@@ -592,17 +584,17 @@ std::unique_ptr<MeshRenderData> mesh_render_data_create(Object &object,
     /* Use bmesh directly when the object is in edit mode unchanged by any modifiers.
      * For non-final UVs, always use original bmesh since the UV editor does not support
      * using the cage mesh with deformed coordinates. */
-    if ((edit_mode_active && mr->mesh->runtime->is_original_bmesh &&
+    if ((is_editmode && mr->mesh->runtime->is_original_bmesh &&
          mr->mesh->runtime->wrapper_type == ME_WRAPPER_TYPE_BMESH) ||
         (do_uvedit && !do_final))
     {
-      mr->extract_type = MR_EXTRACT_BMESH;
+      mr->extract_type = MeshExtractType::BMesh;
     }
     else {
-      mr->extract_type = MR_EXTRACT_MESH;
+      mr->extract_type = MeshExtractType::Mesh;
 
       /* Use mapping from final to original mesh when the object is in edit mode. */
-      if (edit_mode_active && do_final) {
+      if (is_editmode && do_final) {
         mr->orig_index_vert = static_cast<const int *>(
             CustomData_get_layer(&mr->mesh->vert_data, CD_ORIGINDEX));
         mr->orig_index_edge = static_cast<const int *>(
@@ -620,7 +612,7 @@ std::unique_ptr<MeshRenderData> mesh_render_data_create(Object &object,
   else {
     mr->mesh = &mesh;
     mr->edit_bmesh = nullptr;
-    mr->extract_type = MR_EXTRACT_MESH;
+    mr->extract_type = MeshExtractType::Mesh;
     mr->hide_unmapped_edges = false;
 
     if (is_paint_mode && mr->mesh) {
@@ -638,8 +630,7 @@ std::unique_ptr<MeshRenderData> mesh_render_data_create(Object &object,
     }
   }
 
-  if (mr->extract_type != MR_EXTRACT_BMESH) {
-    /* Mesh */
+  if (mr->extract_type == MeshExtractType::Mesh) {
     mr->verts_num = mr->mesh->verts_num;
     mr->edges_num = mr->mesh->edges_num;
     mr->faces_num = mr->mesh->faces_num;
@@ -665,7 +656,7 @@ std::unique_ptr<MeshRenderData> mesh_render_data_create(Object &object,
 
     mr->material_indices = *attributes.lookup<int>("material_index", bke::AttrDomain::Face);
 
-    if (edit_mode_active || is_paint_mode) {
+    if (is_editmode || is_paint_mode) {
       if (use_hide) {
         mr->hide_vert = *attributes.lookup<bool>(".hide_vert", bke::AttrDomain::Point);
         mr->hide_edge = *attributes.lookup<bool>(".hide_edge", bke::AttrDomain::Edge);
@@ -680,7 +671,6 @@ std::unique_ptr<MeshRenderData> mesh_render_data_create(Object &object,
     mr->sharp_faces = *attributes.lookup<bool>("sharp_face", bke::AttrDomain::Face);
   }
   else {
-    /* #BMesh */
     BMesh *bm = mr->bm;
 
     mr->verts_num = bm->totvert;

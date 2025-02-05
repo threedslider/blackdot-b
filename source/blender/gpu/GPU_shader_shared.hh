@@ -32,6 +32,21 @@ enum eGPUKeyframeShapes : uint32_t {
                                GPU_KEYFRAME_SHAPE_CLIPPED_HORIZONTAL),
 };
 
+#define MAX_SOCKET_PARAMETERS 4
+#define MAX_SOCKET_INSTANCE 32
+
+/* Node Socket shader parameters. Must match the shader layout of "gpu_shader_2D_node_socket". */
+struct NodeSocketShaderParameters {
+  float4 rect;
+  float4 color_inner;
+  float4 color_outline;
+  float outline_thickness;
+  float outline_offset;
+  float shape;
+  float aspect;
+};
+BLI_STATIC_ASSERT_ALIGN(NodeSocketShaderParameters, 16)
+
 struct NodeLinkData {
   float4 colors[3];
   /* bezierPts Is actually a float2, but due to std140 each element needs to be aligned to 16
@@ -120,7 +135,7 @@ struct SeqStripDrawData {
   /* Horizontal strip positions (1.0 is one frame). */
   float left_handle, right_handle;  /* Left and right strip sides. */
   float content_start, content_end; /* Start and end of actual content (only relevant for strips
-                                       that have holdout regions). */
+                                     * that have holdout regions). */
   float handle_width;
   /* Vertical strip positions (1.0 is one channel). */
   float bottom;
@@ -138,16 +153,32 @@ BLI_STATIC_ASSERT_ALIGN(SeqStripDrawData, 16)
 BLI_STATIC_ASSERT(sizeof(SeqStripDrawData) * GPU_SEQ_STRIP_DRAW_DATA_LEN <= 16384,
                   "SeqStripDrawData UBO must not exceed minspec UBO size (16384)")
 
+/* VSE per-thumbnail data for timeline rendering. */
+struct SeqStripThumbData {
+  float left, right, bottom, top; /* Strip rectangle positions. */
+  float x1, y1, x2, y2;           /* Thumbnail rectangle positions. */
+  float u1, v1, u2, v2;           /* Thumbnail UVs. */
+  float4 tint_color;
+};
+BLI_STATIC_ASSERT_ALIGN(SeqStripThumbData, 16)
+BLI_STATIC_ASSERT(sizeof(SeqStripThumbData) * GPU_SEQ_STRIP_DRAW_DATA_LEN <= 16384,
+                  "SeqStripThumbData UBO must not exceed minspec UBO size (16384)")
+
 /* VSE global data for timeline rendering. */
 struct SeqContextDrawData {
-  float pixelx, pixely; /* Size of one pixel in timeline coordinate space. */
-  float inv_pixelx, inv_pixely;
   float round_radius;
   float pixelsize;
   uint col_back;
   float _pad0;
 };
 BLI_STATIC_ASSERT_ALIGN(SeqContextDrawData, 16)
+
+struct GreasePencilStrokeData {
+  packed_float3 position;
+  float stroke_thickness;
+  float4 stroke_color;
+};
+BLI_STATIC_ASSERT_ALIGN(GreasePencilStrokeData, 16)
 
 enum TestStatus : uint32_t {
   TEST_STATUS_NONE = 0u,

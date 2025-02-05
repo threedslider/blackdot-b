@@ -21,7 +21,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 {
   const bNode *node = b.node_or_null();
 
-  b.add_input<decl::String>("Name").is_attribute_name();
+  b.add_input<decl::String>("Name").is_attribute_name().hide_label();
 
   if (node != nullptr) {
     const NodeGeometryInputNamedAttribute &storage = node_storage(*node);
@@ -90,6 +90,12 @@ static void node_geo_exec(GeoNodeExecParams params)
     params.set_default_remaining_outputs();
     return;
   }
+  if (bke::attribute_name_is_anonymous(name)) {
+    params.error_message_add(NodeWarningType::Info,
+                             TIP_("Anonymous attributes can't be accessed by name"));
+    params.set_default_remaining_outputs();
+    return;
+  }
 
   params.used_named_attribute(name, NamedAttributeUsage::Read);
 
@@ -115,7 +121,11 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_INPUT_NAMED_ATTRIBUTE, "Named Attribute", NODE_CLASS_INPUT);
+  geo_node_type_base(&ntype, "GeometryNodeInputNamedAttribute", GEO_NODE_INPUT_NAMED_ATTRIBUTE);
+  ntype.ui_name = "Named Attribute";
+  ntype.ui_description = "Retrieve the data of a specified attribute";
+  ntype.enum_name_legacy = "INPUT_ATTRIBUTE";
+  ntype.nclass = NODE_CLASS_INPUT;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
   ntype.gather_link_search_ops = node_gather_link_searches;
@@ -125,7 +135,7 @@ static void node_register()
                                   "NodeGeometryInputNamedAttribute",
                                   node_free_standard_storage,
                                   node_copy_standard_storage);
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

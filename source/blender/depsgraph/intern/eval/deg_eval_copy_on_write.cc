@@ -21,19 +21,13 @@
 #include <cstring>
 
 #include "BLI_listbase.h"
-#include "BLI_string.h"
-#include "BLI_threads.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_curve.hh"
 #include "BKE_global.hh"
 #include "BKE_gpencil_legacy.h"
-#include "BKE_gpencil_update_cache_legacy.h"
-#include "BKE_idprop.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
-#include "BKE_mesh_types.hh"
-#include "BKE_object_types.hh"
 #include "BKE_scene.hh"
 
 #include "DEG_depsgraph.hh"
@@ -44,15 +38,11 @@
 #include "DNA_ID.h"
 #include "DNA_anim_types.h"
 #include "DNA_armature_types.h"
-#include "DNA_gpencil_legacy_types.h"
 #include "DNA_mesh_types.h"
 #include "DNA_modifier_types.h"
 #include "DNA_object_types.h"
 #include "DNA_particle_types.h"
-#include "DNA_rigidbody_types.h"
 #include "DNA_scene_types.h"
-#include "DNA_sequence_types.h"
-#include "DNA_sound_types.h"
 
 #include "DRW_engine.hh"
 
@@ -69,12 +59,12 @@
 #  include "DNA_world_types.h"
 #endif
 
-#include "BKE_action.h"
 #include "BKE_anim_data.hh"
 #include "BKE_animsys.h"
 #include "BKE_armature.hh"
 #include "BKE_editmesh.hh"
 #include "BKE_lib_query.hh"
+#include "BKE_mesh_types.hh"
 #include "BKE_modifier.hh"
 #include "BKE_object.hh"
 #include "BKE_pointcache.h"
@@ -728,16 +718,6 @@ void update_id_after_copy(const Depsgraph *depsgraph,
       scene_setup_view_layers_after_remap(depsgraph, id_node, reinterpret_cast<Scene *>(id_cow));
       break;
     }
-    /* FIXME: This is a temporary fix to update the runtime pointers properly, see #96216. Should
-     * be removed at some point. */
-    case ID_GD_LEGACY: {
-      bGPdata *gpd_cow = (bGPdata *)id_cow;
-      bGPDlayer *gpl = (bGPDlayer *)(gpd_cow->layers.first);
-      if (gpl != nullptr && gpl->runtime.gpl_orig == nullptr) {
-        BKE_gpencil_data_update_orig_pointers((bGPdata *)id_orig, gpd_cow);
-      }
-      break;
-    }
     default:
       break;
   }
@@ -888,14 +868,6 @@ ID *deg_update_eval_copy_datablock(const Depsgraph *depsgraph, const IDNode *id_
       update_edit_mode_pointers(depsgraph, id_orig, id_cow);
       return id_cow;
     }
-    /* In case we don't need to do a copy-on-evaluation, we can use the update cache of the grease
-     * pencil data to do an update-on-write. */
-    if (id_type == ID_GD_LEGACY && BKE_gpencil_can_avoid_full_copy_on_write(
-                                       (const ::Depsgraph *)depsgraph, (bGPdata *)id_orig))
-    {
-      BKE_gpencil_update_on_write((bGPdata *)id_orig, (bGPdata *)id_cow);
-      return id_cow;
-    }
   }
 
   RuntimeBackup backup(depsgraph);
@@ -906,11 +878,10 @@ ID *deg_update_eval_copy_datablock(const Depsgraph *depsgraph, const IDNode *id_
   return id_cow;
 }
 
-/**
- * \note Depsgraph is supposed to have ID node already.
- */
 ID *deg_update_eval_copy_datablock(const Depsgraph *depsgraph, ID *id_orig)
 {
+  /* NOTE: Depsgraph is supposed to have ID node already. */
+
   IDNode *id_node = depsgraph->find_id_node(id_orig);
   BLI_assert(id_node != nullptr);
   return deg_update_eval_copy_datablock(depsgraph, id_node);
@@ -988,14 +959,14 @@ void discard_edit_mode_pointers(ID *id_cow)
 
 }  // namespace
 
-/**
- *  Free content of the evaluated data-block.
- * Notes:
- * - Does not recurse into nested ID data-blocks.
- * - Does not free data-block itself.
- */
 void deg_free_eval_copy_datablock(ID *id_cow)
 {
+  /* Free content of the evaluated data-block.
+   * Notes:
+   * - Does not recurse into nested ID data-blocks.
+   * - Does not free data-block itself.
+   */
+
   if (!check_datablock_expanded(id_cow)) {
     /* Actual content was never copied on top of evaluated data-block, we have
      * nothing to free. */
@@ -1053,10 +1024,10 @@ bool deg_validate_eval_copy_datablock(ID *id_cow)
 void deg_tag_eval_copy_id(deg::Depsgraph &depsgraph, ID *id_cow, const ID *id_orig)
 {
   BLI_assert(id_cow != id_orig);
-  BLI_assert((id_orig->tag & LIB_TAG_COPIED_ON_EVAL) == 0);
-  id_cow->tag |= LIB_TAG_COPIED_ON_EVAL;
+  BLI_assert((id_orig->tag & ID_TAG_COPIED_ON_EVAL) == 0);
+  id_cow->tag |= ID_TAG_COPIED_ON_EVAL;
   /* This ID is no longer localized, is a self-sustaining copy now. */
-  id_cow->tag &= ~LIB_TAG_LOCALIZED;
+  id_cow->tag &= ~ID_TAG_LOCALIZED;
   id_cow->orig_id = (ID *)id_orig;
   id_cow->runtime.depsgraph = &reinterpret_cast<::Depsgraph &>(depsgraph);
 }

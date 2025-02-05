@@ -12,8 +12,6 @@
  * - Review weight and vertex color interpolation.;
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_utildefines.h"
 
 #include "BLI_array.hh"
@@ -40,8 +38,6 @@
 
 #include "RNA_access.hh"
 #include "RNA_prototypes.hh"
-
-#include "DEG_depsgraph.hh"
 
 #include "MOD_modifiertypes.hh"
 #include "MOD_ui_common.hh"
@@ -164,12 +160,12 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   uiItemR(layout, ptr, "merge_threshold", UI_ITEM_NONE, IFACE_("Distance"), ICON_NONE);
   if (weld_mode == MOD_WELD_MODE_CONNECTED) {
-    uiItemR(layout, ptr, "loose_edges", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(layout, ptr, "loose_edges", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
-  modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", nullptr);
+  modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
 
   modifier_panel_end(layout, ptr);
 }
@@ -187,9 +183,9 @@ ModifierTypeInfo modifierType_Weld = {
     /*srna*/ &RNA_WeldModifier,
     /*type*/ ModifierTypeType::Constructive,
     /*flags*/
-    (ModifierTypeFlag)(eModifierTypeFlag_AcceptsMesh | eModifierTypeFlag_SupportsMapping |
-                       eModifierTypeFlag_SupportsEditmode | eModifierTypeFlag_EnableInEditmode |
-                       eModifierTypeFlag_AcceptsCVs),
+    (eModifierTypeFlag_AcceptsMesh | eModifierTypeFlag_SupportsMapping |
+     eModifierTypeFlag_SupportsEditmode | eModifierTypeFlag_EnableInEditmode |
+     eModifierTypeFlag_AcceptsCVs),
     /*icon*/ ICON_AUTOMERGE_OFF, /* TODO: Use correct icon. */
 
     /*copy_data*/ BKE_modifier_copydata_generic,

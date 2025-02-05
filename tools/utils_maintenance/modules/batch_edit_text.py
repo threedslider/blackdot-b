@@ -2,10 +2,13 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-from typing import (
+__all__ = (
+    "run",
+)
+
+from collections.abc import (
     Callable,
-    Generator,
-    Optional,
+    Iterator,
     Sequence,
 )
 
@@ -13,7 +16,7 @@ TextOpFn = Callable[
     # file_name, data_src
     [str, str],
     # data_dst or None when no change is made.
-    Optional[str]
+    str | None,
 ]
 
 
@@ -40,7 +43,7 @@ def run(
 
     import os
 
-    def source_files(path: str) -> Generator[str, None, None]:
+    def source_files(path: str) -> Iterator[str]:
         for dirpath, dirnames, filenames in os.walk(path):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
             for filename in filenames:

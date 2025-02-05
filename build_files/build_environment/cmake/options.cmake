@@ -4,6 +4,7 @@
 
 if(WIN32)
   option(ENABLE_MSYS2 "Enable building of ffmpeg/libsndfile/fftw3/gmp by installing msys2" ON)
+  option(MSYS2_USE_UPSTREAM_PACKAGES "Use upstream packages to bootstrap msys2, when OFF the blender mirror will be used" OFF)
 endif()
 option(FORCE_CHECK_HASH "Force a check of all hashses during CMake the configure phase" OFF)
 
@@ -54,12 +55,13 @@ if(WIN32)
   set(COMMON_DEFINES /DPSAPI_VERSION=2 /DTINYFORMAT_ALLOW_WCHAR_STRINGS)
 
   if(MSVC_VERSION GREATER 1909)
-    set(COMMON_MSVC_FLAGS "/Wv:18") #some deps with warnings as error aren't quite ready for dealing with the new 2017 warnings.
+    # Some deps with warnings as error aren't quite ready for dealing with the new 2017 warnings.
+    set(COMMON_MSVC_FLAGS "/Wv:18")
   endif()
   string(APPEND COMMON_MSVC_FLAGS " /bigobj")
   # To keep MSVC from oversubscribing the CPU, force it to single threaded mode
   # msbuild/ninja will queue as many compile units as there are cores, no need for
-  # msvc to be internally threading as well.
+  # MSVC to be internally threading as well.
   string(APPEND COMMON_MSVC_FLAGS " /cgthreads1 ")
 
   if(WITH_OPTIMIZED_DEBUG)
@@ -197,7 +199,7 @@ else()
 
     set(PLATFORM_CFLAGS "-isysroot ${CMAKE_OSX_SYSROOT} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -arch ${CMAKE_OSX_ARCHITECTURES}")
     set(PLATFORM_CXXFLAGS "-isysroot ${CMAKE_OSX_SYSROOT} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -std=c++17 -stdlib=libc++ -arch ${CMAKE_OSX_ARCHITECTURES}")
-    set(PLATFORM_LDFLAGS "-isysroot ${CMAKE_OSX_SYSROOT} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -arch ${CMAKE_OSX_ARCHITECTURES}")
+    set(PLATFORM_LDFLAGS "-isysroot ${CMAKE_OSX_SYSROOT} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -arch ${CMAKE_OSX_ARCHITECTURES} -headerpad_max_install_names")
     if("${CMAKE_OSX_ARCHITECTURES}" STREQUAL "x86_64")
       set(PLATFORM_BUILD_TARGET --build=x86_64-apple-darwin19.0.0) # OS X 10.15
     else()

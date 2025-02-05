@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_mesh.hh"
 
 #include "NOD_rna_define.hh"
@@ -40,7 +40,7 @@ static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
-  uiItemR(layout, ptr, "fill_type", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "fill_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
@@ -221,14 +221,18 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_MESH_PRIMITIVE_CIRCLE, "Mesh Circle", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeMeshCircle", GEO_NODE_MESH_PRIMITIVE_CIRCLE);
+  ntype.ui_name = "Mesh Circle";
+  ntype.ui_description = "Generate a circular ring of edges";
+  ntype.enum_name_legacy = "MESH_PRIMITIVE_CIRCLE";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.initfunc = node_init;
   blender::bke::node_type_storage(
       &ntype, "NodeGeometryMeshCircle", node_free_standard_storage, node_copy_standard_storage);
   ntype.geometry_node_execute = node_geo_exec;
   ntype.draw_buttons = node_layout;
   ntype.declare = node_declare;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

@@ -8,7 +8,6 @@
 
 #include <cmath>
 #include <cstddef>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -21,7 +20,6 @@
 
 #include "BKE_mask.h"
 
-#include "ED_anim_api.hh"
 #include "ED_keyframes_edit.hh"
 #include "ED_markers.hh"
 #include "ED_mask.hh" /* own include */
@@ -230,11 +228,13 @@ bool ED_masklayer_frames_delete(MaskLayer *mask_layer)
   return changed;
 }
 
-void ED_masklayer_frames_duplicate(MaskLayer *mask_layer)
+bool ED_masklayer_frames_duplicate(MaskLayer *mask_layer)
 {
+  bool changed = false;
+
   /* Error checking. */
   if (mask_layer == nullptr) {
-    return;
+    return changed;
   }
 
   /* Duplicate selected frames. */
@@ -250,8 +250,11 @@ void ED_masklayer_frames_duplicate(MaskLayer *mask_layer)
 
       /* XXX: how to handle duplicate frames? */
       BLI_insertlinkafter(&mask_layer->splines_shapes, mask_layer_shape, mask_shape_dupe);
+      changed = true;
     }
   }
+
+  return changed;
 }
 
 /* -------------------------------------- */
@@ -277,7 +280,7 @@ static bool snap_mask_layer_nearestsec(MaskLayerShape *mask_layer_shape, Scene *
 static bool snap_mask_layer_cframe(MaskLayerShape *mask_layer_shape, Scene *scene)
 {
   if (mask_layer_shape->flag & MASK_SHAPE_SELECT) {
-    mask_layer_shape->frame = int(scene->r.cfra);
+    mask_layer_shape->frame = scene->r.cfra;
   }
   return false;
 }
@@ -285,8 +288,8 @@ static bool snap_mask_layer_cframe(MaskLayerShape *mask_layer_shape, Scene *scen
 static bool snap_mask_layer_nearmarker(MaskLayerShape *mask_layer_shape, Scene *scene)
 {
   if (mask_layer_shape->flag & MASK_SHAPE_SELECT) {
-    mask_layer_shape->frame = int(
-        ED_markers_find_nearest_marker_time(&scene->markers, float(mask_layer_shape->frame)));
+    mask_layer_shape->frame = ED_markers_find_nearest_marker_time(&scene->markers,
+                                                                  float(mask_layer_shape->frame));
   }
   return false;
 }

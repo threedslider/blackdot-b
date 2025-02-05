@@ -6,7 +6,6 @@
  * \ingroup bke
  */
 
-#include <cstddef>
 #include <cstdlib>
 #include <optional>
 
@@ -29,7 +28,7 @@
 #include "BLI_string.h"
 #include "BLI_utildefines.h"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_camera.h"
 #include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
@@ -260,7 +259,7 @@ IDTypeInfo IDType_ID_CA = {
 /** \name Camera Usage
  * \{ */
 
-void *BKE_camera_add(Main *bmain, const char *name)
+Camera *BKE_camera_add(Main *bmain, const char *name)
 {
   Camera *cam;
 
@@ -485,7 +484,7 @@ void BKE_camera_params_compute_viewplane(
   params->viewplane = viewplane;
 }
 
-void BKE_camera_params_crop_viewplane(rctf *viewplane, int winx, int winy, rcti *region)
+void BKE_camera_params_crop_viewplane(rctf *viewplane, int winx, int winy, const rcti *region)
 {
   float pix_size_x = BLI_rctf_size_x(viewplane) / winx;
   float pix_size_y = BLI_rctf_size_y(viewplane) / winy;

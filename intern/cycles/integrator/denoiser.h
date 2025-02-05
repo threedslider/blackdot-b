@@ -7,9 +7,10 @@
 /* TODO(sergey): The integrator folder might not be the best. Is easy to move files around if the
  * better place is figured out. */
 
+#include <functional>
+
 #include "device/denoise.h"
 #include "device/device.h"
-#include "util/function.h"
 #include "util/unique_ptr.h"
 
 CCL_NAMESPACE_BEGIN
@@ -18,6 +19,15 @@ class BufferParams;
 class Device;
 class RenderBuffers;
 class Progress;
+
+bool use_optix_denoiser(Device *denoiser_device, const DenoiseParams &params);
+
+bool use_gpu_oidn_denoiser(Device *denoiser_device, const DenoiseParams &params);
+
+DenoiseParams get_effective_denoise_params(Device *denoiser_device,
+                                           Device *cpu_fallback_device,
+                                           const DenoiseParams &params,
+                                           Device *&single_denoiser_device);
 
 /* Implementation of a specific denoising algorithm.
  *
@@ -34,8 +44,8 @@ class Denoiser {
    *   This is checked in debug builds.
    * - The device might be MultiDevice.
    * - If Denoiser from params is not supported by provided denoise device, then Blender will
-       fallback on the OIDN CPU denoising and use provided cpu_fallback_device. */
-  static unique_ptr<Denoiser> create(Device *denoise_device,
+   *   fallback on the OIDN CPU denoising and use provided cpu_fallback_device. */
+  static unique_ptr<Denoiser> create(Device *denoiser_device,
                                      Device *cpu_fallback_device,
                                      const DenoiseParams &params);
 
@@ -92,7 +102,7 @@ class Denoiser {
    *   and access to this device happen. */
   Device *get_denoiser_device() const;
 
-  function<bool(void)> is_cancelled_cb;
+  std::function<bool(void)> is_cancelled_cb;
 
   bool is_cancelled() const
   {

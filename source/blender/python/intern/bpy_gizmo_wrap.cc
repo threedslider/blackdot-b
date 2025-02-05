@@ -16,20 +16,18 @@
 
 #include <Python.h>
 
-#include "BLI_utildefines.h"
-
 #include "WM_types.hh"
 
 #include "RNA_access.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
-#include "bpy_gizmo_wrap.h" /* own include */
-#include "bpy_intern_string.h"
-#include "bpy_rna.h"
+#include "bpy_gizmo_wrap.hh" /* own include */
+#include "bpy_intern_string.hh"
+#include "bpy_rna.hh"
 
-#include "../generic/py_capi_rna.h"
-#include "../generic/python_compat.h"
+#include "../generic/py_capi_rna.hh"
+#include "../generic/python_compat.hh"
 
 /* we may want to add, but not now */
 

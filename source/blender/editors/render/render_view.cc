@@ -6,18 +6,18 @@
  * \ingroup edrend
  */
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 
 #include "BLI_listbase.h"
-#include "BLI_utildefines.h"
 
 #include "DNA_scene_types.h"
 #include "DNA_userdef_types.h"
 
 #include "BKE_context.hh"
 #include "BKE_global.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_report.hh"
 #include "BKE_scene.hh"
 #include "BKE_screen.hh"
@@ -146,12 +146,8 @@ ScrArea *render_view_open(bContext *C, int mx, int my, ReportList *reports)
     sizey += 60 * UI_SCALE_FAC;
 
     /* arbitrary... miniature image window views don't make much sense */
-    if (sizex < 320) {
-      sizex = 320;
-    }
-    if (sizey < 256) {
-      sizey = 256;
-    }
+    sizex = std::max(sizex, 320);
+    sizey = std::max(sizey, 256);
 
     const rcti window_rect = {
         /*xmin*/ mx,

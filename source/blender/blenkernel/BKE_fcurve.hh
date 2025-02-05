@@ -9,7 +9,9 @@
  */
 
 #include "BLI_math_vector_types.hh"
+#include "BLI_span.hh"
 #include "BLI_string_ref.hh"
+
 #include "DNA_curve_types.h"
 
 struct ChannelDriver;
@@ -212,7 +214,7 @@ int BKE_fcm_envelope_find_index(FCM_EnvelopeData *array,
 #define BEZT_BINARYSEARCH_THRESH 0.01f /* was 0.00001, but giving errors */
 
 /* -------- Data Management  -------- */
-FCurve *BKE_fcurve_create(void);
+FCurve *BKE_fcurve_create();
 /**
  * Frees the F-Curve itself too, so make sure #BLI_remlink is called before calling this.
  */
@@ -251,6 +253,12 @@ void BKE_fcurve_foreach_id(FCurve *fcu, LibraryForeachIDData *data);
 /**
  * Find the F-Curve affecting the given RNA-access path + index,
  * in the list of F-Curves provided.
+ *
+ * \note ONLY use this on a list of F-Curves that is NOT from an Action. Example
+ * of a good use would be on `adt->drivers`, or `nlastrip->fcurves`.
+ *
+ * \see #blender::animrig::fcurve_find_in_action
+ * \see #blender::animrig::fcurve_find_in_action_slot
  */
 FCurve *BKE_fcurve_find(ListBase *list, const char rna_path[], int array_index);
 
@@ -276,21 +284,6 @@ FCurve *BKE_fcurve_iter_step(FCurve *fcu_iter, const char rna_path[]);
  */
 FCurve *id_data_find_fcurve(
     ID *id, void *data, StructRNA *type, const char *prop_name, int index, bool *r_driven);
-
-/**
- * Get list of LinkData's containing pointers to the F-Curves
- * which control the types of data indicated.
- * e.g. `numMatches = BKE_fcurves_filter(matches, &act->curves, "pose.bones[", "MyFancyBone");`
- *
- * Lists:
- * \param dst: list of LinkData's matching the criteria returned.
- * List must be freed after use, and is assumed to be empty when passed.
- * \param src: list of F-Curves to search through
- * Filters:
- * \param dataPrefix: i.e. `pose.bones[` or `nodes[`.
- * \param dataName: name of entity within "" immediately following the prefix.
- */
-int BKE_fcurves_filter(ListBase *dst, ListBase *src, const char *dataPrefix, const char *dataName);
 
 /**
  * Find an F-Curve from its rna path and index.
@@ -357,15 +350,17 @@ int BKE_fcurve_bezt_binarysearch_index(const BezTriple array[],
 /**
  * Cached f-curve look-ups, use when this needs to be done many times.
  */
-FCurvePathCache *BKE_fcurve_pathcache_create(ListBase *list);
+FCurvePathCache *BKE_fcurve_pathcache_create(blender::Span<FCurve *> fcurves);
 void BKE_fcurve_pathcache_destroy(FCurvePathCache *fcache);
-FCurve *BKE_fcurve_pathcache_find(FCurvePathCache *fcache, const char rna_path[], int array_index);
+FCurve *BKE_fcurve_pathcache_find(const FCurvePathCache *fcache,
+                                  const char rna_path[],
+                                  int array_index);
 /**
  * Fill in an array of F-Curve, leave NULL when not found.
  *
  * \return The number of F-Curves found.
  */
-int BKE_fcurve_pathcache_find_array(FCurvePathCache *fcache,
+int BKE_fcurve_pathcache_find_array(const FCurvePathCache *fcache,
                                     const char *rna_path,
                                     FCurve **fcurve_result,
                                     int fcurve_result_len);
@@ -454,13 +449,13 @@ void BKE_fcurve_deselect_all_keys(FCurve &fcu);
 bool BKE_fcurve_is_cyclic(const FCurve *fcu);
 
 /* Type of infinite cycle for a curve. */
-typedef enum eFCU_Cycle_Type {
+enum eFCU_Cycle_Type {
   FCU_CYCLE_NONE = 0,
   /* The cycle repeats identically to the base range. */
   FCU_CYCLE_PERFECT,
   /* The cycle accumulates the change between start and end keys. */
   FCU_CYCLE_OFFSET,
-} eFCU_Cycle_Type;
+};
 
 /**
  * Checks if the F-Curve has a Cycles modifier, and returns the type of the cycle behavior.
@@ -661,7 +656,7 @@ void BKE_fmodifiers_blend_read_data(BlendDataReader *reader, ListBase *fmodifier
  * If this is used to write an FCurve, be sure to call `BLO_write_struct(writer, FCurve, fcurve);`
  * before calling this function.
  */
-void BKE_fcurve_blend_write_data(BlendWriter *writer, FCurve *fcurve);
+void BKE_fcurve_blend_write_data(BlendWriter *writer, FCurve *fcu);
 void BKE_fcurve_blend_write_listbase(BlendWriter *writer, ListBase *fcurves);
 void BKE_fcurve_blend_read_data(BlendDataReader *reader, FCurve *fcu);
 void BKE_fcurve_blend_read_data_listbase(BlendDataReader *reader, ListBase *fcurves);

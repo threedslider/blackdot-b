@@ -30,7 +30,6 @@
 #include "intern/bone_collections_internal.hh"
 
 #include <cstring>
-#include <string>
 
 using std::strcmp;
 
@@ -1445,9 +1444,8 @@ void ANIM_bonecoll_array_free(BoneCollection ***bcoll_array,
 
     MEM_freeN(bcoll);
   }
-  MEM_freeN(*bcoll_array);
+  MEM_SAFE_FREE(*bcoll_array);
 
-  *bcoll_array = nullptr;
   *bcoll_array_num = 0;
 }
 

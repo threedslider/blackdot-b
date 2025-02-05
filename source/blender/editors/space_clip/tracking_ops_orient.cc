@@ -6,8 +6,6 @@
  * \ingroup spclip
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "DNA_constraint_types.h"
 #include "DNA_object_types.h" /* SELECT */
 #include "DNA_screen_types.h"
@@ -15,7 +13,6 @@
 
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_constraint.h"
 #include "BKE_context.hh"
@@ -641,6 +638,8 @@ static int do_set_scale(bContext *C, wmOperator *op, bool scale_solution, bool a
       for (i = 0; i < reconstruction->camnr; i++) {
         mul_v3_fl(reconstructed_cameras[i].mat[3], scale);
       }
+
+      DEG_id_tag_update(&clip->id, ID_RECALC_SYNC_TO_EVAL);
 
       WM_event_add_notifier(C, NC_MOVIECLIP | NA_EVALUATED, clip);
       WM_event_add_notifier(C, NC_OBJECT | ND_TRANSFORM, nullptr);

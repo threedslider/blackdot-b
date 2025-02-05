@@ -17,6 +17,7 @@
 #include "usd_writer_light.hh"
 #include "usd_writer_mesh.hh"
 #include "usd_writer_metaball.hh"
+#include "usd_writer_points.hh"
 #include "usd_writer_transform.hh"
 #include "usd_writer_volume.hh"
 
@@ -63,6 +64,8 @@ bool USDHierarchyIterator::mark_as_weak_export(const Object *object) const
       return !params_.export_volumes;
     case OB_ARMATURE:
       return !params_.export_armatures;
+    case OB_POINTCLOUD:
+      return !params_.export_points;
 
     default:
       /* Assume weak for all other types. */
@@ -105,6 +108,21 @@ USDExporterContext USDHierarchyIterator::create_usd_export_context(const Hierarc
   }
   else {
     path = pxr::SdfPath(context->export_path);
+  }
+
+  if (params_.merge_parent_xform && context->is_object_data_context && !context->is_parent) {
+    bool can_merge_with_xform = true;
+    if (params_.export_shapekeys && is_mesh_with_shape_keys(context->object)) {
+      can_merge_with_xform = false;
+    }
+
+    if (params_.use_instancing && (context->is_prototype() || context->is_instance())) {
+      can_merge_with_xform = false;
+    }
+
+    if (can_merge_with_xform) {
+      path = path.GetParentPath();
+    }
   }
 
   /* Returns the same path that was passed to `stage_` object during it's creation (via
@@ -181,16 +199,24 @@ AbstractHierarchyWriter *USDHierarchyIterator::create_data_writer(const Hierarch
         return nullptr;
       }
       break;
+    case OB_POINTCLOUD:
+      if (usd_export_context.export_params.export_points) {
+        data_writer = new USDPointsWriter(usd_export_context);
+      }
+      else {
+        return nullptr;
+      }
+      break;
+
     case OB_EMPTY:
     case OB_SURF:
     case OB_FONT:
     case OB_SPEAKER:
     case OB_LIGHTPROBE:
     case OB_LATTICE:
-    case OB_GPENCIL_LEGACY:
     case OB_GREASE_PENCIL:
-    case OB_POINTCLOUD:
       return nullptr;
+
     case OB_TYPE_MAX:
       BLI_assert_msg(0, "OB_TYPE_MAX should not be used");
       return nullptr;
@@ -223,6 +249,18 @@ AbstractHierarchyWriter *USDHierarchyIterator::create_particle_writer(
     const HierarchyContext * /*context*/)
 {
   return nullptr;
+}
+
+/* Don't generate data writers for instances. */
+bool USDHierarchyIterator::include_data_writers(const HierarchyContext *context) const
+{
+  return !(params_.use_instancing && context->is_instance());
+}
+
+/* Don't generate writers for children of instances. */
+bool USDHierarchyIterator::include_child_writers(const HierarchyContext *context) const
+{
+  return !(params_.use_instancing && context->is_instance());
 }
 
 void USDHierarchyIterator::add_usd_skel_export_mapping(const Object *obj, const pxr::SdfPath &path)

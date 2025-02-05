@@ -26,12 +26,11 @@
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_armature.hh"
 #include "BKE_curve.hh"
 #include "BKE_editmesh.hh"
-#include "BKE_gpencil_geom_legacy.h"
+#include "BKE_grease_pencil.hh"
 #include "BKE_key.hh"
 #include "BKE_lattice.hh"
 #include "BKE_mball.hh"
@@ -42,6 +41,7 @@
 #include "DEG_depsgraph.hh"
 
 #include "ED_armature.hh"
+#include "ED_curves.hh"
 #include "ED_mesh.hh"
 #include "ED_object.hh"
 
@@ -297,9 +297,20 @@ struct XFormObjectData_MetaBall {
   ElemData_MetaBall elem_array[0];
 };
 
-struct XFormObjectData_GPencil {
+struct XFormObjectData_GreasePencil {
   XFormObjectData base;
-  GPencilPointCoordinates elem_array[0];
+  GreasePencilPointCoordinates elem_array[0];
+};
+
+struct CurvesPointCoordinates {
+  /* Radius is needs to be stored here as it is tied to object scale. */
+  float3 co;
+  float radius;
+};
+
+struct XFormObjectData_Curves {
+  XFormObjectData base;
+  CurvesPointCoordinates elem_array[0];
 };
 
 XFormObjectData *data_xform_create_ex(ID *id, bool is_edit_mode)
@@ -463,14 +474,35 @@ XFormObjectData *data_xform_create_ex(ID *id, bool is_edit_mode)
       xod_base = &xod->base;
       break;
     }
-    case ID_GD_LEGACY: {
-      bGPdata *gpd = (bGPdata *)id;
-      const int elem_array_len = BKE_gpencil_stroke_point_count(gpd);
-      XFormObjectData_GPencil *xod = static_cast<XFormObjectData_GPencil *>(
+    case ID_GP: {
+      GreasePencil *grease_pencil = (GreasePencil *)id;
+      const int elem_array_len = BKE_grease_pencil_stroke_point_count(*grease_pencil);
+      XFormObjectData_GreasePencil *xod = static_cast<XFormObjectData_GreasePencil *>(
           MEM_mallocN(sizeof(*xod) + (sizeof(*xod->elem_array) * elem_array_len), __func__));
       memset(xod, 0x0, sizeof(*xod));
 
-      BKE_gpencil_point_coords_get(gpd, xod->elem_array);
+      BKE_grease_pencil_point_coords_get(*grease_pencil, xod->elem_array);
+      xod_base = &xod->base;
+      break;
+    }
+    case ID_CV: {
+      Curves *curves_id = reinterpret_cast<Curves *>(id);
+      const bke::CurvesGeometry &curves = curves_id->geometry.wrap();
+      const int elem_array_len = curves.points_num();
+
+      XFormObjectData_Curves *xod = static_cast<XFormObjectData_Curves *>(
+          MEM_mallocN(sizeof(*xod) + (sizeof(*xod->elem_array) * elem_array_len), __func__));
+      memset(xod, 0x0, sizeof(*xod));
+
+      const Span<float3> positions = curves.positions();
+      const VArraySpan<float> radii = curves.radius();
+
+      CurvesPointCoordinates *cpc = xod->elem_array;
+      for (const int i : curves.points_range()) {
+        cpc->co = positions[i];
+        cpc->radius = radii[i];
+        cpc++;
+      }
       xod_base = &xod->base;
       break;
     }
@@ -626,16 +658,32 @@ void data_xform_by_mat4(XFormObjectData *xod_base, const float mat[4][4])
       break;
     }
     case ID_MB: {
-      /* Metaballs are a special case, edit-mode and object mode data is shared. */
+      /* Meta-balls are a special case, edit-mode and object mode data is shared. */
       MetaBall *mb = (MetaBall *)xod_base->id;
       XFormObjectData_MetaBall *xod = (XFormObjectData_MetaBall *)xod_base;
       metaball_coords_and_quats_apply_with_mat4(mb, xod->elem_array, mat);
       break;
     }
-    case ID_GD_LEGACY: {
-      bGPdata *gpd = (bGPdata *)xod_base->id;
-      XFormObjectData_GPencil *xod = (XFormObjectData_GPencil *)xod_base;
-      BKE_gpencil_point_coords_apply_with_mat4(gpd, xod->elem_array, mat);
+    case ID_GP: {
+      GreasePencil *grease_pencil = (GreasePencil *)xod_base->id;
+      XFormObjectData_GreasePencil *xod = (XFormObjectData_GreasePencil *)xod_base;
+      BKE_grease_pencil_point_coords_apply_with_mat4(
+          *grease_pencil, xod->elem_array, float4x4(mat));
+      break;
+    }
+    case ID_CV: {
+      Curves *curves_id = reinterpret_cast<Curves *>(xod_base->id);
+      bke::CurvesGeometry &curves = curves_id->geometry.wrap();
+      MutableSpan<float3> positions = curves.positions_for_write();
+      MutableSpan<float> radii = curves.radius_for_write();
+      XFormObjectData_Curves *xod = reinterpret_cast<XFormObjectData_Curves *>(xod_base);
+      CurvesPointCoordinates *cpc = xod->elem_array;
+      const float scalef = mat4_to_scale(mat);
+      for (const int i : curves.points_range()) {
+        positions[i] = math::transform_point(float4x4(mat), cpc->co);
+        radii[i] = cpc->radius * scalef;
+        cpc++;
+      }
       break;
     }
     default: {
@@ -727,16 +775,30 @@ void data_xform_restore(XFormObjectData *xod_base)
       break;
     }
     case ID_MB: {
-      /* Metaballs are a special case, edit-mode and object mode data is shared. */
+      /* Meta-balls are a special case, edit-mode and object mode data is shared. */
       MetaBall *mb = (MetaBall *)xod_base->id;
       XFormObjectData_MetaBall *xod = (XFormObjectData_MetaBall *)xod_base;
       metaball_coords_and_quats_apply(mb, xod->elem_array);
       break;
     }
-    case ID_GD_LEGACY: {
-      bGPdata *gpd = (bGPdata *)xod_base->id;
-      XFormObjectData_GPencil *xod = (XFormObjectData_GPencil *)xod_base;
-      BKE_gpencil_point_coords_apply(gpd, xod->elem_array);
+    case ID_GP: {
+      GreasePencil *grease_pencil = (GreasePencil *)xod_base->id;
+      XFormObjectData_GreasePencil *xod = (XFormObjectData_GreasePencil *)xod_base;
+      BKE_grease_pencil_point_coords_apply(*grease_pencil, xod->elem_array);
+      break;
+    }
+    case ID_CV: {
+      Curves *curves_id = reinterpret_cast<Curves *>(xod_base->id);
+      bke::CurvesGeometry &curves = curves_id->geometry.wrap();
+      MutableSpan<float3> positions = curves.positions_for_write();
+      MutableSpan<float> radii = curves.radius_for_write();
+      XFormObjectData_Curves *xod = reinterpret_cast<XFormObjectData_Curves *>(xod_base);
+      CurvesPointCoordinates *cpc = xod->elem_array;
+      for (const int i : curves.points_range()) {
+        positions[i] = cpc->co;
+        radii[i] = cpc->radius;
+        cpc++;
+      }
       break;
     }
     default: {
@@ -789,6 +851,19 @@ void data_xform_tag_update(XFormObjectData *xod_base)
       /* Generic update. */
       bGPdata *gpd = (bGPdata *)xod_base->id;
       DEG_id_tag_update(&gpd->id, ID_RECALC_GEOMETRY | ID_RECALC_SYNC_TO_EVAL);
+      break;
+    }
+    case ID_GP: {
+      /* Generic update. */
+      GreasePencil *grease_pencil = (GreasePencil *)xod_base->id;
+      DEG_id_tag_update(&grease_pencil->id, ID_RECALC_GEOMETRY | ID_RECALC_SYNC_TO_EVAL);
+      break;
+    }
+    case ID_CV: {
+      Curves *curves_id = reinterpret_cast<Curves *>(xod_base->id);
+      bke::CurvesGeometry &curves = curves_id->geometry.wrap();
+      curves.tag_positions_changed();
+      DEG_id_tag_update(&curves_id->id, ID_RECALC_GEOMETRY | ID_RECALC_SYNC_TO_EVAL);
       break;
     }
 

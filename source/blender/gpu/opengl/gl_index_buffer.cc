@@ -33,8 +33,13 @@ void GLIndexBuf::bind()
 
   if (data_ != nullptr || allocate_on_device) {
     size_t size = this->size_get();
-    /* Sends data to GPU. */
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, size, data_, GL_STATIC_DRAW);
+    /* Pad the buffer to avoid out of bound reads when using vertex pulling mode. */
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, ceil_to_multiple_ul(size, 16), nullptr, GL_STATIC_DRAW);
+
+    if (data_ != nullptr) {
+      /* Sends data to GPU. */
+      glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, size, data_);
+    }
     /* No need to keep copy of data in system memory. */
     MEM_SAFE_FREE(data_);
   }
@@ -42,6 +47,11 @@ void GLIndexBuf::bind()
 
 void GLIndexBuf::bind_as_ssbo(uint binding)
 {
+  if (is_subrange_) {
+    src_->bind_as_ssbo(binding);
+    return;
+  }
+
   if (ibo_id_ == 0 || data_ != nullptr) {
     /* Calling `glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_id_)` changes the index buffer
      * of the currently bound VAO.
@@ -54,6 +64,7 @@ void GLIndexBuf::bind_as_ssbo(uint binding)
     glBindVertexArray(0);
     bind();
   }
+
   BLI_assert(ibo_id_ != 0);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, ibo_id_);
 

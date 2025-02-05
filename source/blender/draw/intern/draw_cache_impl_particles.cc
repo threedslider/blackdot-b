@@ -13,7 +13,6 @@
 #include "MEM_guardedalloc.h"
 
 #include "BLI_alloca.h"
-#include "BLI_ghash.h"
 #include "BLI_math_color.h"
 #include "BLI_math_vector.h"
 #include "BLI_string.h"
@@ -35,7 +34,6 @@
 
 #include "GPU_batch.hh"
 #include "GPU_capabilities.hh"
-#include "GPU_context.hh"
 #include "GPU_material.hh"
 
 #include "DEG_depsgraph_query.hh"
@@ -184,11 +182,11 @@ static void particle_batch_cache_clear_hair(ParticleHairCache *hair_cache)
 
   for (int i = 0; i < MAX_MTFACE; i++) {
     GPU_VERTBUF_DISCARD_SAFE(hair_cache->proc_uv_buf[i]);
-    DRW_TEXTURE_FREE_SAFE(hair_cache->uv_tex[i]);
+    GPU_TEXTURE_FREE_SAFE(hair_cache->uv_tex[i]);
   }
   for (int i = 0; i < hair_cache->num_col_layers; i++) {
     GPU_VERTBUF_DISCARD_SAFE(hair_cache->proc_col_buf[i]);
-    DRW_TEXTURE_FREE_SAFE(hair_cache->col_tex[i]);
+    GPU_TEXTURE_FREE_SAFE(hair_cache->col_tex[i]);
   }
 
   for (int i = 0; i < MAX_HAIR_SUBDIV; i++) {
@@ -833,8 +831,11 @@ static void particle_batch_cache_ensure_procedural_final_points(ParticleHairCach
 
   /* Create a destination buffer for the transform feedback. Sized appropriately */
   /* Those are points! not line segments. */
-  GPU_vertbuf_data_alloc(*cache->final[subdiv].proc_buf,
-                         cache->final[subdiv].strands_res * cache->strands_len);
+  uint point_len = cache->final[subdiv].strands_res * cache->strands_len;
+  /* Avoid creating null sized VBO which can lead to crashes on certain platforms. */
+  point_len = max_ii(1, point_len);
+
+  GPU_vertbuf_data_alloc(*cache->final[subdiv].proc_buf, point_len);
 }
 
 static void particle_batch_cache_ensure_procedural_strand_data(PTCacheEdit *edit,

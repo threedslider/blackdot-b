@@ -14,7 +14,6 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
-#include "DNA_space_types.h"
 
 #include "BLI_utildefines.h"
 
@@ -22,7 +21,7 @@
 #include "BKE_context.hh"
 #include "BKE_customdata.hh"
 #include "BKE_global.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_mesh_legacy_derived_mesh.hh"
 #include "BKE_modifier.hh"
 #include "BKE_multires.hh"
@@ -229,7 +228,8 @@ static DerivedMesh *multiresbake_create_loresdm(Scene *scene, Object *ob, int *l
   DM_set_only_copy(cddm, &CD_MASK_BAREMESH);
   tmp_mmd.lvl = mmd->lvl;
   tmp_mmd.sculptlvl = mmd->lvl;
-  dm = multires_make_derived_from_derived(cddm, &tmp_mmd, scene, ob, MULTIRES_IGNORE_SIMPLIFY);
+  dm = multires_make_derived_from_derived(
+      cddm, &tmp_mmd, scene, ob, MultiresFlags::IgnoreSimplify);
 
   cddm->release(cddm);
 
@@ -256,7 +256,8 @@ static DerivedMesh *multiresbake_create_hiresdm(Scene *scene, Object *ob, int *l
 
   tmp_mmd.lvl = mmd->totlvl;
   tmp_mmd.sculptlvl = mmd->totlvl;
-  dm = multires_make_derived_from_derived(cddm, &tmp_mmd, scene, ob, MULTIRES_IGNORE_SIMPLIFY);
+  dm = multires_make_derived_from_derived(
+      cddm, &tmp_mmd, scene, ob, MultiresFlags::IgnoreSimplify);
   cddm->release(cddm);
 
   return dm;
@@ -276,7 +277,7 @@ static void clear_single_image(Image *image, ClearFlag flag)
   const float disp_alpha[4] = {0.5f, 0.5f, 0.5f, 0.0f};
   const float disp_solid[4] = {0.5f, 0.5f, 0.5f, 1.0f};
 
-  if ((image->id.tag & LIB_TAG_DOIT) == 0) {
+  if ((image->id.tag & ID_TAG_DOIT) == 0) {
     LISTBASE_FOREACH (ImageTile *, tile, &image->tiles) {
       ImageUser iuser;
       BKE_imageuser_default(&iuser);
@@ -294,7 +295,7 @@ static void clear_single_image(Image *image, ClearFlag flag)
         IMB_rectfill(ibuf, (ibuf->planes == R_IMF_PLANES_RGBA) ? vec_alpha : vec_solid);
       }
 
-      image->id.tag |= LIB_TAG_DOIT;
+      image->id.tag |= ID_TAG_DOIT;
 
       BKE_image_release_ibuf(image, ibuf, nullptr);
     }
@@ -306,7 +307,7 @@ static void clear_images_poly(Image **ob_image_array, int ob_image_array_len, Cl
   for (int i = 0; i < ob_image_array_len; i++) {
     Image *image = ob_image_array[i];
     if (image) {
-      image->id.tag &= ~LIB_TAG_DOIT;
+      image->id.tag &= ~ID_TAG_DOIT;
     }
   }
 
@@ -320,7 +321,7 @@ static void clear_images_poly(Image **ob_image_array, int ob_image_array_len, Cl
   for (int i = 0; i < ob_image_array_len; i++) {
     Image *image = ob_image_array[i];
     if (image) {
-      image->id.tag &= ~LIB_TAG_DOIT;
+      image->id.tag &= ~ID_TAG_DOIT;
     }
   }
 }

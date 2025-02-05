@@ -7,7 +7,6 @@
  */
 
 #include <cctype>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -28,14 +27,14 @@
 
 #include "BLT_translation.hh"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_armature.hh"
 #include "BKE_collection.hh"
 #include "BKE_context.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_particle.h"
 #include "BKE_report.hh"
 #include "BKE_scene.hh"
@@ -954,7 +953,7 @@ static bool select_grouped_color(bContext *C, Object *ob)
 
 static bool select_grouped_keyingset(bContext *C, Object * /*ob*/, ReportList *reports)
 {
-  KeyingSet *ks = ANIM_scene_get_active_keyingset(CTX_data_scene(C));
+  KeyingSet *ks = blender::animrig::scene_get_active_keyingset(CTX_data_scene(C));
   bool changed = false;
 
   /* firstly, validate KeyingSet */
@@ -962,7 +961,9 @@ static bool select_grouped_keyingset(bContext *C, Object * /*ob*/, ReportList *r
     BKE_report(reports, RPT_ERROR, "No active Keying Set to use");
     return false;
   }
-  if (ANIM_validate_keyingset(C, nullptr, ks) != blender::animrig::ModifyKeyReturn::SUCCESS) {
+  if (blender::animrig::validate_keyingset(C, nullptr, ks) !=
+      blender::animrig::ModifyKeyReturn::SUCCESS)
+  {
     if (ks->paths.first == nullptr) {
       if ((ks->flag & KEYINGSET_ABSOLUTE) == 0) {
         BKE_report(reports,
@@ -1299,11 +1300,11 @@ static bool object_select_more_less(bContext *C, const bool select)
   LISTBASE_FOREACH (Base *, base, BKE_view_layer_object_bases_get(view_layer)) {
     Object *ob = base->object;
     ob->flag &= ~OB_DONE;
-    ob->id.tag &= ~LIB_TAG_DOIT;
+    ob->id.tag &= ~ID_TAG_DOIT;
     /* parent may be in another scene */
     if (ob->parent) {
       ob->parent->flag &= ~OB_DONE;
-      ob->parent->id.tag &= ~LIB_TAG_DOIT;
+      ob->parent->id.tag &= ~ID_TAG_DOIT;
     }
   }
 
@@ -1319,8 +1320,8 @@ static bool object_select_more_less(bContext *C, const bool select)
     Object *ob = ((Base *)ptr.data)->object;
     if (ob->parent) {
       if ((ob->flag & OB_DONE) != (ob->parent->flag & OB_DONE)) {
-        ob->id.tag |= LIB_TAG_DOIT;
-        ob->parent->id.tag |= LIB_TAG_DOIT;
+        ob->id.tag |= ID_TAG_DOIT;
+        ob->parent->id.tag |= ID_TAG_DOIT;
       }
     }
   }
@@ -1332,7 +1333,7 @@ static bool object_select_more_less(bContext *C, const bool select)
   for (PointerRNA &ptr : ctx_base_list) {
     Base *base = static_cast<Base *>(ptr.data);
     Object *ob = base->object;
-    if ((ob->id.tag & LIB_TAG_DOIT) && ((base->flag & BASE_SELECTED) != select_flag)) {
+    if ((ob->id.tag & ID_TAG_DOIT) && ((base->flag & BASE_SELECTED) != select_flag)) {
       base_select(base, eObjectSelect_Mode(select_mode));
       changed = true;
     }

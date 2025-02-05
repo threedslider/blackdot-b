@@ -8,12 +8,9 @@
 
 #pragma once
 
-#include "COLLADAFWColorOrTexture.h"
 #include "COLLADAFWFloatOrDoubleArray.h"
-#include "COLLADAFWGeometry.h"
-#include "COLLADAFWMeshPrimitive.h"
 #include "COLLADAFWTypes.h"
-#include "COLLADASWEffectProfile.h"
+#include "COLLADASWColorOrTexture.h"
 
 #include <algorithm>
 #include <map>
@@ -34,30 +31,24 @@
 #include "RNA_access.hh"
 
 #include "BLI_linklist.h"
-#include "BLI_string.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
-#include "BKE_idprop.hh"
 #include "BKE_main.hh"
 #include "BKE_node.hh"
 #include "BKE_object.hh"
 #include "BKE_scene.hh"
 
-#include "DEG_depsgraph_query.hh"
-
 #include "BCSampleData.h"
 #include "BlenderContext.h"
 #include "ExportSettings.h"
-#include "ImportSettings.h"
 #include "collada_internal.h"
 
 constexpr int LIMITTED_PRECISION = 6;
 
-typedef std::map<COLLADAFW::UniqueId, Image *> UidImageMap;
-typedef std::map<std::string, Image *> KeyImageMap;
-typedef std::map<COLLADAFW::TextureMapId, std::vector<MTex *>> TexIndexTextureArrayMap;
-typedef std::set<Object *> BCObjectSet;
+using UidImageMap = std::map<COLLADAFW::UniqueId, Image *>;
+using KeyImageMap = std::map<std::string, Image *>;
+using TexIndexTextureArrayMap = std::map<COLLADAFW::TextureMapId, std::vector<MTex *>>;
+using BCObjectSet = std::set<Object *>;
 
 namespace COLLADAFW {
 class Node;
@@ -70,43 +61,44 @@ extern void bc_update_scene(BlenderContext &blender_context, float ctime);
 
 std::vector<bAction *> bc_getSceneActions(const bContext *C, Object *ob, bool all_actions);
 
-/* Action helpers */
+/* Action and Animdata helpers */
 
+/* Return Object's Action or nullptr. */
 inline bAction *bc_getSceneObjectAction(Object *ob)
 {
-  return (ob->adt && ob->adt->action) ? ob->adt->action : NULL;
+  return (ob->adt && ob->adt->action) ? ob->adt->action : nullptr;
 }
 
-/* Returns Light Action or NULL */
-inline bAction *bc_getSceneLightAction(Object *ob)
+/* Return Light's AnimData or nullptr. */
+inline AnimData *bc_getSceneLightAnimData(Object *ob)
 {
   if (ob->type != OB_LAMP) {
-    return NULL;
+    return nullptr;
   }
 
   Light *lamp = (Light *)ob->data;
-  return (lamp->adt && lamp->adt->action) ? lamp->adt->action : NULL;
+  return lamp->adt;
 }
 
-/* Return Camera Action or NULL */
-inline bAction *bc_getSceneCameraAction(Object *ob)
+/* Return Camera's AnimData or nullptr. */
+inline AnimData *bc_getSceneCameraAnimData(Object *ob)
 {
   if (ob->type != OB_CAMERA) {
-    return NULL;
+    return nullptr;
   }
 
   const Camera *camera = (const Camera *)ob->data;
-  return (camera->adt && camera->adt->action) ? camera->adt->action : NULL;
+  return camera->adt;
 }
 
-/* returns material action or NULL */
-inline bAction *bc_getSceneMaterialAction(Material *ma)
+/* Return Material's AnimData or nullptr. */
+inline AnimData *bc_getSceneMaterialAnimData(Material *ma)
 {
-  if (ma == NULL) {
-    return NULL;
+  if (ma == nullptr) {
+    return nullptr;
   }
 
-  return (ma->adt && ma->adt->action) ? ma->adt->action : NULL;
+  return ma->adt;
 }
 
 std::string bc_get_action_id(std::string action_name,
@@ -155,7 +147,7 @@ extern void bc_bubble_sort_by_Object_name(LinkNode *export_set);
 extern bool bc_is_root_bone(Bone *aBone, bool deform_bones_only);
 extern int bc_get_active_UVLayer(Object *ob);
 
-inline std::string bc_string_after(const std::string &s, const std::string probe)
+inline std::string bc_string_after(const std::string &s, const std::string &probe)
 {
   size_t i = s.rfind(probe);
   if (i != std::string::npos) {
@@ -164,7 +156,7 @@ inline std::string bc_string_after(const std::string &s, const std::string probe
   return s;
 }
 
-inline std::string bc_string_before(const std::string &s, const std::string probe)
+inline std::string bc_string_before(const std::string &s, const std::string &probe)
 {
   size_t i = s.find(probe);
   if (i != std::string::npos) {
@@ -411,7 +403,7 @@ class BoneExtended {
  * std:string     : an armature name
  * BoneExtended * : a map that contains extra data for bones
  */
-typedef std::map<std::string, BoneExtended *> BoneExtensionMap;
+using BoneExtensionMap = std::map<std::string, BoneExtended *>;
 
 /*
  * A class to organize bone extension data for multiple Armatures.

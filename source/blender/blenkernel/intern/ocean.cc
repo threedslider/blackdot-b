@@ -9,6 +9,7 @@
  * OpenMP hints by Christian Schnellhammer
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -20,13 +21,13 @@
 #include "DNA_scene_types.h"
 
 #include "BLI_math_vector.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_rand.h"
 #include "BLI_task.h"
 #include "BLI_utildefines.h"
 
-#include "BKE_image.h"
-#include "BKE_image_format.h"
+#include "BKE_image.hh"
+#include "BKE_image_format.hh"
 #include "BKE_ocean.h"
 #include "ocean_intern.h"
 
@@ -56,8 +57,8 @@ static float gaussRand(RNG *rng)
   float length2;
 
   do {
-    x = float(nextfr(rng, -1, 1));
-    y = float(nextfr(rng, -1, 1));
+    x = nextfr(rng, -1, 1);
+    y = nextfr(rng, -1, 1);
     length2 = x * x + y * y;
   } while (length2 >= 1 || length2 == 0);
 
@@ -715,9 +716,7 @@ static void set_height_normalize_factor(Ocean *oc)
 
   for (i = 0; i < oc->_M; i++) {
     for (j = 0; j < oc->_N; j++) {
-      if (max_h < fabs(oc->_disp_y[i * oc->_N + j])) {
-        max_h = fabs(oc->_disp_y[i * oc->_N + j]);
-      }
+      max_h = std::max<double>(max_h, fabs(oc->_disp_y[i * oc->_N + j]));
     }
   }
 
@@ -930,37 +929,34 @@ bool BKE_ocean_init(Ocean *o,
         case MOD_OCEAN_SPECTRUM_JONSWAP:
           mul_complex_f(o->_h0[i * o->_N + j],
                         r1r2,
-                        float(sqrt(BLI_ocean_spectrum_jonswap(o, o->_kx[i], o->_kz[j]) / 2.0f)));
+                        sqrt(BLI_ocean_spectrum_jonswap(o, o->_kx[i], o->_kz[j]) / 2.0f));
           mul_complex_f(o->_h0_minus[i * o->_N + j],
                         r1r2,
-                        float(sqrt(BLI_ocean_spectrum_jonswap(o, -o->_kx[i], -o->_kz[j]) / 2.0f)));
+                        sqrt(BLI_ocean_spectrum_jonswap(o, -o->_kx[i], -o->_kz[j]) / 2.0f));
           break;
         case MOD_OCEAN_SPECTRUM_TEXEL_MARSEN_ARSLOE:
           mul_complex_f(
               o->_h0[i * o->_N + j],
               r1r2,
-              float(sqrt(BLI_ocean_spectrum_texelmarsenarsloe(o, o->_kx[i], o->_kz[j]) / 2.0f)));
+              sqrt(BLI_ocean_spectrum_texelmarsenarsloe(o, o->_kx[i], o->_kz[j]) / 2.0f));
           mul_complex_f(
               o->_h0_minus[i * o->_N + j],
               r1r2,
-              float(sqrt(BLI_ocean_spectrum_texelmarsenarsloe(o, -o->_kx[i], -o->_kz[j]) / 2.0f)));
+              sqrt(BLI_ocean_spectrum_texelmarsenarsloe(o, -o->_kx[i], -o->_kz[j]) / 2.0f));
           break;
         case MOD_OCEAN_SPECTRUM_PIERSON_MOSKOWITZ:
-          mul_complex_f(
-              o->_h0[i * o->_N + j],
-              r1r2,
-              float(sqrt(BLI_ocean_spectrum_piersonmoskowitz(o, o->_kx[i], o->_kz[j]) / 2.0f)));
+          mul_complex_f(o->_h0[i * o->_N + j],
+                        r1r2,
+                        sqrt(BLI_ocean_spectrum_piersonmoskowitz(o, o->_kx[i], o->_kz[j]) / 2.0f));
           mul_complex_f(
               o->_h0_minus[i * o->_N + j],
               r1r2,
-              float(sqrt(BLI_ocean_spectrum_piersonmoskowitz(o, -o->_kx[i], -o->_kz[j]) / 2.0f)));
+              sqrt(BLI_ocean_spectrum_piersonmoskowitz(o, -o->_kx[i], -o->_kz[j]) / 2.0f));
           break;
         default:
+          mul_complex_f(o->_h0[i * o->_N + j], r1r2, sqrt(Ph(o, o->_kx[i], o->_kz[j]) / 2.0f));
           mul_complex_f(
-              o->_h0[i * o->_N + j], r1r2, float(sqrt(Ph(o, o->_kx[i], o->_kz[j]) / 2.0f)));
-          mul_complex_f(o->_h0_minus[i * o->_N + j],
-                        r1r2,
-                        float(sqrt(Ph(o, -o->_kx[i], -o->_kz[j]) / 2.0f)));
+              o->_h0_minus[i * o->_N + j], r1r2, sqrt(Ph(o, -o->_kx[i], -o->_kz[j]) / 2.0f));
           break;
       }
     }
@@ -1498,24 +1494,24 @@ void BKE_ocean_bake(Ocean *o,
 
     /* write the images */
     cache_filepath(filepath, och->bakepath, och->relbase, f, CACHE_TYPE_DISPLACE);
-    if (0 == BKE_imbuf_write(ibuf_disp, filepath, &imf)) {
+    if (false == BKE_imbuf_write(ibuf_disp, filepath, &imf)) {
       printf("Cannot save Displacement File Output to %s\n", filepath);
     }
 
     if (o->_do_jacobian) {
       cache_filepath(filepath, och->bakepath, och->relbase, f, CACHE_TYPE_FOAM);
-      if (0 == BKE_imbuf_write(ibuf_foam, filepath, &imf)) {
+      if (false == BKE_imbuf_write(ibuf_foam, filepath, &imf)) {
         printf("Cannot save Foam File Output to %s\n", filepath);
       }
 
       if (o->_do_spray) {
         cache_filepath(filepath, och->bakepath, och->relbase, f, CACHE_TYPE_SPRAY);
-        if (0 == BKE_imbuf_write(ibuf_spray, filepath, &imf)) {
+        if (false == BKE_imbuf_write(ibuf_spray, filepath, &imf)) {
           printf("Cannot save Spray File Output to %s\n", filepath);
         }
 
         cache_filepath(filepath, och->bakepath, och->relbase, f, CACHE_TYPE_SPRAY_INVERSE);
-        if (0 == BKE_imbuf_write(ibuf_spray_inverse, filepath, &imf)) {
+        if (false == BKE_imbuf_write(ibuf_spray_inverse, filepath, &imf)) {
           printf("Cannot save Spray Inverse File Output to %s\n", filepath);
         }
       }
@@ -1523,7 +1519,7 @@ void BKE_ocean_bake(Ocean *o,
 
     if (o->_do_normals) {
       cache_filepath(filepath, och->bakepath, och->relbase, f, CACHE_TYPE_NORMAL);
-      if (0 == BKE_imbuf_write(ibuf_normal, filepath, &imf)) {
+      if (false == BKE_imbuf_write(ibuf_normal, filepath, &imf)) {
         printf("Cannot save Normal File Output to %s\n", filepath);
       }
     }

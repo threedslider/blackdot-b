@@ -4,27 +4,25 @@
 
 #include "editors/sculpt_paint/brushes/types.hh"
 
+#include "BKE_mesh.hh"
+#include "BKE_paint.hh"
+#include "BKE_paint_bvh.hh"
+#include "BKE_subdiv_ccg.hh"
 #include "DNA_brush_types.h"
 #include "DNA_mesh_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
-#include "BKE_key.hh"
-#include "BKE_mesh.hh"
-#include "BKE_paint.hh"
-#include "BKE_pbvh.hh"
-#include "BKE_subdiv_ccg.hh"
-
-#include "BLI_array.hh"
 #include "BLI_enumerable_thread_specific.hh"
 #include "BLI_math_matrix.h"
-#include "BLI_math_matrix.hh"
 #include "BLI_math_vector.hh"
-#include "BLI_task.h"
 #include "BLI_task.hh"
 
 #include "editors/sculpt_paint/mesh_brush_common.hh"
+#include "editors/sculpt_paint/sculpt_automask.hh"
 #include "editors/sculpt_paint/sculpt_intern.hh"
+
+#include "bmesh.hh"
 
 namespace blender::ed::sculpt_paint {
 
@@ -60,116 +58,89 @@ BLI_NOINLINE static void calc_translations(const Span<float3> positions,
   }
 }
 
-static void calc_faces(const Sculpt &sd,
+static void calc_faces(const Depsgraph &depsgraph,
+                       const Sculpt &sd,
                        const Brush &brush,
                        const std::array<float3, 2> &stroke_xz,
                        const float strength,
-                       const Span<float3> positions_eval,
+                       const MeshAttributeData &attribute_data,
                        const Span<float3> vert_normals,
-                       const PBVHNode &node,
+                       const bke::pbvh::MeshNode &node,
                        Object &object,
                        LocalData &tls,
-                       const MutableSpan<float3> positions_orig)
+                       const PositionDeformData &position_data)
 {
   SculptSession &ss = *object.sculpt;
   const StrokeCache &cache = *ss.cache;
-  Mesh &mesh = *static_cast<Mesh *>(object.data);
 
-  const Span<int> verts = bke::pbvh::node_unique_verts(node);
-  const MutableSpan positions = gather_mesh_positions(positions_eval, verts, tls.positions);
+  const Span<int> verts = node.verts();
+  const MutableSpan positions = gather_data_mesh(position_data.eval, verts, tls.positions);
 
-  tls.factors.reinitialize(verts.size());
-  const MutableSpan<float> factors = tls.factors;
-  fill_factor_from_hide_and_mask(mesh, verts, factors);
-  filter_region_clip_factors(ss, positions, factors);
-  if (brush.flag & BRUSH_FRONTFACE) {
-    calc_front_face(cache.view_normal, vert_normals, verts, factors);
-  }
+  calc_factors_common_mesh(depsgraph,
+                           brush,
+                           object,
+                           attribute_data,
+                           positions,
+                           vert_normals,
+                           node,
+                           tls.factors,
+                           tls.distances);
 
-  tls.distances.reinitialize(verts.size());
-  const MutableSpan<float> distances = tls.distances;
-  calc_brush_distances(ss, positions, eBrushFalloffShape(brush.falloff_shape), distances);
-  filter_distances_with_radius(cache.radius, distances, factors);
-  apply_hardness_to_distances(cache, distances);
-  calc_brush_strength_factors(cache, brush, distances, factors);
+  scale_factors(tls.factors, strength);
 
-  if (cache.automasking) {
-    auto_mask::calc_vert_factors(object, *cache.automasking, node, verts, factors);
-  }
-
-  calc_brush_texture_factors(ss, brush, positions, factors);
-
-  scale_factors(factors, strength);
-
-  tls.translations.reinitialize(verts.size());
+  tls.translations.resize(verts.size());
   const MutableSpan<float3> translations = tls.translations;
-  calc_translations(positions, cache.location, stroke_xz, translations);
+  calc_translations(positions, cache.location_symm, stroke_xz, translations);
   if (brush.falloff_shape == PAINT_FALLOFF_SHAPE_TUBE) {
-    project_translations(translations, cache.view_normal);
+    project_translations(translations, cache.view_normal_symm);
   }
 
-  scale_translations(translations, factors);
+  scale_translations(translations, tls.factors);
 
-  write_translations(sd, object, positions_eval, verts, translations, positions_orig);
+  clip_and_lock_translations(sd, ss, position_data.eval, verts, translations);
+  position_data.deform(translations, verts);
 }
 
-static void calc_grids(const Sculpt &sd,
+static void calc_grids(const Depsgraph &depsgraph,
+                       const Sculpt &sd,
                        Object &object,
                        const Brush &brush,
                        const std::array<float3, 2> &stroke_xz,
                        const float strength,
-                       const PBVHNode &node,
+                       const bke::pbvh::GridsNode &node,
                        LocalData &tls)
 {
   SculptSession &ss = *object.sculpt;
   const StrokeCache &cache = *ss.cache;
   SubdivCCG &subdiv_ccg = *ss.subdiv_ccg;
 
-  const Span<int> grids = bke::pbvh::node_grid_indices(node);
+  const Span<int> grids = node.grids();
   const MutableSpan positions = gather_grids_positions(subdiv_ccg, grids, tls.positions);
 
-  tls.factors.reinitialize(positions.size());
-  const MutableSpan<float> factors = tls.factors;
-  fill_factor_from_hide_and_mask(subdiv_ccg, grids, factors);
-  filter_region_clip_factors(ss, positions, factors);
-  if (brush.flag & BRUSH_FRONTFACE) {
-    calc_front_face(cache.view_normal, subdiv_ccg, grids, factors);
-  }
+  calc_factors_common_grids(depsgraph, brush, object, positions, node, tls.factors, tls.distances);
 
-  tls.distances.reinitialize(positions.size());
-  const MutableSpan<float> distances = tls.distances;
-  calc_brush_distances(ss, positions, eBrushFalloffShape(brush.falloff_shape), distances);
-  filter_distances_with_radius(cache.radius, distances, factors);
-  apply_hardness_to_distances(cache, distances);
-  calc_brush_strength_factors(cache, brush, distances, factors);
+  scale_factors(tls.factors, strength);
 
-  if (cache.automasking) {
-    auto_mask::calc_grids_factors(object, *cache.automasking, node, grids, factors);
-  }
-
-  calc_brush_texture_factors(ss, brush, positions, factors);
-
-  scale_factors(factors, strength);
-
-  tls.translations.reinitialize(positions.size());
+  tls.translations.resize(positions.size());
   const MutableSpan<float3> translations = tls.translations;
-  calc_translations(positions, cache.location, stroke_xz, translations);
+  calc_translations(positions, cache.location_symm, stroke_xz, translations);
   if (brush.falloff_shape == PAINT_FALLOFF_SHAPE_TUBE) {
-    project_translations(translations, cache.view_normal);
+    project_translations(translations, cache.view_normal_symm);
   }
 
-  scale_translations(translations, factors);
+  scale_translations(translations, tls.factors);
 
   clip_and_lock_translations(sd, ss, positions, translations);
   apply_translations(translations, grids, subdiv_ccg);
 }
 
-static void calc_bmesh(const Sculpt &sd,
+static void calc_bmesh(const Depsgraph &depsgraph,
+                       const Sculpt &sd,
                        Object &object,
                        const Brush &brush,
                        const std::array<float3, 2> &stroke_xz,
                        const float strength,
-                       PBVHNode &node,
+                       bke::pbvh::BMeshNode &node,
                        LocalData &tls)
 {
   SculptSession &ss = *object.sculpt;
@@ -179,37 +150,18 @@ static void calc_bmesh(const Sculpt &sd,
 
   const MutableSpan positions = gather_bmesh_positions(verts, tls.positions);
 
-  tls.factors.reinitialize(verts.size());
-  const MutableSpan<float> factors = tls.factors;
-  fill_factor_from_hide_and_mask(*ss.bm, verts, factors);
-  filter_region_clip_factors(ss, positions, factors);
-  if (brush.flag & BRUSH_FRONTFACE) {
-    calc_front_face(cache.view_normal, verts, factors);
-  }
+  calc_factors_common_bmesh(depsgraph, brush, object, positions, node, tls.factors, tls.distances);
 
-  tls.distances.reinitialize(verts.size());
-  const MutableSpan<float> distances = tls.distances;
-  calc_brush_distances(ss, positions, eBrushFalloffShape(brush.falloff_shape), distances);
-  filter_distances_with_radius(cache.radius, distances, factors);
-  apply_hardness_to_distances(cache, distances);
-  calc_brush_strength_factors(cache, brush, distances, factors);
+  scale_factors(tls.factors, strength);
 
-  if (cache.automasking) {
-    auto_mask::calc_vert_factors(object, *cache.automasking, node, verts, factors);
-  }
-
-  calc_brush_texture_factors(ss, brush, positions, factors);
-
-  scale_factors(factors, strength);
-
-  tls.translations.reinitialize(verts.size());
+  tls.translations.resize(verts.size());
   const MutableSpan<float3> translations = tls.translations;
-  calc_translations(positions, cache.location, stroke_xz, translations);
+  calc_translations(positions, cache.location_symm, stroke_xz, translations);
   if (brush.falloff_shape == PAINT_FALLOFF_SHAPE_TUBE) {
-    project_translations(translations, cache.view_normal);
+    project_translations(translations, cache.view_normal_symm);
   }
 
-  scale_translations(translations, factors);
+  scale_translations(translations, tls.factors);
 
   clip_and_lock_translations(sd, ss, positions, translations);
   apply_translations(translations, verts);
@@ -217,78 +169,87 @@ static void calc_bmesh(const Sculpt &sd,
 
 }  // namespace pinch_cc
 
-void do_pinch_brush(const Sculpt &sd, Object &object, Span<PBVHNode *> nodes)
+void do_pinch_brush(const Depsgraph &depsgraph,
+                    const Sculpt &sd,
+                    Object &object,
+                    const IndexMask &node_mask)
 {
   const SculptSession &ss = *object.sculpt;
+  bke::pbvh::Tree &pbvh = *bke::object::pbvh_get(object);
   const Brush &brush = *BKE_paint_brush_for_read(&sd.paint);
 
   float3 area_no;
   float3 area_co;
-  calc_brush_plane(brush, object, nodes, area_no, area_co);
+  calc_brush_plane(depsgraph, brush, object, node_mask, area_no, area_co);
 
   /* delay the first daub because grab delta is not setup */
   if (SCULPT_stroke_is_first_brush_step_of_symmetry_pass(*ss.cache)) {
     return;
   }
 
-  if (math::is_zero(ss.cache->grab_delta_symmetry)) {
+  if (math::is_zero(ss.cache->grab_delta_symm)) {
     return;
   }
 
   /* Initialize `mat`. */
   float4x4 mat = float4x4::identity();
-  mat.x_axis() = math::cross(area_no, ss.cache->grab_delta_symmetry);
+  mat.x_axis() = math::cross(area_no, ss.cache->grab_delta_symm);
   mat.y_axis() = math::cross(area_no, mat.x_axis());
   mat.z_axis() = area_no;
-  mat.location() = ss.cache->location;
+  mat.location() = ss.cache->location_symm;
   normalize_m4(mat.ptr());
 
   const std::array<float3, 2> stroke_xz{math::normalize(mat.x_axis()),
                                         math::normalize(mat.z_axis())};
 
   threading::EnumerableThreadSpecific<LocalData> all_tls;
-  switch (BKE_pbvh_type(*object.sculpt->pbvh)) {
-    case PBVH_FACES: {
-      Mesh &mesh = *static_cast<Mesh *>(object.data);
-      const PBVH &pbvh = *ss.pbvh;
-      const Span<float3> positions_eval = BKE_pbvh_get_vert_positions(pbvh);
-      const Span<float3> vert_normals = BKE_pbvh_get_vert_normals(pbvh);
-      MutableSpan<float3> positions_orig = mesh.vert_positions_for_write();
-      threading::parallel_for(nodes.index_range(), 1, [&](const IndexRange range) {
+  switch (pbvh.type()) {
+    case bke::pbvh::Type::Mesh: {
+      const Mesh &mesh = *static_cast<Mesh *>(object.data);
+      const MeshAttributeData attribute_data(mesh);
+      const PositionDeformData position_data(depsgraph, object);
+      const Span<float3> vert_normals = bke::pbvh::vert_normals_eval(depsgraph, object);
+      MutableSpan<bke::pbvh::MeshNode> nodes = pbvh.nodes<bke::pbvh::MeshNode>();
+      node_mask.foreach_index(GrainSize(1), [&](const int i) {
         LocalData &tls = all_tls.local();
-        for (const int i : range) {
-          calc_faces(sd,
-                     brush,
-                     stroke_xz,
-                     ss.cache->bstrength,
-                     positions_eval,
-                     vert_normals,
-                     *nodes[i],
-                     object,
-                     tls,
-                     positions_orig);
-          BKE_pbvh_node_mark_positions_update(nodes[i]);
-        }
+        calc_faces(depsgraph,
+                   sd,
+                   brush,
+                   stroke_xz,
+                   ss.cache->bstrength,
+                   attribute_data,
+                   vert_normals,
+                   nodes[i],
+                   object,
+                   tls,
+                   position_data);
+        bke::pbvh::update_node_bounds_mesh(position_data.eval, nodes[i]);
       });
       break;
     }
-    case PBVH_GRIDS:
-      threading::parallel_for(nodes.index_range(), 1, [&](const IndexRange range) {
+    case bke::pbvh::Type::Grids: {
+      SubdivCCG &subdiv_ccg = *object.sculpt->subdiv_ccg;
+      MutableSpan<float3> positions = subdiv_ccg.positions;
+      MutableSpan<bke::pbvh::GridsNode> nodes = pbvh.nodes<bke::pbvh::GridsNode>();
+      node_mask.foreach_index(GrainSize(1), [&](const int i) {
         LocalData &tls = all_tls.local();
-        for (const int i : range) {
-          calc_grids(sd, object, brush, stroke_xz, ss.cache->bstrength, *nodes[i], tls);
-        }
+        calc_grids(depsgraph, sd, object, brush, stroke_xz, ss.cache->bstrength, nodes[i], tls);
+        bke::pbvh::update_node_bounds_grids(subdiv_ccg.grid_area, positions, nodes[i]);
       });
       break;
-    case PBVH_BMESH:
-      threading::parallel_for(nodes.index_range(), 1, [&](const IndexRange range) {
+    }
+    case bke::pbvh::Type::BMesh: {
+      MutableSpan<bke::pbvh::BMeshNode> nodes = pbvh.nodes<bke::pbvh::BMeshNode>();
+      node_mask.foreach_index(GrainSize(1), [&](const int i) {
         LocalData &tls = all_tls.local();
-        for (const int i : range) {
-          calc_bmesh(sd, object, brush, stroke_xz, ss.cache->bstrength, *nodes[i], tls);
-        }
+        calc_bmesh(depsgraph, sd, object, brush, stroke_xz, ss.cache->bstrength, nodes[i], tls);
+        bke::pbvh::update_node_bounds_bmesh(nodes[i]);
       });
       break;
+    }
   }
+  pbvh.tag_positions_changed(node_mask);
+  pbvh.flush_bounds_to_parents();
 }
 
 }  // namespace blender::ed::sculpt_paint

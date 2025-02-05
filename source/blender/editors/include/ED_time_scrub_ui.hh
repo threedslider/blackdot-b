@@ -8,10 +8,14 @@
 
 #pragma once
 
+struct ARegion;
+struct Scene;
+struct ScrArea;
 struct bContext;
 struct bDopeSheet;
-struct wmEvent;
 struct rcti;
+struct wmEvent;
+struct wmWindow;
 
 void ED_time_scrub_draw_current_frame(const ARegion *region,
                                       const Scene *scene,
@@ -31,6 +35,11 @@ void ED_time_scrub_draw(const ARegion *region,
 rcti ED_time_scrub_clamp_scroller_mask(const rcti &scroller_mask);
 
 bool ED_time_scrub_event_in_region(const ARegion *region, const wmEvent *event);
+/** Follow the #EventHandlerPoll function signature. */
+bool ED_time_scrub_event_in_region_poll(const wmWindow *win,
+                                        const ScrArea *area,
+                                        const ARegion *region,
+                                        const wmEvent *event);
 
 void ED_time_scrub_channel_search_draw(const bContext *C, ARegion *region, bDopeSheet *dopesheet);
-void ED_time_scrub_region_rect_get(const ARegion *region, rcti *rect);
+void ED_time_scrub_region_rect_get(const ARegion *region, rcti *r_rect);

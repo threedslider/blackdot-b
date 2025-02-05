@@ -3,9 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 set(INC
-  .
-  ../blenkernel
-  ../blentranslation
+  PUBLIC .
   ../../../intern/eigen
   ../../../extern/rangetree
 )
@@ -164,8 +162,9 @@ set(SRC
 )
 
 set(LIB
-  bf_blenkernel
+  PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
+  PRIVATE bf::blentranslation
   PRIVATE bf::depsgraph
   PRIVATE bf::dna
   PRIVATE bf::intern::clog
@@ -202,22 +201,15 @@ if(WITH_GMP)
 endif()
 
 if(WITH_TBB)
-  add_definitions(-DWITH_TBB)
   if(WIN32)
     # TBB includes Windows.h which will define min/max macros
-    # that will collide with the stl versions.
+    # that will collide with the STL versions.
     add_definitions(-DNOMINMAX)
   endif()
-  list(APPEND INC_SYS
-    ${TBB_INCLUDE_DIRS}
-  )
-
-  list(APPEND LIB
-    ${TBB_LIBRARIES}
-  )
 endif()
 
 blender_add_lib(bf_bmesh "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")
+add_library(bf::bmesh ALIAS bf_bmesh)
 
 if(MSVC AND NOT MSVC_CLANG)
   target_compile_options(bf_bmesh PRIVATE /WX /wd4101)

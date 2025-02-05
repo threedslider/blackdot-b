@@ -7,6 +7,8 @@
  */
 #include "DRW_render.hh"
 
+#include "BLI_string.h"
+
 #include "gpencil_engine.h"
 
 extern "C" char datatoc_gpencil_common_lib_glsl[];
@@ -50,22 +52,22 @@ static struct {
 
 void GPENCIL_shader_free()
 {
-  DRW_SHADER_FREE_SAFE(g_shaders.antialiasing_sh[0]);
-  DRW_SHADER_FREE_SAFE(g_shaders.antialiasing_sh[1]);
-  DRW_SHADER_FREE_SAFE(g_shaders.antialiasing_sh[2]);
-  DRW_SHADER_FREE_SAFE(g_shaders.gpencil_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.composite_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.layer_blend_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.depth_merge_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.mask_invert_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.fx_composite_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.fx_colorize_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.fx_blur_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.fx_glow_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.fx_pixel_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.fx_rim_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.fx_shadow_sh);
-  DRW_SHADER_FREE_SAFE(g_shaders.fx_transform_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.antialiasing_sh[0]);
+  GPU_SHADER_FREE_SAFE(g_shaders.antialiasing_sh[1]);
+  GPU_SHADER_FREE_SAFE(g_shaders.antialiasing_sh[2]);
+  GPU_SHADER_FREE_SAFE(g_shaders.gpencil_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.composite_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.layer_blend_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.depth_merge_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.mask_invert_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.fx_composite_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.fx_colorize_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.fx_blur_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.fx_glow_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.fx_pixel_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.fx_rim_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.fx_shadow_sh);
+  GPU_SHADER_FREE_SAFE(g_shaders.fx_transform_sh);
 }
 
 GPUShader *GPENCIL_shader_antialiasing(int stage)

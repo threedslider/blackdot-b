@@ -17,8 +17,6 @@
 
 #include "gpu_context_private.hh" /* TODO: remove. */
 
-#include "GPU_vertex_buffer.hh"
-
 #include <cstring>
 
 /* -------------------------------------------------------------------- */
@@ -156,7 +154,7 @@ VertBuf *GPU_vertbuf_duplicate(VertBuf *verts)
   return verts->duplicate();
 }
 
-void GPU_vertbuf_read(VertBuf *verts, void *data)
+void GPU_vertbuf_read(const VertBuf *verts, void *data)
 {
   verts->read(data);
 }

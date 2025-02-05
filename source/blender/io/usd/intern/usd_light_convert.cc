@@ -12,23 +12,23 @@
 
 #include <pxr/base/gf/rotation.h>
 #include <pxr/base/gf/vec3f.h>
-#include <pxr/usd/ar/packageUtils.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdGeom/xformCommonAPI.h>
 #include <pxr/usd/usdLux/domeLight.h>
 
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_main.hh"
 #include "BKE_node.hh"
+#include "BKE_node_legacy_types.hh"
 #include "BKE_node_runtime.hh"
 #include "BKE_node_tree_update.hh"
 #include "BLI_fileops.h"
 #include "BLI_listbase.h"
 #include "BLI_math_vector.h"
-#include "BLI_path_util.h"
-#include "BLI_string.h"
+#include "BLI_path_utils.hh"
+
 #include "DNA_node_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_world_types.h"
@@ -82,7 +82,7 @@ bool get_authored_value(const pxr::UsdAttribute &attr,
 
 /**
  * Helper struct for retrieving shader information when traversing a world material
- * node chain, provided as user data for #bke::nodeChainIter().
+ * node chain, provided as user data for #bke::node_chain_iterator().
  */
 struct WorldNtreeSearchResults {
   const blender::io::usd::USDExportParams &params;
@@ -133,7 +133,9 @@ static Image *load_image(std::string tex_path, Main *bmain, const USDImportParam
 {
   /* Optionally copy the asset if it's inside a USDZ package. */
   const bool import_textures = params.import_textures_mode != USD_TEX_IMPORT_NONE &&
-                               pxr::ArIsPackageRelativePath(tex_path);
+                               should_import_asset(tex_path);
+
+  std::string imported_file_source_path = tex_path;
 
   if (import_textures) {
     /* If we are packing the imported textures, we first write them
@@ -153,6 +155,10 @@ static Image *load_image(std::string tex_path, Main *bmain, const USDImportParam
   Image *image = BKE_image_load_exists(bmain, tex_path.c_str());
   if (!image) {
     return nullptr;
+  }
+
+  if (import_textures && imported_file_source_path != tex_path) {
+    ensure_usd_source_path_prop(imported_file_source_path, &image->id);
   }
 
   if (import_textures && params.import_textures_mode == USD_TEX_IMPORT_PACK &&
@@ -176,19 +182,19 @@ static bNode *append_node(bNode *dst_node,
                           bNodeTree *ntree,
                           float offset)
 {
-  bNode *src_node = bke::nodeAddStaticNode(nullptr, ntree, new_node_type);
+  bNode *src_node = bke::node_add_static_node(nullptr, ntree, new_node_type);
   if (!src_node) {
     return nullptr;
   }
 
-  bke::nodeAddLink(ntree,
-                   src_node,
-                   bke::nodeFindSocket(src_node, SOCK_OUT, out_sock),
-                   dst_node,
-                   bke::nodeFindSocket(dst_node, SOCK_IN, in_sock));
+  bke::node_add_link(ntree,
+                     src_node,
+                     bke::node_find_socket(src_node, SOCK_OUT, out_sock),
+                     dst_node,
+                     bke::node_find_socket(dst_node, SOCK_IN, in_sock));
 
-  src_node->locx = dst_node->locx - offset;
-  src_node->locy = dst_node->locy;
+  src_node->location[0] = dst_node->location[0] - offset;
+  src_node->location[1] = dst_node->location[1];
 
   return src_node;
 }
@@ -199,7 +205,7 @@ static bNode *append_node(bNode *dst_node,
  * handles copying textures, if required.
  */
 static bool node_search(bNode *fromnode,
-                        bNode * /* tonode */,
+                        bNode * /*tonode*/,
                         void *userdata,
                         const bool /*reversed*/)
 {
@@ -209,12 +215,13 @@ static bool node_search(bNode *fromnode,
 
   WorldNtreeSearchResults *res = reinterpret_cast<WorldNtreeSearchResults *>(userdata);
 
-  if (!res->background_found && fromnode->type == SH_NODE_BACKGROUND) {
+  if (!res->background_found && fromnode->type_legacy == SH_NODE_BACKGROUND) {
     /* Get light color and intensity */
-    bNodeSocketValueRGBA *color_data = bke::nodeFindSocket(fromnode, SOCK_IN, "Color")
-                                           ->default_value_typed<bNodeSocketValueRGBA>();
-    bNodeSocketValueFloat *strength_data = bke::nodeFindSocket(fromnode, SOCK_IN, "Strength")
-                                               ->default_value_typed<bNodeSocketValueFloat>();
+    const bNodeSocketValueRGBA *color_data = bke::node_find_socket(fromnode, SOCK_IN, "Color")
+                                                 ->default_value_typed<bNodeSocketValueRGBA>();
+    const bNodeSocketValueFloat *strength_data =
+        bke::node_find_socket(fromnode, SOCK_IN, "Strength")
+            ->default_value_typed<bNodeSocketValueFloat>();
 
     res->background_found = true;
     res->world_intensity = strength_data->value;
@@ -222,7 +229,7 @@ static bool node_search(bNode *fromnode,
     res->world_color[1] = color_data->value[1];
     res->world_color[2] = color_data->value[2];
   }
-  else if (!res->env_tex_found && fromnode->type == SH_NODE_TEX_ENVIRONMENT) {
+  else if (!res->env_tex_found && fromnode->type_legacy == SH_NODE_TEX_ENVIRONMENT) {
     /* Get env tex path. */
 
     res->file_path = get_tex_image_asset_filepath(fromnode, res->stage, res->params);
@@ -234,12 +241,13 @@ static bool node_search(bNode *fromnode,
       }
     }
   }
-  else if (!res->env_tex_found && !res->mult_found && fromnode->type == SH_NODE_VECTOR_MATH) {
+  else if (!res->env_tex_found && !res->mult_found && fromnode->type_legacy == SH_NODE_VECTOR_MATH)
+  {
 
     if (fromnode->custom1 == NODE_VECTOR_MATH_MULTIPLY) {
       res->mult_found = true;
 
-      bNodeSocket *vec_sock = bke::nodeFindSocket(fromnode, SOCK_IN, "Vector");
+      bNodeSocket *vec_sock = bke::node_find_socket(fromnode, SOCK_IN, "Vector");
       if (vec_sock) {
         vec_sock = vec_sock->next;
       }
@@ -249,10 +257,10 @@ static bool node_search(bNode *fromnode,
       }
     }
   }
-  else if (res->env_tex_found && fromnode->type == SH_NODE_MAPPING) {
+  else if (res->env_tex_found && fromnode->type_legacy == SH_NODE_MAPPING) {
     copy_v3_fl(res->mapping_rot, 0.0f);
-    if (bNodeSocket *socket = bke::nodeFindSocket(fromnode, SOCK_IN, "Rotation")) {
-      bNodeSocketValueVector *rot_value = static_cast<bNodeSocketValueVector *>(
+    if (bNodeSocket *socket = bke::node_find_socket(fromnode, SOCK_IN, "Rotation")) {
+      const bNodeSocketValueVector *rot_value = static_cast<bNodeSocketValueVector *>(
           socket->default_value);
       copy_v3_v3(res->mapping_rot, rot_value->value);
     }
@@ -286,7 +294,7 @@ void world_material_to_dome_light(const USDExportParams &params,
 
   WorldNtreeSearchResults res(params, stage);
 
-  bke::nodeChainIter(scene->world->nodetree, output, node_search, &res, true);
+  bke::node_chain_iterator(scene->world->nodetree, output, node_search, &res, true);
 
   if (!(res.background_found || res.env_tex_found)) {
     /* No nodes to convert */
@@ -376,7 +384,6 @@ void world_material_to_dome_light(const USDExportParams &params,
 /* Import the dome light as a world material. */
 
 void dome_light_to_world_material(const USDImportParams &params,
-                                  const ImportSettings & /*settings*/,
                                   Scene *scene,
                                   Main *bmain,
                                   const pxr::UsdLuxDomeLight &dome_light,
@@ -391,7 +398,7 @@ void dome_light_to_world_material(const USDImportParams &params,
   }
 
   if (!scene->world->nodetree) {
-    scene->world->nodetree = bke::ntreeAddTree(nullptr, "Shader Nodetree", "ShaderNodeTree");
+    scene->world->nodetree = bke::node_tree_add_tree(nullptr, "Shader Nodetree", "ShaderNodeTree");
     if (!scene->world->nodetree) {
       CLOG_WARN(&LOG, "Couldn't create world ntree");
       return;
@@ -407,29 +414,29 @@ void dome_light_to_world_material(const USDImportParams &params,
 
   /* Look for the output and background shader nodes, which we will reuse. */
   LISTBASE_FOREACH (bNode *, node, &ntree->nodes) {
-    if (node->type == SH_NODE_OUTPUT_WORLD) {
+    if (node->type_legacy == SH_NODE_OUTPUT_WORLD) {
       output = node;
     }
-    else if (node->type == SH_NODE_BACKGROUND) {
+    else if (node->type_legacy == SH_NODE_BACKGROUND) {
       bgshader = node;
     }
     else {
       /* Move existing node out of the way. */
-      node->locy += 300;
+      node->location[1] += 300;
     }
   }
 
   /* Create the output and background shader nodes, if they don't exist. */
   if (!output) {
-    output = bke::nodeAddStaticNode(nullptr, ntree, SH_NODE_OUTPUT_WORLD);
+    output = bke::node_add_static_node(nullptr, ntree, SH_NODE_OUTPUT_WORLD);
 
     if (!output) {
       CLOG_WARN(&LOG, "Couldn't create world output node");
       return;
     }
 
-    output->locx = 300.0f;
-    output->locy = 300.0f;
+    output->location[0] = 300.0f;
+    output->location[1] = 300.0f;
   }
 
   if (!bgshader) {
@@ -441,15 +448,15 @@ void dome_light_to_world_material(const USDImportParams &params,
     }
 
     /* Set the default background color. */
-    bNodeSocket *color_sock = bke::nodeFindSocket(bgshader, SOCK_IN, "Color");
+    bNodeSocket *color_sock = bke::node_find_socket(bgshader, SOCK_IN, "Color");
     copy_v3_v3(((bNodeSocketValueRGBA *)color_sock->default_value)->value, &scene->world->horr);
   }
 
   /* Make sure the first input to the shader node is disconnected. */
-  bNodeSocket *shader_input = bke::nodeFindSocket(bgshader, SOCK_IN, "Color");
+  bNodeSocket *shader_input = bke::node_find_socket(bgshader, SOCK_IN, "Color");
 
   if (shader_input && shader_input->link) {
-    bke::nodeRemLink(ntree, shader_input->link);
+    bke::node_remove_link(ntree, shader_input->link);
   }
 
   /* Set the background shader intensity. */
@@ -462,7 +469,7 @@ void dome_light_to_world_material(const USDImportParams &params,
 
   intensity *= params.light_intensity_scale;
 
-  bNodeSocket *strength_sock = bke::nodeFindSocket(bgshader, SOCK_IN, "Strength");
+  bNodeSocket *strength_sock = bke::node_find_socket(bgshader, SOCK_IN, "Strength");
   ((bNodeSocketValueFloat *)strength_sock->default_value)->value = intensity;
 
   /* Get the dome light texture file and color. */
@@ -481,12 +488,12 @@ void dome_light_to_world_material(const USDImportParams &params,
     /* No texture file is authored on the dome light.  Set the color, if it was authored,
      * and return early. */
     if (has_color) {
-      bNodeSocket *color_sock = bke::nodeFindSocket(bgshader, SOCK_IN, "Color");
+      bNodeSocket *color_sock = bke::node_find_socket(bgshader, SOCK_IN, "Color");
       copy_v3_v3(((bNodeSocketValueRGBA *)color_sock->default_value)->value, color.data());
     }
 
-    bke::nodeSetActive(ntree, output);
-    BKE_ntree_update_main_tree(bmain, ntree, nullptr);
+    bke::node_set_active(ntree, output);
+    BKE_ntree_update_after_single_tree_change(*bmain, *ntree);
 
     return;
   }
@@ -506,7 +513,7 @@ void dome_light_to_world_material(const USDImportParams &params,
     mult->custom1 = NODE_VECTOR_MATH_MULTIPLY;
 
     /* Set the color in the vector math node's second socket. */
-    bNodeSocket *vec_sock = bke::nodeFindSocket(mult, SOCK_IN, "Vector");
+    bNodeSocket *vec_sock = bke::node_find_socket(mult, SOCK_IN, "Vector");
     if (vec_sock) {
       vec_sock = vec_sock->next;
     }
@@ -592,15 +599,15 @@ void dome_light_to_world_material(const USDImportParams &params,
   /* Convert degrees to radians. */
   rot_vec *= M_PI / 180.0f;
 
-  if (bNodeSocket *socket = bke::nodeFindSocket(mapping, SOCK_IN, "Rotation")) {
+  if (bNodeSocket *socket = bke::node_find_socket(mapping, SOCK_IN, "Rotation")) {
     bNodeSocketValueVector *rot_value = static_cast<bNodeSocketValueVector *>(
         socket->default_value);
     copy_v3_v3(rot_value->value, rot_vec.data());
   }
 
-  bke::nodeSetActive(ntree, output);
+  bke::node_set_active(ntree, output);
   DEG_id_tag_update(&ntree->id, ID_RECALC_NTREE_OUTPUT);
-  BKE_ntree_update_main_tree(bmain, ntree, nullptr);
+  BKE_ntree_update_after_single_tree_change(*bmain, *ntree);
 }
 
 }  // namespace blender::io::usd

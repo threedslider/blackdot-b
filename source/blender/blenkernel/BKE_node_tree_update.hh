@@ -8,6 +8,11 @@
  * \ingroup bke
  */
 
+#include <functional>
+#include <optional>
+
+#include "BLI_span.hh"
+
 struct ID;
 struct ImageUser;
 struct Main;
@@ -58,36 +63,43 @@ void BKE_ntree_update_tag_image_user_changed(bNodeTree *ntree, ImageUser *iuser)
 
 struct NodeTreeUpdateExtraParams {
   /**
-   * Data passed into the callbacks.
-   */
-  void *user_data;
-
-  /**
    * Called for every tree that has been changed during the update. This can be used to send
    * notifiers to trigger redraws or depsgraph updates.
    */
-  void (*tree_changed_fn)(ID *, bNodeTree *, void *user_data);
+  std::function<void(bNodeTree &, ID &owner)> tree_changed_fn;
 
   /**
    * Called for every tree whose output value may have changed based on the provided update tags.
    * This can be used to tag the depsgraph if necessary.
    */
-  void (*tree_output_changed_fn)(ID *, bNodeTree *, void *user_data);
+  std::function<void(bNodeTree &, ID &owner)> tree_output_changed_fn;
 };
 
 /**
- * Updates #bmain based on changes to node trees.
+ * Updates the given bmain to ensure invariants related to node trees (for example that group nodes
+ * have sockets that correspond to the referenced node tree).
+ *
+ * \param bmain: Used to e.g. find node trees that depend on a modified node tree and thus have to
+ *   be modified too.
+ * \param modified_trees: Optional filter for node trees that have been modified. Passing this in
+ *   may make the update faster by avoiding having to iterate over all node trees.
+ * \param params: Additional parameters that allow the caller to properly tag the depsgraph and
+ *   sent notifiers.
  */
-void BKE_ntree_update_main(Main *bmain, NodeTreeUpdateExtraParams *params);
+void BKE_ntree_update(Main &bmain,
+                      std::optional<blender::Span<bNodeTree *>> modified_trees = std::nullopt,
+                      const NodeTreeUpdateExtraParams &params = {});
 
 /**
- * Same as #BKE_ntree_update_main, but will first only look at the provided tree and only looks
- * at #bmain when something relevant for other data-blocks changed. This avoids scanning #bmain in
- * many cases.
- *
- * If #bmain is null, only the provided tree is updated. This should only be used in very rare
- * cases because it may result it incorrectly synced data in DNA.
- *
- * If #tree is null, this is the same as calling #BKE_ntree_update_main.
+ * Same as #BKE_ntree_update but with a simpler API for the case when only a single tree has been
+ * modified.
  */
-void BKE_ntree_update_main_tree(Main *bmain, bNodeTree *ntree, NodeTreeUpdateExtraParams *params);
+void BKE_ntree_update_after_single_tree_change(Main &bmain,
+                                               bNodeTree &modified_tree,
+                                               const NodeTreeUpdateExtraParams &params = {});
+
+/**
+ * Can be used to update trees locally, without affecting other trees. For example, when building a
+ * temporary node tree that is not in bmain.
+ */
+void BKE_ntree_update_without_main(bNodeTree &tree);

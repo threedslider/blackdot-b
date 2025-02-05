@@ -10,18 +10,22 @@
 
 #include "gpu_context_private.hh"
 
+#include "BLI_utility_mixins.hh"
 #include "vk_common.hh"
 
 namespace blender::gpu {
 class VKContext;
+class VKDevice;
 
 /**
  * Class for handing vulkan buffers (allocation/updating/binding).
  */
-class VKBuffer {
+class VKBuffer : public NonCopyable {
   size_t size_in_bytes_ = 0;
   VkBuffer vk_buffer_ = VK_NULL_HANDLE;
   VmaAllocation allocation_ = VK_NULL_HANDLE;
+  VkMemoryPropertyFlags vk_memory_property_flags_;
+
   /* Pointer to the virtually mapped memory. */
   void *mapped_memory_ = nullptr;
 
@@ -31,15 +35,38 @@ class VKBuffer {
 
   /** Has this buffer been allocated? */
   bool is_allocated() const;
+
+  /**
+   * Allocate the buffer.
+   */
   bool create(size_t size,
-              GPUUsageType usage,
               VkBufferUsageFlags buffer_usage,
-              bool is_host_visible = true);
+              VkMemoryPropertyFlags required_flags,
+              VkMemoryPropertyFlags preferred_flags,
+              VmaAllocationCreateFlags vma_allocation_flags);
   void clear(VKContext &context, uint32_t clear_value);
-  void update(const void *data) const;
+  void update_immediately(const void *data) const;
+
+  /**
+   * Update the buffer as part of the render graph evaluation. The ownership of data will be
+   * transferred to the render graph and should have been allocated using guarded alloc.
+   */
+  void update_render_graph(VKContext &context, void *data) const;
   void flush() const;
   void read(VKContext &context, void *data) const;
+
+  /**
+   * Free the buffer.
+   *
+   * Discards the buffer so it can be destroyed safely later. Buffers can still be used when
+   * rendering so we can only destroy them after the rendering is completed.
+   */
   bool free();
+
+  /**
+   * Destroy the buffer immediately.
+   */
+  void free_immediately(VKDevice &device);
 
   int64_t size_in_bytes() const
   {
@@ -72,13 +99,10 @@ class VKBuffer {
 /**
  * Helper struct to enable buffers to be bound with an offset.
  *
- * VKImmediate mode uses a single VKBuffer with multiple vertex layouts. Those layouts are send to
- * the command buffer containing an offset.
- *
- * VKIndexBuffer uses this when it is a subrange of another buffer.
+ * Used for de-interleaved vertex input buffers and immediate mode buffers.
  */
 struct VKBufferWithOffset {
-  const VKBuffer &buffer;
+  const VkBuffer buffer;
   VkDeviceSize offset;
 };
 

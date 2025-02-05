@@ -7,28 +7,27 @@
 #include "device/queue.h"
 #include "integrator/tile.h"
 #include "session/buffers.h"
-#include "util/atomic.h"
 #include "util/log.h"
 
 CCL_NAMESPACE_BEGIN
 
-WorkTileScheduler::WorkTileScheduler() {}
+WorkTileScheduler::WorkTileScheduler() = default;
 
 void WorkTileScheduler::set_accelerated_rt(bool accelerated_rt)
 {
   accelerated_rt_ = accelerated_rt;
 }
 
-void WorkTileScheduler::set_max_num_path_states(int max_num_path_states)
+void WorkTileScheduler::set_max_num_path_states(const int max_num_path_states)
 {
   max_num_path_states_ = max_num_path_states;
 }
 
 void WorkTileScheduler::reset(const BufferParams &buffer_params,
-                              int sample_start,
-                              int samples_num,
-                              int sample_offset,
-                              float scrambling_distance)
+                              const int sample_start,
+                              const int samples_num,
+                              const int sample_offset,
+                              const float scrambling_distance)
 {
   /* Image buffer parameters. */
   image_full_offset_px_.x = buffer_params.full_x;
@@ -56,16 +55,17 @@ void WorkTileScheduler::reset_scheduler_state()
 
   const int num_path_states_in_tile = tile_size_.width * tile_size_.height *
                                       tile_size_.num_samples;
-  const int num_tiles = max_num_path_states_ / num_path_states_in_tile;
-
-  VLOG_WORK << "Will schedule " << num_tiles << " tiles of size " << tile_size_;
 
   if (num_path_states_in_tile == 0) {
+    VLOG_WORK << "Will not schedule any tiles: no work remained for the device";
     num_tiles_x_ = 0;
     num_tiles_y_ = 0;
     num_tiles_per_sample_range_ = 0;
   }
   else {
+    const int num_tiles = max_num_path_states_ / num_path_states_in_tile;
+    VLOG_WORK << "Will schedule " << num_tiles << " tiles of " << tile_size_;
+
     /* The logging is based on multiple tiles scheduled, ignoring overhead of multi-tile
      * scheduling and purely focusing on the number of used path states. */
     VLOG_WORK << "Number of unused path states: "

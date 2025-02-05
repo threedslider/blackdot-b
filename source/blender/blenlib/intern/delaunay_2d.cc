@@ -1493,9 +1493,9 @@ template<typename T> static void re_delaunay_triangulate(CDTArrangement<T> *cdt,
   if (se->face == cdt->outer_face || sym(se)->face == cdt->outer_face) {
     return;
   }
-  /* 'se' is a diagonal just added, and it is base of area to retriangulate (face on its left) */
+  /* `se` is a diagonal just added, and it is base of area to re-triangulate (face on its left). */
   int count = 1;
-  for (SymEdge<T> *ss = se->next; ss != se; ss = ss->next) {
+  for (const SymEdge<T> *ss = se->next; ss != se; ss = ss->next) {
     count++;
   }
   if (count <= 3) {
@@ -1683,7 +1683,7 @@ void fill_crossdata_for_intersect(const FatCo<T> &curco,
   switch (isect.kind) {
     case isect_result<VecBase<T, 2>>::LINE_LINE_CROSS: {
 #ifdef WITH_GMP
-      if (!std::is_same<T, mpq_class>::value)
+      if (!std::is_same_v<T, mpq_class>)
 #else
       if (true)
 #endif
@@ -1727,7 +1727,7 @@ void fill_crossdata_for_intersect(const FatCo<T> &curco,
     }
     case isect_result<VecBase<T, 2>>::LINE_LINE_NONE: {
 #ifdef WITH_GMP
-      if (std::is_same<T, mpq_class>::value) {
+      if (std::is_same_v<T, mpq_class>) {
         BLI_assert(false);
       }
 #endif
@@ -2072,7 +2072,7 @@ void add_edge_constraint(
       if (r_edges != nullptr) {
         BLI_linklist_append(&edge_list, edge);
       }
-      /* Now retriangulate upper and lower gaps. */
+      /* Now re-triangulate upper and lower gaps. */
       re_delaunay_triangulate(&cdt_state->cdt, &edge->symedges[0]);
       re_delaunay_triangulate(&cdt_state->cdt, &edge->symedges[1]);
     }

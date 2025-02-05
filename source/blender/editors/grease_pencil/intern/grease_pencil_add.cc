@@ -7,13 +7,10 @@
  */
 
 #include <array>
-#include <iomanip>
 
 #include "BKE_attribute.hh"
 #include "BKE_curves.hh"
 #include "BKE_grease_pencil.hh"
-
-#include "BLI_math_matrix.hh"
 
 #include "BLT_translation.hh"
 
@@ -1147,6 +1144,8 @@ static bke::CurvesGeometry create_drawing_data(const Span<float3> positions,
 
   curves.transform(matrix);
 
+  /* Note: We expect this function to run on a newly created drawing. Otherwise these
+   * `lookup_or_add_for_write_span` function calls could fail. */
   SpanAttributeWriter<float> point_radii = attributes.lookup_or_add_for_write_only_span<float>(
       "radius", AttrDomain::Point);
   point_radii.span.copy_from(radii);
@@ -1191,7 +1190,6 @@ void create_stroke(Main &bmain, Object &object, const float4x4 &matrix, const in
   GreasePencil &grease_pencil = *static_cast<GreasePencil *>(object.data);
 
   int material_index = add_material_from_template(bmain, object, gp_stroke_material_black);
-  add_material_from_template(bmain, object, gp_stroke_material_black);
   add_material_from_template(bmain, object, gp_stroke_material_white);
   add_material_from_template(bmain, object, gp_stroke_material_red);
   add_material_from_template(bmain, object, gp_stroke_material_green);

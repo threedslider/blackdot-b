@@ -45,7 +45,7 @@ static void node_composit_buts_view_levels(uiLayout *layout, bContext * /*C*/, P
   uiItemR(layout, ptr, "channel", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class LevelsOperation : public NodeOperation {
  private:
@@ -66,14 +66,14 @@ class LevelsOperation : public NodeOperation {
     Result &mean_result = get_result("Mean");
     if (mean_result.should_compute()) {
       mean_result.allocate_single_value();
-      mean_result.set_float_value(mean);
+      mean_result.set_single_value(mean);
     }
 
     Result &standard_deviation_result = get_result("Std Dev");
     if (standard_deviation_result.should_compute()) {
       const float standard_deviation = compute_standard_deviation(mean);
       standard_deviation_result.allocate_single_value();
-      standard_deviation_result.set_float_value(standard_deviation);
+      standard_deviation_result.set_single_value(standard_deviation);
     }
   }
 
@@ -82,7 +82,7 @@ class LevelsOperation : public NodeOperation {
     Result &standard_deviation_result = get_result("Std Dev");
     if (standard_deviation_result.should_compute()) {
       standard_deviation_result.allocate_single_value();
-      standard_deviation_result.set_float_value(0.0f);
+      standard_deviation_result.set_single_value(0.0f);
     }
 
     Result &mean_result = get_result("Mean");
@@ -91,25 +91,25 @@ class LevelsOperation : public NodeOperation {
     }
 
     mean_result.allocate_single_value();
-    const float3 input = float3(get_input("Image").get_color_value());
+    const float3 input = float3(get_input("Image").get_single_value<float4>());
 
     switch (get_channel()) {
       case CMP_NODE_LEVLES_RED:
-        mean_result.set_float_value(input.x);
+        mean_result.set_single_value(input.x);
         break;
       case CMP_NODE_LEVLES_GREEN:
-        mean_result.set_float_value(input.y);
+        mean_result.set_single_value(input.y);
         break;
       case CMP_NODE_LEVLES_BLUE:
-        mean_result.set_float_value(input.z);
+        mean_result.set_single_value(input.z);
         break;
       case CMP_NODE_LEVLES_LUMINANCE_BT709:
-        mean_result.set_float_value(math::dot(input, float3(luminance_coefficients_bt709_)));
+        mean_result.set_single_value(math::dot(input, float3(luminance_coefficients_bt709_)));
         break;
       case CMP_NODE_LEVLES_LUMINANCE: {
         float luminance_coefficients[3];
         IMB_colormanagement_get_luminance_coefficients(luminance_coefficients);
-        mean_result.set_float_value(math::dot(input, float3(luminance_coefficients)));
+        mean_result.set_single_value(math::dot(input, float3(luminance_coefficients)));
         break;
       }
       default:
@@ -129,17 +129,17 @@ class LevelsOperation : public NodeOperation {
     const Result &input = get_input("Image");
     switch (get_channel()) {
       case CMP_NODE_LEVLES_RED:
-        return sum_red(context(), input.texture());
+        return sum_red(context(), input);
       case CMP_NODE_LEVLES_GREEN:
-        return sum_green(context(), input.texture());
+        return sum_green(context(), input);
       case CMP_NODE_LEVLES_BLUE:
-        return sum_blue(context(), input.texture());
+        return sum_blue(context(), input);
       case CMP_NODE_LEVLES_LUMINANCE_BT709:
-        return sum_luminance(context(), input.texture(), float3(luminance_coefficients_bt709_));
+        return sum_luminance(context(), input, float3(luminance_coefficients_bt709_));
       case CMP_NODE_LEVLES_LUMINANCE: {
         float luminance_coefficients[3];
         IMB_colormanagement_get_luminance_coefficients(luminance_coefficients);
-        return sum_luminance(context(), input.texture(), float3(luminance_coefficients));
+        return sum_luminance(context(), input, float3(luminance_coefficients));
       }
       default:
         BLI_assert_unreachable();
@@ -159,19 +159,19 @@ class LevelsOperation : public NodeOperation {
     const Result &input = get_input("Image");
     switch (get_channel()) {
       case CMP_NODE_LEVLES_RED:
-        return sum_red_squared_difference(context(), input.texture(), subtrahend);
+        return sum_red_squared_difference(context(), input, subtrahend);
       case CMP_NODE_LEVLES_GREEN:
-        return sum_green_squared_difference(context(), input.texture(), subtrahend);
+        return sum_green_squared_difference(context(), input, subtrahend);
       case CMP_NODE_LEVLES_BLUE:
-        return sum_blue_squared_difference(context(), input.texture(), subtrahend);
+        return sum_blue_squared_difference(context(), input, subtrahend);
       case CMP_NODE_LEVLES_LUMINANCE_BT709:
         return sum_luminance_squared_difference(
-            context(), input.texture(), float3(luminance_coefficients_bt709_), subtrahend);
+            context(), input, float3(luminance_coefficients_bt709_), subtrahend);
       case CMP_NODE_LEVLES_LUMINANCE: {
         float luminance_coefficients[3];
         IMB_colormanagement_get_luminance_coefficients(luminance_coefficients);
         return sum_luminance_squared_difference(
-            context(), input.texture(), float3(luminance_coefficients), subtrahend);
+            context(), input, float3(luminance_coefficients), subtrahend);
       }
       default:
         BLI_assert_unreachable();
@@ -198,12 +198,16 @@ void register_node_type_cmp_view_levels()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(&ntype, CMP_NODE_VIEW_LEVELS, "Levels", NODE_CLASS_OUTPUT);
+  cmp_node_type_base(&ntype, "CompositorNodeLevels", CMP_NODE_VIEW_LEVELS);
+  ntype.ui_name = "Levels";
+  ntype.ui_description = "Compute average and standard deviation of pixel values";
+  ntype.enum_name_legacy = "LEVELS";
+  ntype.nclass = NODE_CLASS_OUTPUT;
   ntype.declare = file_ns::cmp_node_levels_declare;
   ntype.draw_buttons = file_ns::node_composit_buts_view_levels;
   ntype.flag |= NODE_PREVIEW;
   ntype.initfunc = file_ns::node_composit_init_view_levels;
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

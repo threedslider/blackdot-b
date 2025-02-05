@@ -10,7 +10,7 @@
 #pragma once
 
 #include "GHOST_Types.h"
-#include <stddef.h>
+#include <cstddef>
 
 class GHOST_IWindow;
 
@@ -29,7 +29,7 @@ class GHOST_IEvent {
   /**
    * Destructor.
    */
-  virtual ~GHOST_IEvent() {}
+  virtual ~GHOST_IEvent() = default;
 
   /**
    * Returns the event type.
@@ -56,7 +56,5 @@ class GHOST_IEvent {
    */
   virtual GHOST_TEventDataPtr getData() const = 0;
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("GHOST:GHOST_IEvent")
-#endif
 };

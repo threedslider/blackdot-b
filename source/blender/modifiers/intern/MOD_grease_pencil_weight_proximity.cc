@@ -8,7 +8,6 @@
 
 #include "BLI_index_mask.hh"
 #include "BLI_math_matrix.hh"
-#include "BLI_string.h" /* For #STRNCPY. */
 
 #include "BLT_translation.hh"
 
@@ -21,8 +20,10 @@
 #include "RNA_access.hh"
 
 #include "BKE_curves.hh"
+#include "BKE_deform.hh"
 #include "BKE_geometry_set.hh"
 #include "BKE_grease_pencil.hh"
+#include "BKE_grease_pencil_vertex_groups.hh"
 #include "BKE_lib_query.hh"
 #include "BKE_modifier.hh"
 
@@ -116,34 +117,33 @@ static float get_distance_factor(float3 target_pos,
   const float3 gvert = math::transform_point(obmat, pos);
   const float dist = math::distance(target_pos, gvert);
 
-  if (dist > dist_max) {
+  if (dist_max > dist_min) {
+    if (dist > dist_max) {
+      return 1.0f;
+    }
+    if (dist <= dist_max && dist > dist_min) {
+      return 1.0f - ((dist_max - dist) / math::max((dist_max - dist_min), 0.0001f));
+    }
+    return 0.0f;
+  }
+  if (dist_max < dist_min) {
+    if (dist > dist_min) {
+      return 0.0f;
+    }
+    if (dist <= dist_min && dist > dist_max) {
+      return (dist_min - dist) / math::max((dist_min - dist_max), 0.0001f);
+    }
     return 1.0f;
   }
-  if (dist <= dist_max && dist > dist_min) {
-    return 1.0f - ((dist_max - dist) / math::max((dist_max - dist_min), 0.0001f));
-  }
-  return 0.0f;
-}
 
-static int ensure_vertex_group(const StringRefNull name, ListBase &vertex_group_names)
-{
-  int def_nr = BLI_findstringindex(
-      &vertex_group_names, name.c_str(), offsetof(bDeformGroup, name));
-  if (def_nr < 0) {
-    bDeformGroup *defgroup = MEM_cnew<bDeformGroup>(__func__);
-    STRNCPY(defgroup->name, name.c_str());
-    BLI_addtail(&vertex_group_names, defgroup);
-    def_nr = BLI_listbase_count(&vertex_group_names) - 1;
-    BLI_assert(def_nr >= 0);
-  }
-  return def_nr;
+  /* dist_max == dist_min, "stepped" behavior then. */
+  return (dist > dist_max) ? 0.0f : 1.0f;
 }
 
 static bool target_vertex_group_available(const StringRefNull name,
                                           const ListBase &vertex_group_names)
 {
-  const int def_nr = BLI_findstringindex(
-      &vertex_group_names, name.c_str(), offsetof(bDeformGroup, name));
+  const int def_nr = BKE_defgroup_name_index(&vertex_group_names, name);
   if (def_nr < 0) {
     return false;
   }
@@ -156,7 +156,7 @@ static void write_weights_for_drawing(const ModifierData &md,
 {
   const auto &mmd = reinterpret_cast<const GreasePencilWeightProximityModifierData &>(md);
   bke::CurvesGeometry &curves = drawing.strokes_for_write();
-  if (curves.points_num() == 0) {
+  if (curves.is_empty()) {
     return;
   }
   IndexMaskMemory memory;
@@ -167,7 +167,7 @@ static void write_weights_for_drawing(const ModifierData &md,
   }
 
   /* Make sure that the target vertex group is added to this drawing so we can write to it. */
-  ensure_vertex_group(mmd.target_vgname, curves.vertex_group_names);
+  bke::greasepencil::ensure_vertex_group(mmd.target_vgname, curves.vertex_group_names);
 
   bke::MutableAttributeAccessor attributes = curves.attributes_for_write();
   bke::SpanAttributeWriter<float> dst_weights = attributes.lookup_for_write_span<float>(
@@ -187,7 +187,7 @@ static void write_weights_for_drawing(const ModifierData &md,
   threading::parallel_for(positions.index_range(), 1024, [&](const IndexRange range) {
     for (const int point_i : range) {
       const float weight = vgroup_weights[point_i];
-      if (weight < 0.0f) {
+      if (weight <= 0.0f) {
         continue;
       }
 
@@ -253,24 +253,25 @@ static void panel_draw(const bContext *C, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
   row = uiLayoutRow(layout, true);
-  uiItemPointerR(row, ptr, "target_vertex_group", &ob_ptr, "vertex_groups", nullptr, ICON_NONE);
+  uiItemPointerR(
+      row, ptr, "target_vertex_group", &ob_ptr, "vertex_groups", std::nullopt, ICON_NONE);
   sub = uiLayoutRow(row, true);
   bool has_output = RNA_string_length(ptr, "target_vertex_group") != 0;
   uiLayoutSetPropDecorate(sub, false);
   uiLayoutSetActive(sub, has_output);
   uiItemR(sub, ptr, "use_invert_output", UI_ITEM_NONE, "", ICON_ARROW_LEFTRIGHT);
 
-  uiItemR(layout, ptr, "object", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   sub = uiLayoutColumn(layout, true);
-  uiItemR(sub, ptr, "distance_start", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(sub, ptr, "distance_end", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(sub, ptr, "distance_start", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(sub, ptr, "distance_end", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "minimum_weight", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "use_multiply", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "minimum_weight", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "use_multiply", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", "Influence"))
+          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);

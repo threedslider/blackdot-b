@@ -11,11 +11,11 @@
 #pragma once
 
 #include "BLI_string_ref.hh"
+#include "BLI_vector.hh"
 
 struct ID;
 struct Main;
 
-struct bAnimContext;
 struct AnimData;
 struct FCurve;
 struct bAction;
@@ -34,11 +34,7 @@ bAction *id_action_ensure(Main *bmain, ID *id);
  * Delete the F-Curve from the given AnimData block (if possible),
  * as appropriate according to animation context.
  */
-void animdata_fcurve_delete(bAnimContext *ac, AnimData *adt, FCurve *fcu);
-
-/** Iterate the FCurves of the given bAnimContext and validate the RNA path. Sets the flag
- * FCURVE_DISABLED if the path can't be resolved. */
-void reevaluate_fcurve_errors(bAnimContext *ac);
+void animdata_fcurve_delete(AnimData *adt, FCurve *fcu);
 
 /**
  * Unlink the action from animdata if it's empty.
@@ -47,6 +43,15 @@ void reevaluate_fcurve_errors(bAnimContext *ac);
  * come from a NLA Strip being tweaked.
  */
 bool animdata_remove_empty_action(AnimData *adt);
+
+/**
+ * Build a Vector of IDs that are related to the given ID. Related things are e.g. Object<->Data,
+ * Mesh<->Material and so on. The exact relationships are defined per ID type. Only relationships
+ * of 1:1 are traced. The case of multiple users for 1 ID is treated as not related.
+ * The returned Vector always contains the passed ID as the first index as such will never be
+ * empty.
+ */
+Vector<ID *> find_related_ids(Main &bmain, ID &id);
 
 /**
  * Compatibility helper function for `BKE_animadata_fcurve_find_by_rna_path()`.

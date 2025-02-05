@@ -9,13 +9,14 @@
 
 #pragma once
 
-#include "BLI_cpp_type.hh"
+#include <optional>
+
 #include "BLI_implicit_sharing.h"
+#include "BLI_memory_counter_fwd.hh"
 #include "BLI_set.hh"
 #include "BLI_span.hh"
 #include "BLI_string_ref.hh"
 #include "BLI_sys_types.h"
-#include "BLI_utildefines.h"
 #include "BLI_vector.hh"
 
 #include "BKE_volume_enums.hh"
@@ -157,20 +158,26 @@ void CustomData_data_add(eCustomDataType type, void *data1, const void *data2);
  * Initializes a CustomData object with the same layer setup as source. `mask` is a bit-field where
  * `(mask & (1 << (layer type)))` indicates if a layer should be copied or not. Data layers using
  * implicit-sharing will not actually be copied but will be shared between source and destination.
+ *
+ * \warning Does not free or release any internal resources in `dest` CustomData, code must call
+ * #CustomData_free first if needed.
  */
-void CustomData_copy(const CustomData *source,
-                     CustomData *dest,
-                     eCustomDataMask mask,
-                     int totelem);
+void CustomData_init_from(const CustomData *source,
+                          CustomData *dest,
+                          eCustomDataMask mask,
+                          int totelem);
 /**
  * Initializes a CustomData object with the same layers as source. The data is not copied from the
  * source. Instead, the new layers are initialized using the given `alloctype`.
+ *
+ * \warning Does not free or release any internal resources in `dest` CustomData, code must call
+ * #CustomData_free first if needed.
  */
-void CustomData_copy_layout(const CustomData *source,
-                            CustomData *dest,
-                            eCustomDataMask mask,
-                            eCDAllocType alloctype,
-                            int totelem);
+void CustomData_init_layout_from(const CustomData *source,
+                                 CustomData *dest,
+                                 eCustomDataMask mask,
+                                 eCDAllocType alloctype,
+                                 int totelem);
 
 /* BMESH_TODO, not really a public function but `readfile.cc` needs it. */
 void CustomData_update_typemap(CustomData *data);
@@ -224,6 +231,8 @@ CustomData CustomData_shallow_copy_remove_non_bmesh_attributes(const CustomData 
 
 /**
  * NULL's all members and resets the #CustomData.typemap.
+ *
+ * \warning Does not free or release any internal resources.
  */
 void CustomData_reset(CustomData *data);
 
@@ -273,19 +282,6 @@ const void *CustomData_add_layer_named_with_data(CustomData *data,
                                                  blender::StringRef name,
                                                  const blender::ImplicitSharingInfo *sharing_info);
 
-void *CustomData_add_layer_anonymous(CustomData *data,
-                                     eCustomDataType type,
-                                     eCDAllocType alloctype,
-                                     int totelem,
-                                     const AnonymousAttributeIDHandle *anonymous_id);
-const void *CustomData_add_layer_anonymous_with_data(
-    CustomData *data,
-    eCustomDataType type,
-    const AnonymousAttributeIDHandle *anonymous_id,
-    int totelem,
-    void *layer_data,
-    const blender::ImplicitSharingInfo *sharing_info);
-
 /**
  * Frees the active or first data layer with the give type.
  * returns 1 on success, 0 if no layer with the given type is found
@@ -333,6 +329,13 @@ void CustomData_set_only_copy(const CustomData *data, eCustomDataMask mask);
  * Copies data from one CustomData object to another
  * objects need not be compatible, each source layer is copied to the
  * first dest layer of correct type (if there is none, the layer is skipped).
+ *
+ * NOTE: It's expected that the destination layers are mutable
+ * (#CustomData_ensure_layers_are_mutable). These copy-functions could ensure that internally, but
+ * that would cause additional overhead when copying few elements at a time. It would also be
+ * necessary to pass the total size of the destination layers as parameter if to make them mutable
+ * though. In most cases, these functions are used right after creating a new geometry, in which
+ * case there are no shared layers anyway.
  */
 void CustomData_copy_data(
     const CustomData *source, CustomData *dest, int source_index, int dest_index, int count);
@@ -684,34 +687,6 @@ using cd_datatransfer_interp = void (*)(const CustomDataTransferLayerMap *laymap
                                         int count,
                                         float mix_factor);
 
-/**
- * Fake CD_LAYERS (those are actually 'real' data stored directly into elements' structs,
- * or otherwise not (directly) accessible to usual CDLayer system). */
-enum {
-  CD_FAKE = 1 << 8,
-
-  /* Vertices. */
-  CD_FAKE_MDEFORMVERT = CD_FAKE | CD_MDEFORMVERT, /* *sigh* due to how vgroups are stored :(. */
-  CD_FAKE_SHAPEKEY = CD_FAKE |
-                     CD_SHAPEKEY, /* Not available as real CD layer in non-bmesh context. */
-
-  /* Edges. */
-  CD_FAKE_SEAM = CD_FAKE | 100, /* UV seam flag for edges. */
-
-  /* Multiple types of mesh elements... */
-  CD_FAKE_UV =
-      CD_FAKE |
-      CD_PROP_FLOAT2, /* UV flag, because we handle both loop's UVs and face's textures. */
-
-  CD_FAKE_LNOR = CD_FAKE |
-                 CD_CUSTOMLOOPNORMAL, /* Because we play with clnor and temp lnor layers here. */
-
-  CD_FAKE_SHARP = CD_FAKE | 200, /* Sharp flag for edges, smooth flag for faces. */
-
-  CD_FAKE_BWEIGHT = CD_FAKE | 300,
-  CD_FAKE_CREASE = CD_FAKE | 400,
-};
-
 enum {
   ME_VERT = 1 << 0,
   ME_EDGE = 1 << 1,
@@ -802,6 +777,8 @@ void CustomData_blend_write(BlendWriter *writer,
 void CustomData_blend_read(BlendDataReader *reader, CustomData *data, int count);
 
 size_t CustomData_get_elem_size(const CustomDataLayer *layer);
+
+void CustomData_count_memory(const CustomData &data, int totelem, blender::MemoryCounter &memory);
 
 #ifndef NDEBUG
 struct DynStr;

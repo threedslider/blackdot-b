@@ -6,6 +6,8 @@
  * \ingroup edtransform
  */
 
+#include <algorithm>
+
 #include "DNA_armature_types.h"
 #include "DNA_constraint_types.h"
 
@@ -17,7 +19,7 @@
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_armature.hh"
 #include "BKE_constraint.h"
 #include "BKE_context.hh"
@@ -29,7 +31,7 @@
 #include "ED_armature.hh"
 
 #include "DEG_depsgraph.hh"
-#include "DEG_depsgraph_query.hh"
+#include "DEG_depsgraph_build.hh"
 
 #include "ANIM_action.hh"
 #include "ANIM_bone_collections.hh"
@@ -394,7 +396,6 @@ static void add_pose_transdata(TransInfo *t, bPoseChannel *pchan, Object *ob, Tr
   copy_v3_v3(vec, pchan->pose_mat[3]);
   copy_v3_v3(td->center, vec);
 
-  td->ob = ob;
   td->flag = TD_SELECTED;
   if (bone->flag & BONE_HINGE_CHILD_TRANSFORM) {
     td->flag |= TD_NOCENTER;
@@ -833,7 +834,6 @@ static void createTransArmatureVerts(bContext * /*C*/, TransInfo *t)
 
             td->loc = nullptr;
             td->ext = nullptr;
-            td->ob = tc->obedit;
 
             td++;
           }
@@ -848,7 +848,6 @@ static void createTransArmatureVerts(bContext * /*C*/, TransInfo *t)
 
             td->loc = nullptr;
             td->ext = nullptr;
-            td->ob = tc->obedit;
 
             td++;
           }
@@ -878,7 +877,6 @@ static void createTransArmatureVerts(bContext * /*C*/, TransInfo *t)
             normalize_m3(td->axismtx);
 
             td->ext = nullptr;
-            td->ob = tc->obedit;
 
             td++;
           }
@@ -893,7 +891,6 @@ static void createTransArmatureVerts(bContext * /*C*/, TransInfo *t)
             td->flag = TD_SELECTED;
 
             td->ext = nullptr;
-            td->ob = tc->obedit;
 
             td++;
           }
@@ -933,7 +930,6 @@ static void createTransArmatureVerts(bContext * /*C*/, TransInfo *t)
 
             td->ext = nullptr;
             td->val = nullptr;
-            td->ob = tc->obedit;
 
             td++;
           }
@@ -956,7 +952,6 @@ static void createTransArmatureVerts(bContext * /*C*/, TransInfo *t)
 
             td->ext = nullptr;
             td->val = nullptr;
-            td->ob = tc->obedit;
 
             td++;
           }
@@ -1060,7 +1055,7 @@ static void recalcData_edit_armature(TransInfo *t)
 
       if (ebo_parent) {
         /* If this bone has a parent tip that has been moved. */
-        if (ebo_parent->flag & BONE_TIPSEL) {
+        if (EBONE_VISIBLE(arm, ebo_parent) && (ebo_parent->flag & BONE_TIPSEL)) {
           copy_v3_v3(ebo->head, ebo_parent->tail);
           if (t->mode == TFM_BONE_ENVELOPE) {
             ebo->rad_head = ebo_parent->rad_tail;
@@ -1082,9 +1077,7 @@ static void recalcData_edit_armature(TransInfo *t)
         ebo->rad_tail = 0.10f * ebo->length;
         ebo->dist = 0.25f * ebo->length;
         if (ebo->parent) {
-          if (ebo->rad_head > ebo->parent->rad_tail) {
-            ebo->rad_head = ebo->parent->rad_tail;
-          }
+          ebo->rad_head = std::min(ebo->rad_head, ebo->parent->rad_tail);
         }
       }
       else if (t->mode != TFM_BONE_ENVELOPE) {
@@ -1664,13 +1657,6 @@ static void special_aftertrans_update__pose(bContext *C, TransInfo *t)
     const bool canceled = (t->state == TRANS_CANCEL);
 
     if (blender::animrig::is_autokey_on(t->scene) && !canceled) {
-      blender::Vector<Object *> objects;
-      FOREACH_TRANS_DATA_CONTAINER (t, tc) {
-        for (int i = 0; i < tc->data_len; i++) {
-          const TransData *td = &tc->data[i];
-          objects.append(td->ob);
-        }
-      }
       ANIM_deselect_keys_in_animation_editors(C);
     }
 

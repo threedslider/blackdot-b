@@ -93,8 +93,8 @@ typedef struct uiStyle {
 
   uiFontStyle paneltitle;
   uiFontStyle grouplabel;
-  uiFontStyle widgetlabel;
   uiFontStyle widget;
+  uiFontStyle tooltip;
 
   float panelzoom;
 
@@ -165,7 +165,9 @@ typedef struct ThemeUI {
   float menu_shadow_fac;
   short menu_shadow_width;
 
+  unsigned char editor_border[4];
   unsigned char editor_outline[4];
+  unsigned char editor_outline_active[4];
 
   /* Transparent Grid */
   unsigned char transparent_checker_primary[4], transparent_checker_secondary[4];
@@ -202,6 +204,9 @@ typedef struct ThemeUI {
   unsigned char icon_shading[4];
   /** File folders. */
   unsigned char icon_folder[4];
+  /** Auto Keying indicator. */
+  unsigned char icon_autokey[4];
+  char _pad3[4];
   /** Intensity of the border icons. >0 will render an border around themed
    * icons. */
   float icon_border_intensity;
@@ -340,7 +345,6 @@ typedef struct ThemeSpace {
   unsigned char syntaxd[4], syntaxr[4]; /* In node-space used for distort. */
 
   unsigned char line_numbers[4];
-  char _pad6[3];
 
   unsigned char nodeclass_output[4], nodeclass_filter[4];
   unsigned char nodeclass_vector[4], nodeclass_texture[4];
@@ -350,15 +354,15 @@ typedef struct ThemeSpace {
 
   unsigned char node_zone_simulation[4];
   unsigned char node_zone_repeat[4];
+  unsigned char node_zone_foreach_geometry_element[4];
   unsigned char simulated_frames[4];
 
   /** For sequence editor. */
   unsigned char movie[4], movieclip[4], mask[4], image[4], scene[4], audio[4];
   unsigned char effect[4], transition[4], meta[4], text_strip[4], color_strip[4];
-  unsigned char active_strip[4], selected_strip[4];
+  unsigned char active_strip[4], selected_strip[4], text_strip_cursor[4], selected_text[4];
 
   /** For dopesheet - scale factor for size of keyframes (i.e. height of channels). */
-  char _pad7[1];
   float keyframe_scale_fac;
 
   unsigned char editmesh_active[4];
@@ -536,7 +540,7 @@ typedef struct bTheme {
   /* See COLLECTION_COLOR_TOT for the number of collection colors. */
   ThemeCollectionColor collection_color[8];
 
-  /* See SEQUENCE_COLOR_TOT for the total number of strip colors. */
+  /* See STRIP_COLOR_TOT for the total number of strip colors. */
   ThemeStripColor strip_color[9];
 
   int active_theme_area;
@@ -731,6 +735,10 @@ typedef struct UserDef_FileSpaceData {
   int temp_win_sizey;
 } UserDef_FileSpaceData;
 
+/**
+ * Checking experimental members must use the #USER_EXPERIMENTAL_TEST() macro
+ * unless the #USER_DEVELOPER_UI is known to be enabled.
+ */
 typedef struct UserDef_Experimental {
   /* Debug options, always available. */
   char use_undo_legacy;
@@ -751,14 +759,10 @@ typedef struct UserDef_Experimental {
   char use_sculpt_tools_tilt;
   char use_extended_asset_browser;
   char use_sculpt_texture_paint;
-  char enable_overlay_next;
   char use_new_volume_nodes;
   char use_new_file_import_nodes;
   char use_shader_node_previews;
-  char use_animation_baklava;
-  char use_docking;
-  char _pad[2];
-  /** `makesdna` does not allow empty structs. */
+  char _pad[5];
 } UserDef_Experimental;
 
 #define USER_EXPERIMENTAL_TEST(userdef, member) \
@@ -998,6 +1002,11 @@ typedef struct UserDef {
   /** Seconds to zoom around current frame. */
   float view_frame_seconds;
 
+  /** Preferred device/vendor for GPU device selection. */
+  int gpu_preferred_index;
+  uint32_t gpu_preferred_vendor_id;
+  uint32_t gpu_preferred_device_id;
+  char _pad16[4];
   /** #eGPUBackendType */
   short gpu_backend;
 
@@ -1285,7 +1294,8 @@ typedef enum eUserpref_UI_Flag {
   USER_ZOOM_TO_MOUSEPOS = (1 << 20),
   USER_SHOW_FPS = (1 << 21),
   USER_REGISTER_ALL_USERS = (1 << 22),
-  USER_UIFLAG_UNUSED_4 = (1 << 23), /* Cleared. */
+  /** Actually implemented in .py. */
+  USER_FILTER_BRUSHES_BY_TOOL = (1 << 23),
   USER_CONTINUOUS_MOUSE = (1 << 24),
   USER_ZOOM_INVERT = (1 << 25),
   USER_ZOOM_HORIZ = (1 << 26), /* for CONTINUE and DOLLY zoom */
@@ -1314,7 +1324,7 @@ typedef enum eUserpref_UI_Flag2 {
 
 /** #UserDef.gpu_flag */
 typedef enum eUserpref_GPU_Flag {
-  USER_GPU_FLAG_NO_DEPT_PICK = (1 << 0),
+  USER_GPU_FLAG_NO_DEPT_PICK = (1 << 0), /* Unused. To be removed. */
   USER_GPU_FLAG_NO_EDIT_MODE_SMOOTH_WIRE = (1 << 1),
   USER_GPU_FLAG_OVERLAY_SMOOTH_WIRE = (1 << 2),
   USER_GPU_FLAG_SUBDIVISION_EVALUATION = (1 << 3),
@@ -1499,7 +1509,7 @@ typedef enum eTimecodeStyles {
 
 /** #UserDef.ndof_flag (3D mouse options) */
 typedef enum eNdof_Flag {
-  NDOF_SHOW_GUIDE = (1 << 0),
+  NDOF_SHOW_GUIDE_ORBIT_AXIS = (1 << 0),
   NDOF_FLY_HELICOPTER = (1 << 1),
   NDOF_LOCK_HORIZON = (1 << 2),
 
@@ -1593,6 +1603,7 @@ typedef enum eUserpref_SeqProxySetup {
 
 typedef enum eUserpref_SeqEditorFlags {
   USER_SEQ_ED_SIMPLE_TWEAKING = (1 << 0),
+  USER_SEQ_ED_CONNECT_STRIPS_BY_DEFAULT = (1 << 1),
 } eUserpref_SeqEditorFlags;
 
 /* Locale Ids. Auto will try to get local from OS. Our default is English though. */

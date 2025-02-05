@@ -14,14 +14,11 @@
 #include "DNA_image_types.h"
 #include "DNA_listBase.h"
 
-#include "BLI_sys_types.h" /* for bool */
-
 #include "GPU_shader.hh"  /* for GPUShaderCreateInfo */
 #include "GPU_texture.hh" /* for GPUSamplerState */
 
 struct GHash;
 struct GPUMaterial;
-struct GPUNode;
 struct GPUNodeLink;
 struct GPUNodeStack;
 struct GPUPass;
@@ -182,7 +179,7 @@ GPUNodeLink *GPU_image_sky(GPUMaterial *mat,
                            const float *pixels,
                            float *layer,
                            GPUSamplerState sampler_state);
-GPUNodeLink *GPU_color_band(GPUMaterial *mat, int size, float *pixels, float *row);
+GPUNodeLink *GPU_color_band(GPUMaterial *mat, int size, float *pixels, float *r_row);
 
 /**
  * Create an implementation defined differential calculation of a float function.
@@ -220,11 +217,6 @@ char *GPU_material_split_sub_function(GPUMaterial *material,
                                       eGPUType return_type,
                                       GPUNodeLink **link);
 
-bool GPU_material_sss_profile_create(GPUMaterial *material, float radii[3]);
-GPUUniformBuf *GPU_material_sss_profile_get(GPUMaterial *material,
-                                            int sample_len,
-                                            GPUTexture **tex_profile);
-
 /**
  * High level functions to create and use GPU materials.
  */
@@ -253,29 +245,9 @@ void GPU_material_compile(GPUMaterial *mat);
 void GPU_material_free_single(GPUMaterial *material);
 void GPU_material_free(ListBase *gpumaterial);
 
-/**
- * Request the creation of multiple `GPUMaterial`s at once, allowing the backend to use
- * multithreaded compilation.
- * Returns a handle that can be used to poll if all materials have been
- * compiled, and to retrieve the compiled result.
- * NOTE: This function is asynchronous on OpenGL, but it's blocking on Vulkan and Metal.
- * WARNING: The material pointers and their pass->create_info should be valid until
- * `GPU_material_batch_finalize` has returned.
- */
-BatchHandle GPU_material_batch_compile(blender::Span<GPUMaterial *> mats);
-/**
- * Returns true if all the materials from the batch have finished their compilation.
- */
-bool GPU_material_batch_is_ready(BatchHandle handle);
-/**
- * Assign the compiled shaders to their respective materials and flag their status.
- * The materials list should have the same length and order as in the `GPU_material_batch_compile`
- * call.
- * If the compilation has not finished yet, this call will block the thread until all the
- * shaders are ready.
- * WARNING: The handle will be invalidated by this call, you can't process the same batch twice.
- */
-void GPU_material_batch_finalize(BatchHandle &handle, blender::Span<GPUMaterial *> mats);
+void GPU_material_async_compile(GPUMaterial *mat);
+/** Returns true if the material have finished its compilation. */
+bool GPU_material_async_try_finalize(GPUMaterial *mat);
 
 void GPU_material_acquire(GPUMaterial *mat);
 void GPU_material_release(GPUMaterial *mat);
@@ -340,7 +312,6 @@ GPUUniformBuf *GPU_material_uniform_buffer_get(GPUMaterial *material);
  * \param inputs: Items are #LinkData, data is #GPUInput (`BLI_genericNodeN(GPUInput)`).
  */
 void GPU_material_uniform_buffer_create(GPUMaterial *material, ListBase *inputs);
-GPUUniformBuf *GPU_material_create_sss_profile_ubo();
 
 bool GPU_material_has_surface_output(GPUMaterial *mat);
 bool GPU_material_has_volume_output(GPUMaterial *mat);
@@ -426,7 +397,7 @@ struct GPULayerAttr {
   GPULayerAttr *next, *prev;
 
   /* Meaningful part of the attribute set key. */
-  char name[68]; /* MAX_CUSTOMDATA_LAYER_NAME */
+  char name[256]; /* Multiple MAX_CUSTOMDATA_LAYER_NAME */
   /** Hash of name[68]. */
   uint32_t hash_code;
 

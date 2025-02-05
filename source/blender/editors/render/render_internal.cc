@@ -6,7 +6,6 @@
  * \ingroup edrend
  */
 
-#include <cmath>
 #include <cstddef>
 #include <cstring>
 
@@ -16,7 +15,6 @@
 #include "BLI_rect.h"
 #include "BLI_string.h"
 #include "BLI_string_utils.hh"
-#include "BLI_threads.h"
 #include "BLI_time.h"
 #include "BLI_timecode.h"
 #include "BLI_utildefines.h"
@@ -31,8 +29,8 @@
 #include "BKE_colortools.hh"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
-#include "BKE_image.h"
-#include "BKE_image_format.h"
+#include "BKE_image.hh"
+#include "BKE_image_format.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
@@ -71,11 +69,9 @@
 /* Render Callbacks */
 static bool render_break(void *rjv);
 
-struct RenderJob {
+struct RenderJob : public RenderJobBase {
   Main *main;
-  Scene *scene;
   ViewLayer *single_layer;
-  Scene *current_scene;
   /* TODO(sergey): Should not be needed once engine will have its own
    * depsgraph and copy-on-write will be implemented.
    */
@@ -401,7 +397,7 @@ static void render_freejob(void *rjv)
   RenderJob *rj = static_cast<RenderJob *>(rjv);
 
   BKE_color_managed_view_settings_free(&rj->view_settings);
-  MEM_freeN(rj);
+  MEM_delete(rj);
 }
 
 static void make_renderinfo_string(const RenderStats *rs,
@@ -798,7 +794,7 @@ static void render_endjob(void *rjv)
 
   if (rj->single_layer) {
     BKE_ntree_update_tag_id_changed(rj->main, &rj->scene->id);
-    BKE_ntree_update_main(rj->main, nullptr);
+    BKE_ntree_update(*rj->main);
     WM_main_add_notifier(NC_NODE | NA_EDITED, rj->scene);
   }
 
@@ -899,11 +895,7 @@ static int screen_render_modal(bContext *C, wmOperator *op, const wmEvent *event
   }
 
   /* running render */
-  switch (event->type) {
-    case EVT_ESCKEY:
-      return OPERATOR_RUNNING_MODAL;
-  }
-  return OPERATOR_PASS_THROUGH;
+  return (event->type == EVT_ESCKEY) ? OPERATOR_RUNNING_MODAL : OPERATOR_PASS_THROUGH;
 }
 
 static void screen_render_cancel(bContext *C, wmOperator *op)
@@ -923,11 +915,11 @@ static void clean_viewport_memory_base(Base *base)
 
   Object *object = base->object;
 
-  if (object->id.tag & LIB_TAG_DOIT) {
+  if (object->id.tag & ID_TAG_DOIT) {
     return;
   }
 
-  object->id.tag &= ~LIB_TAG_DOIT;
+  object->id.tag &= ~ID_TAG_DOIT;
   if (RE_allow_render_generic_object(object)) {
     BKE_object_free_derived_caches(object);
   }
@@ -939,7 +931,7 @@ static void clean_viewport_memory(Main *bmain, Scene *scene)
   Base *base;
 
   /* Tag all the available objects. */
-  BKE_main_id_tag_listbase(&bmain->objects, LIB_TAG_DOIT, true);
+  BKE_main_id_tag_listbase(&bmain->objects, ID_TAG_DOIT, true);
 
   /* Go over all the visible objects. */
 
@@ -1024,10 +1016,7 @@ static int screen_render_invoke(bContext *C, wmOperator *op, const wmEvent *even
   /* flush sculpt and editmode changes */
   ED_editors_flush_edits_ex(bmain, true, false);
 
-  /* cleanup sequencer caches before starting user triggered render.
-   * otherwise, invalidated cache entries can make their way into
-   * the output rendering. We can't put that into RE_RenderFrame,
-   * since sequence rendering can call that recursively... (peter) */
+  /* Cleanup VSE cache, since it is not guaranteed that stored images are invalid. */
   SEQ_cache_cleanup(scene);
 
   /* store spare
@@ -1038,7 +1027,7 @@ static int screen_render_invoke(bContext *C, wmOperator *op, const wmEvent *even
   area = render_view_open(C, event->xy[0], event->xy[1], op->reports);
 
   /* job custom data */
-  rj = MEM_cnew<RenderJob>("render job");
+  rj = MEM_new<RenderJob>("render job");
   rj->main = bmain;
   rj->scene = scene;
   rj->current_scene = rj->scene;
@@ -1209,7 +1198,7 @@ void RENDER_OT_render(wmOperatorType *ot)
 Scene *ED_render_job_get_scene(const bContext *C)
 {
   wmWindowManager *wm = CTX_wm_manager(C);
-  RenderJob *rj = (RenderJob *)WM_jobs_customdata_from_type(
+  RenderJobBase *rj = (RenderJobBase *)WM_jobs_customdata_from_type(
       wm, CTX_data_scene(C), WM_JOB_TYPE_RENDER);
 
   if (rj) {
@@ -1222,7 +1211,7 @@ Scene *ED_render_job_get_scene(const bContext *C)
 Scene *ED_render_job_get_current_scene(const bContext *C)
 {
   wmWindowManager *wm = CTX_wm_manager(C);
-  RenderJob *rj = (RenderJob *)WM_jobs_customdata_from_type(
+  RenderJobBase *rj = (RenderJobBase *)WM_jobs_customdata_from_type(
       wm, CTX_data_scene(C), WM_JOB_TYPE_RENDER);
   if (rj) {
     return rj->current_scene;

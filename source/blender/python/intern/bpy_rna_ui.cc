@@ -12,12 +12,12 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "../generic/py_capi_utils.h"
+#include "../generic/py_capi_utils.hh"
 
 #include "UI_interface.hh"
 
-#include "bpy_rna.h"
-#include "bpy_rna_ui.h" /* Declare #BPY_rna_uilayout_introspect_method_def. */
+#include "bpy_rna.hh"
+#include "bpy_rna_ui.hh" /* Declare #BPY_rna_uilayout_introspect_method_def. */
 
 PyDoc_STRVAR(
     /* Wrap. */
@@ -28,7 +28,7 @@ PyDoc_STRVAR(
 static PyObject *bpy_rna_uilayout_introspect(PyObject *self)
 {
   BPy_StructRNA *pyrna = (BPy_StructRNA *)self;
-  uiLayout *layout = static_cast<uiLayout *>(pyrna->ptr.data);
+  uiLayout *layout = static_cast<uiLayout *>(pyrna->ptr->data);
 
   const char *expr = UI_layout_introspect(layout);
   PyObject *main_mod = PyC_MainModule_Backup();

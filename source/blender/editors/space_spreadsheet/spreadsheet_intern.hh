@@ -8,7 +8,9 @@
 #include "spreadsheet_cache.hh"
 
 struct ARegionType;
-struct bContext;
+struct Depsgraph;
+struct Object;
+struct SpaceSpreadsheet;
 
 namespace blender::ed::spreadsheet {
 

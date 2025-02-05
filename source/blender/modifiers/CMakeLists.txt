@@ -5,23 +5,10 @@
 set(INC
   .
   intern
-  ../blenkernel
-  ../blenloader
-  ../blentranslation
-  ../bmesh
+  intern/lineart
   ../editors/include
-  ../functions
-  ../geometry
   ../makesrna
-  ../nodes
-  ../render
-  ../windowmanager
   ../../../intern/eigen
-
-  # Needed for shared line art functions from legacy implementations.
-  ../gpencil_modifiers_legacy
-  ../gpencil_modifiers_legacy/intern
-  ../gpencil_modifiers_legacy/intern/lineart
 
   # RNA_prototypes.hh
   ${CMAKE_BINARY_DIR}/source/blender/makesrna
@@ -126,6 +113,10 @@ set(SRC
   intern/MOD_weightvgproximity.cc
   intern/MOD_weld.cc
   intern/MOD_wireframe.cc
+  intern/lineart/lineart_chain.cc
+  intern/lineart/lineart_cpu.cc
+  intern/lineart/lineart_shadow.cc
+  intern/lineart/lineart_util.cc
 
   MOD_modifiertypes.hh
   MOD_nodes.hh
@@ -135,16 +126,26 @@ set(SRC
   intern/MOD_ui_common.hh
   intern/MOD_util.hh
   intern/MOD_weightvg_util.hh
+  intern/lineart/MOD_lineart.hh
+  intern/lineart/lineart_intern.hh
 )
 
 set(LIB
   PRIVATE bf::blenfont
-  bf_blenkernel
+  PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
+  PRIVATE bf::blenloader
+  PRIVATE bf::blentranslation
+  PRIVATE bf::bmesh
   PRIVATE bf::depsgraph
   PUBLIC bf::dna
+  PRIVATE bf::functions
+  PRIVATE bf::geometry
   PRIVATE bf::intern::guardedalloc
   PRIVATE bf::extern::fmtlib
+  PRIVATE bf::nodes
+  PRIVATE bf::render
+  PRIVATE bf::windowmanager
 )
 
 if(WITH_ALEMBIC)
@@ -214,19 +215,11 @@ if(WITH_GMP)
 endif()
 
 if(WITH_TBB)
-  add_definitions(-DWITH_TBB)
   if(WIN32)
     # TBB includes Windows.h which will define min/max macros
-    # that will collide with the stl versions.
+    # that will collide with the STL versions.
     add_definitions(-DNOMINMAX)
   endif()
-  list(APPEND INC_SYS
-    ${TBB_INCLUDE_DIRS}
-  )
-
-  list(APPEND LIB
-    ${TBB_LIBRARIES}
-  )
 endif()
 
 if(WITH_OPENVDB)

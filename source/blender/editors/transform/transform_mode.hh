@@ -9,6 +9,10 @@
 
 #pragma once
 
+#include "ED_transform.hh"
+
+#include "transform.hh"
+
 struct BMVert;
 struct LinkNode;
 struct TransData;
@@ -150,10 +154,6 @@ void transform_mode_edge_slide_reproject_input(TransInfo *t);
 /* `transform_mode_gpopacity.cc` */
 
 extern TransModeInfo TransMode_gpopacity;
-
-/* `transform_mode_gpshrinkfatten.cc` */
-
-extern TransModeInfo TransMode_gpshrinkfatten;
 
 /* `transform_mode_maskshrinkfatten.cc` */
 

@@ -126,37 +126,35 @@ static void reorder_and_flip_attributes_group_to_group(
     const Span<bool> flip_direction,
     bke::MutableAttributeAccessor dst_attributes)
 {
-  src_attributes.for_all(
-      [&](const bke::AttributeIDRef &id, const bke::AttributeMetaData meta_data) {
-        if (meta_data.domain != domain) {
-          return true;
-        }
-        if (meta_data.data_type == CD_PROP_STRING) {
-          return true;
-        }
-        const GVArray src = *src_attributes.lookup(id, domain);
-        bke::GSpanAttributeWriter dst = dst_attributes.lookup_or_add_for_write_only_span(
-            id, domain, meta_data.data_type);
-        if (!dst) {
-          return true;
-        }
+  src_attributes.foreach_attribute([&](const bke::AttributeIter &iter) {
+    if (iter.domain != domain) {
+      return;
+    }
+    if (iter.data_type == CD_PROP_STRING) {
+      return;
+    }
+    const GVArray src = *iter.get(domain);
+    bke::GSpanAttributeWriter dst = dst_attributes.lookup_or_add_for_write_only_span(
+        iter.name, domain, iter.data_type);
+    if (!dst) {
+      return;
+    }
 
-        threading::parallel_for(old_by_new_map.index_range(), 1024, [&](const IndexRange range) {
-          for (const int new_i : range) {
-            const int old_i = old_by_new_map[new_i];
-            const bool flip = flip_direction[old_i];
+    threading::parallel_for(old_by_new_map.index_range(), 1024, [&](const IndexRange range) {
+      for (const int new_i : range) {
+        const int old_i = old_by_new_map[new_i];
+        const bool flip = flip_direction[old_i];
 
-            GMutableSpan dst_span = dst.span.slice(dst_offsets[new_i]);
-            array_utils::copy(src.slice(src_offsets[old_i]), dst_span);
-            if (flip) {
-              reverse_order(dst_span);
-            }
-          }
-        });
+        GMutableSpan dst_span = dst.span.slice(dst_offsets[new_i]);
+        array_utils::copy(src.slice(src_offsets[old_i]), dst_span);
+        if (flip) {
+          reverse_order(dst_span);
+        }
+      }
+    });
 
-        dst.finish();
-        return true;
-      });
+    dst.finish();
+  });
 }
 
 static bke::CurvesGeometry reorder_and_flip_curves(const bke::CurvesGeometry &src_curves,
@@ -167,7 +165,7 @@ static bke::CurvesGeometry reorder_and_flip_curves(const bke::CurvesGeometry &sr
 
   bke::gather_attributes(src_curves.attributes(),
                          bke::AttrDomain::Curve,
-                         {},
+                         bke::AttrDomain::Curve,
                          {},
                          old_by_new_map,
                          dst_curves.attributes_for_write());
@@ -250,13 +248,13 @@ static bke::CurvesGeometry join_curves_ranges(const bke::CurvesGeometry &src_cur
   bke::CurvesGeometry dst_curves = bke::CurvesGeometry(src_curves.points_num(),
                                                        old_curves_by_new.size());
 
-  /* Note: using the offsets as an index map means the first curve of each range is used for
+  /* NOTE: using the offsets as an index map means the first curve of each range is used for
    * attributes. */
   const Span<int> old_by_new_map = old_curves_by_new.data().drop_back(1);
   bke::gather_attributes(src_curves.attributes(),
                          bke::AttrDomain::Curve,
-                         {},
-                         {"cyclic"},
+                         bke::AttrDomain::Curve,
+                         bke::attribute_filter_from_skip_ref({"cyclic"}),
                          old_by_new_map,
                          dst_curves.attributes_for_write());
 
@@ -265,25 +263,25 @@ static bke::CurvesGeometry join_curves_ranges(const bke::CurvesGeometry &src_cur
   new_offsets.fill(0);
   for (const int new_i : new_offsets.index_range().drop_back(1)) {
     const IndexRange old_curves = old_curves_by_new[new_i];
-    for (const int old_i : old_curves) {
-      new_offsets[new_i] += old_points_by_curve[old_i].size();
-    }
+    new_offsets[new_i] = offset_indices::sum_group_sizes(old_points_by_curve, old_curves);
   }
   offset_indices::accumulate_counts_to_offsets(new_offsets);
 
   /* Point attributes copied without changes. */
-  bke::copy_attributes(
-      src_curves.attributes(), bke::AttrDomain::Point, {}, {}, dst_curves.attributes_for_write());
+  bke::copy_attributes(src_curves.attributes(),
+                       bke::AttrDomain::Point,
+                       bke::AttrDomain::Point,
+                       {},
+                       dst_curves.attributes_for_write());
 
   dst_curves.tag_topology_changed();
   return dst_curves;
 }
 
-bke::CurvesGeometry curves_merge_endpoints(
-    const bke::CurvesGeometry &src_curves,
-    Span<int> connect_to_curve,
-    Span<bool> flip_direction,
-    const bke::AnonymousAttributePropagationInfo & /*propagation_info*/)
+bke::CurvesGeometry curves_merge_endpoints(const bke::CurvesGeometry &src_curves,
+                                           Span<int> connect_to_curve,
+                                           Span<bool> flip_direction,
+                                           const bke::AttributeFilter & /*attribute_filter*/)
 {
   BLI_assert(connect_to_curve.size() == src_curves.curves_num());
   const VArraySpan<bool> src_cyclic = src_curves.cyclic();

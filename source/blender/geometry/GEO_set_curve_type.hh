@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include "BLI_function_ref.hh"
 #include "BLI_index_mask.hh"
 
 #include "BKE_curves.hh"
@@ -32,7 +31,7 @@ struct ConvertCurvesOptions {
 bke::CurvesGeometry convert_curves(const bke::CurvesGeometry &src_curves,
                                    const IndexMask &selection,
                                    CurveType dst_type,
-                                   const bke::AnonymousAttributePropagationInfo &propagation_info,
+                                   const bke::AttributeFilter &attribute_filter,
                                    const ConvertCurvesOptions &options = {});
 
 }  // namespace blender::geometry

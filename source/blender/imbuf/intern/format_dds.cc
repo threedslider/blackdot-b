@@ -11,7 +11,6 @@
  */
 
 #include <algorithm>
-#include <memory>
 
 #include "oiio/openimageio_support.hh"
 
@@ -19,7 +18,7 @@
 #include "IMB_imbuf_types.hh"
 
 #include "BLI_math_base.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 
 #ifdef __BIG_ENDIAN__
@@ -44,9 +43,9 @@ void imb_init_dds()
   }
 }
 
-bool imb_is_a_dds(const uchar *buf, size_t size)
+bool imb_is_a_dds(const uchar *mem, size_t size)
 {
-  return imb_oiio_check(buf, size, "dds");
+  return imb_oiio_check(mem, size, "dds");
 }
 
 ImBuf *imb_load_dds(const uchar *mem, size_t size, int flags, char colorspace[IM_MAX_SPACE])

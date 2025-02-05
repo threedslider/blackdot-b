@@ -14,16 +14,6 @@
 
 #include "BLI_implicit_sharing.h"
 
-/** Workaround to forward-declare C++ type in C header. */
-#ifdef __cplusplus
-namespace blender::bke {
-class AnonymousAttributeID;
-}  // namespace blender::bke
-using AnonymousAttributeIDHandle = blender::bke::AnonymousAttributeID;
-#else
-typedef struct AnonymousAttributeIDHandle AnonymousAttributeIDHandle;
-#endif
-
 /** Descriptor and storage for a custom data layer. */
 typedef struct CustomDataLayer {
   /** Type of data in layer. */
@@ -47,11 +37,6 @@ typedef struct CustomDataLayer {
   char _pad1[4];
   /** Layer data. */
   void *data;
-  /**
-   * Run-time identifier for this layer. Can be used to retrieve information about where this
-   * attribute was created.
-   */
-  const AnonymousAttributeIDHandle *anonymous_id;
   /**
    * Run-time data that allows sharing `data` with other entities (mostly custom data layers on
    * other geometries).
@@ -140,7 +125,7 @@ typedef enum eCustomDataType {
   CD_MDISPS = 19,
   CD_PROP_FLOAT4X4 = 20,
   /* CD_ID_MCOL = 21, */
-  /* CD_TEXTURE_MLOOPCOL = 22, */ /* UNUSED */
+  CD_PROP_INT16_2D = 22,
   CD_CLOTH_ORCO = 23,
 /* CD_RECAST = 24, */ /* UNUSED */
 
@@ -167,8 +152,8 @@ typedef enum eCustomDataType {
   CD_FREESTYLE_FACE = 38,
   CD_MLOOPTANGENT = 39,
   CD_TESSLOOPNORMAL = 40,
-  CD_CUSTOMLOOPNORMAL = 41,
 #ifdef DNA_DEPRECATED_ALLOW
+  CD_CUSTOMLOOPNORMAL = 41,
   CD_SCULPT_FACE_SETS = 42,
 #endif
 
@@ -222,12 +207,12 @@ using eCustomDataMask = uint64_t;
 #define CD_MASK_FREESTYLE_FACE (1LL << CD_FREESTYLE_FACE)
 #define CD_MASK_MLOOPTANGENT (1LL << CD_MLOOPTANGENT)
 #define CD_MASK_TESSLOOPNORMAL (1LL << CD_TESSLOOPNORMAL)
-#define CD_MASK_CUSTOMLOOPNORMAL (1LL << CD_CUSTOMLOOPNORMAL)
 #define CD_MASK_PROP_COLOR (1ULL << CD_PROP_COLOR)
 #define CD_MASK_PROP_FLOAT3 (1ULL << CD_PROP_FLOAT3)
 #define CD_MASK_PROP_FLOAT2 (1ULL << CD_PROP_FLOAT2)
 #define CD_MASK_PROP_BOOL (1ULL << CD_PROP_BOOL)
 #define CD_MASK_PROP_INT8 (1ULL << CD_PROP_INT8)
+#define CD_MASK_PROP_INT16_2D (1ULL << CD_PROP_INT16_2D)
 #define CD_MASK_PROP_INT32_2D (1ULL << CD_PROP_INT32_2D)
 #define CD_MASK_PROP_QUATERNION (1ULL << CD_PROP_QUATERNION)
 #define CD_MASK_PROP_FLOAT4X4 (1ULL << CD_PROP_FLOAT4X4)
@@ -242,7 +227,8 @@ using eCustomDataMask = uint64_t;
 #define CD_MASK_PROP_ALL \
   (CD_MASK_PROP_FLOAT | CD_MASK_PROP_FLOAT2 | CD_MASK_PROP_FLOAT3 | CD_MASK_PROP_INT32 | \
    CD_MASK_PROP_COLOR | CD_MASK_PROP_STRING | CD_MASK_PROP_BYTE_COLOR | CD_MASK_PROP_BOOL | \
-   CD_MASK_PROP_INT8 | CD_MASK_PROP_INT32_2D | CD_MASK_PROP_QUATERNION | CD_MASK_PROP_FLOAT4X4)
+   CD_MASK_PROP_INT8 | CD_MASK_PROP_INT16_2D | CD_MASK_PROP_INT32_2D | CD_MASK_PROP_QUATERNION | \
+   CD_MASK_PROP_FLOAT4X4)
 
 /* All color attributes */
 #define CD_MASK_COLOR_ALL (CD_MASK_PROP_COLOR | CD_MASK_PROP_BYTE_COLOR)

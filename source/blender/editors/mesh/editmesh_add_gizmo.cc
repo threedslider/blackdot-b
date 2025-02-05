@@ -63,9 +63,8 @@ static void calc_initial_placement_point_from_view(bContext *C,
 
   bool use_mouse_project = true; /* TODO: make optional */
 
-  float cursor_matrix[4][4];
+  const blender::float4x4 cursor_matrix = scene->cursor.matrix<blender::float4x4>();
   float orient_matrix[3][3];
-  BKE_scene_cursor_to_mat4(&scene->cursor, cursor_matrix);
 
   const float dots[3] = {
       dot_v3v3(rv3d->viewinv[2], cursor_matrix[0]),
@@ -122,8 +121,8 @@ struct GizmoPlacementGroup {
 static void gizmo_placement_exec(GizmoPlacementGroup *ggd)
 {
   wmOperator *op = ggd->data.op;
-  if (op == WM_operator_last_redo((bContext *)ggd->data.context)) {
-    ED_undo_operator_repeat((bContext *)ggd->data.context, op);
+  if (op == WM_operator_last_redo(ggd->data.context)) {
+    ED_undo_operator_repeat(ggd->data.context, op);
   }
 }
 
@@ -276,7 +275,7 @@ static void gizmo_mesh_placement_draw_prepare(const bContext * /*C*/, wmGizmoGro
 {
   GizmoPlacementGroup *ggd = static_cast<GizmoPlacementGroup *>(gzgroup->customdata);
   if (ggd->data.op->next) {
-    ggd->data.op = WM_operator_last_redo((bContext *)ggd->data.context);
+    ggd->data.op = WM_operator_last_redo(ggd->data.context);
   }
   gizmo_mesh_placement_update_from_op(ggd);
 }

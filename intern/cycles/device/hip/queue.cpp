@@ -74,7 +74,7 @@ void HIPDeviceQueue::init_execution()
 
 bool HIPDeviceQueue::enqueue(DeviceKernel kernel,
                              const int work_size,
-                             DeviceKernelArguments const &args)
+                             const DeviceKernelArguments &args)
 {
   if (hip_device_->have_error()) {
     return false;
@@ -83,9 +83,17 @@ bool HIPDeviceQueue::enqueue(DeviceKernel kernel,
   debug_enqueue_begin(kernel, work_size);
 
   const HIPContextScope scope(hip_device_);
-  const HIPDeviceKernel &hip_kernel = hip_device_->kernels.get(kernel);
+
+  /* Update texture info in case memory moved to host. */
+  if (hip_device_->load_texture_info()) {
+    hip_device_assert(hip_device_, hipDeviceSynchronize());
+    if (hip_device_->have_error()) {
+      return false;
+    }
+  }
 
   /* Compute kernel launch parameters. */
+  const HIPDeviceKernel &hip_kernel = hip_device_->kernels.get(kernel);
   const int num_threads_per_block = hip_kernel.num_threads_per_block;
   const int num_blocks = divide_up(work_size, num_threads_per_block);
 
@@ -118,7 +126,7 @@ bool HIPDeviceQueue::enqueue(DeviceKernel kernel,
                                        shared_mem_bytes,
                                        hip_stream_,
                                        const_cast<void **>(args.values),
-                                       0),
+                                       nullptr),
                  "enqueue");
 
   debug_enqueue_end();

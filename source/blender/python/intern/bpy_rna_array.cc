@@ -16,20 +16,20 @@
 
 #include "RNA_types.hh"
 
-#include "bpy_rna.h"
+#include "bpy_rna.hh"
 
 #include "MEM_guardedalloc.h"
 
 #include "RNA_access.hh"
 
-#include "BPY_extern_clog.h"
+#include "BPY_extern_clog.hh"
 
-#include "../generic/py_capi_utils.h"
+#include "../generic/py_capi_utils.hh"
 
 #define USE_MATHUTILS
 
 #ifdef USE_MATHUTILS
-#  include "../mathutils/mathutils.h" /* so we can have mathutils callbacks */
+#  include "../mathutils/mathutils.hh" /* so we can have mathutils callbacks */
 #endif
 
 #define MAX_ARRAY_DIMENSION 10
@@ -550,7 +550,7 @@ static int py_to_array(PyObject *seq,
     if (prop_is_param_dyn_alloc) {
       /* not freeing allocated mem, RNA_parameter_list_free() will do this */
       ParameterDynAlloc *param_alloc = (ParameterDynAlloc *)param_data;
-      param_alloc->array_tot = int(totitem);
+      param_alloc->array_tot = totitem;
 
       /* freeing param list will free */
       param_alloc->array = MEM_callocN(item_size * totitem, "py_to_array dyn");
@@ -989,7 +989,7 @@ PyObject *pyrna_py_from_array(PointerRNA *ptr, PropertyRNA *prop)
 
   ret = pyrna_math_object_from_array(ptr, prop);
 
-  /* is this a maths object? */
+  /* Is this a math object? */
   if (ret) {
     return ret;
   }

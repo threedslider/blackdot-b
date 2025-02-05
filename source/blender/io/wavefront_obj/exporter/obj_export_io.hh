@@ -9,10 +9,7 @@
 #pragma once
 
 #include <cstdio>
-#include <type_traits>
 
-#include "BLI_compiler_attrs.h"
-#include "BLI_fileops.h"
 #include "BLI_string_ref.hh"
 #include "BLI_utility_mixins.hh"
 #include "BLI_vector.hh"
@@ -208,7 +205,7 @@ class FormatHandler : NonCopyable, NonMovable {
     }
   }
 
-  template<typename... T> void write_impl(const char *fmt, T &&...args)
+  template<typename... T> void write_impl(fmt::format_string<T...> fmt, T &&...args)
   {
     /* Format into a local buffer. */
     fmt::memory_buffer buf;

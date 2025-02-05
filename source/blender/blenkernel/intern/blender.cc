@@ -12,7 +12,11 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "DNA_windowmanager_types.h"
+
 #include "MEM_guardedalloc.h"
+
+#include "DNA_windowmanager_types.h"
 
 #include "BLI_listbase.h"
 #include "BLI_string.h"
@@ -20,6 +24,8 @@
 
 #include "IMB_imbuf.hh"
 #include "IMB_moviecache.hh"
+
+#include "MOV_util.hh"
 
 #include "BKE_addon.h"
 #include "BKE_asset.hh"
@@ -33,16 +39,16 @@
 #include "BKE_idprop.hh"
 #include "BKE_main.hh"
 #include "BKE_node.hh"
-#include "BKE_report.hh"
 #include "BKE_screen.hh"
 #include "BKE_studiolight.h"
-#include "BKE_writeffmpeg.hh"
 
 #include "DEG_depsgraph.hh"
 
 #include "RE_texture.h"
 
 #include "BLF_api.hh"
+
+#include "SEQ_utils.hh"
 
 Global G;
 UserDef U;
@@ -76,11 +82,10 @@ void BKE_blender_free()
   BKE_callback_global_finalize();
 
   IMB_moviecache_destruct();
-#ifdef WITH_FFMPEG
-  BKE_ffmpeg_exit();
-#endif
+  SEQ_fontmap_clear();
+  MOV_exit();
 
-  blender::bke::BKE_node_system_exit();
+  blender::bke::node_system_exit();
 }
 
 /** \} */
@@ -97,34 +102,43 @@ static char blender_version_string_compact[48] = "";
 static void blender_version_init()
 {
   const char *version_cycle = "";
+  const char *version_cycle_compact = "";
   if (STREQ(STRINGIFY(BLENDER_VERSION_CYCLE), "alpha")) {
     version_cycle = " Alpha";
+    version_cycle_compact = " a";
   }
   else if (STREQ(STRINGIFY(BLENDER_VERSION_CYCLE), "beta")) {
     version_cycle = " Beta";
+    version_cycle_compact = " b";
   }
   else if (STREQ(STRINGIFY(BLENDER_VERSION_CYCLE), "rc")) {
     version_cycle = " Release Candidate";
+    version_cycle_compact = " RC";
   }
   else if (STREQ(STRINGIFY(BLENDER_VERSION_CYCLE), "release")) {
     version_cycle = "";
+    version_cycle_compact = "";
   }
   else {
     BLI_assert_msg(0, "Invalid Blender version cycle");
   }
 
+  const char *version_suffix = BKE_blender_version_is_lts() ? " LTS" : "";
+
   SNPRINTF(blender_version_string,
+           "%d.%01d.%d%s%s",
+           BLENDER_VERSION / 100,
+           BLENDER_VERSION % 100,
+           BLENDER_VERSION_PATCH,
+           version_suffix,
+           version_cycle);
+
+  SNPRINTF(blender_version_string_compact,
            "%d.%01d.%d%s",
            BLENDER_VERSION / 100,
            BLENDER_VERSION % 100,
            BLENDER_VERSION_PATCH,
-           version_cycle);
-
-  SNPRINTF(blender_version_string_compact,
-           "%d.%01d%s",
-           BLENDER_VERSION / 100,
-           BLENDER_VERSION % 100,
-           version_cycle);
+           version_cycle_compact);
 }
 
 const char *BKE_blender_version_string()
@@ -161,6 +175,11 @@ bool BKE_blender_version_is_alpha()
 {
   bool is_alpha = STREQ(STRINGIFY(BLENDER_VERSION_CYCLE), "alpha");
   return is_alpha;
+}
+
+bool BKE_blender_version_is_lts()
+{
+  return STREQ(STRINGIFY(BLENDER_VERSION_SUFFIX), "LTS");
 }
 
 /** \} */
@@ -232,7 +251,7 @@ static void keymap_item_free(wmKeyMapItem *kmi)
     IDP_FreeProperty(kmi->properties);
   }
   if (kmi->ptr) {
-    MEM_freeN(kmi->ptr);
+    MEM_delete(kmi->ptr);
   }
 }
 

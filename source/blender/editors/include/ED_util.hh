@@ -8,11 +8,11 @@
 
 #pragma once
 
-#include "BLI_compiler_attrs.h"
 #include "WM_types.hh"
 
 struct Main;
 struct bContext;
+class WorkspaceStatus;
 
 namespace blender::bke::id {
 class IDRemapper;
@@ -87,8 +87,18 @@ void ED_slider_status_string_get(const tSlider *slider,
                                  char *status_string,
                                  size_t size_of_status_string);
 
+void ED_slider_status_get(const tSlider *slider, WorkspaceStatus &status);
+
 float ED_slider_factor_get(const tSlider *slider);
 void ED_slider_factor_set(tSlider *slider, float factor);
+
+/**
+ * By default the increment step is 0.1, which depending on the factor bounds might not be desired.
+ * Only has an effect if increment is allowed and enabled.
+ * See `ED_slider_allow_increments_set`.
+ * \param increment_step: cannot be 0.
+ */
+void ED_slider_increment_step_set(tSlider *slider, float increment_step);
 
 /** One bool value for each side of the slider. Allows to enable overshoot only on one side. */
 void ED_slider_allow_overshoot_set(tSlider *slider, bool lower, bool upper);
@@ -98,7 +108,7 @@ void ED_slider_allow_overshoot_set(tSlider *slider, bool lower, bool upper);
  */
 void ED_slider_factor_bounds_set(tSlider *slider,
                                  float factor_bound_lower,
-                                 float factor_upper_bound);
+                                 float factor_bound_upper);
 
 bool ED_slider_allow_increments_get(const tSlider *slider);
 void ED_slider_allow_increments_set(tSlider *slider, bool value);
@@ -108,7 +118,7 @@ SliderMode ED_slider_mode_get(const tSlider *slider);
 void ED_slider_unit_set(tSlider *slider, const char *unit);
 /* Set a name that will show next to the slider to indicate which property is modified currently.
  * To clear, set to an empty string. */
-void ED_slider_property_label_set(tSlider *slider, const char *prop_name);
+void ED_slider_property_label_set(tSlider *slider, const char *property_label);
 
 /* ************** XXX OLD CRUFT WARNING ************* */
 

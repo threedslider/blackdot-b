@@ -13,9 +13,7 @@
 
 #include "../system/FreestyleConfig.h"
 
-#ifdef WITH_CXX_GUARDEDALLOC
-#  include "MEM_guardedalloc.h"
-#endif
+#include "MEM_guardedalloc.h"
 
 namespace Freestyle {
 
@@ -35,7 +33,7 @@ class GeomCleaner {
    *    iIndices
    *      The array containing the vertex indices
    *      (used to refer to the vertex coordinates in an indexed face).
-   *      Each element is an unsignedeger multiple of 3.
+   *      Each element is a uint multiple of 3.
    *    iISize
    *      The size of iIndices array
    *    oVertices
@@ -64,7 +62,7 @@ class GeomCleaner {
    *    iIndices
    *      The array containing the vertex indices
    *      (used to refer to the vertex coordinates in an indexed face).
-   *      Each element is an unsignedeger multiple of 3.
+   *      Each element is a uint multiple of 3.
    *    iISize
    *      The size of iIndices array
    *    oVertices
@@ -92,7 +90,7 @@ class GeomCleaner {
    *    iIndices
    *      The array containing the vertex indices
    *      (used to refer to the vertex coordinates in an indexed face).
-   *      Each element is an unsignedeger multiple of 3.
+   *      Each element is a uint multiple of 3.
    *    iISize
    *      The size of iIndices array
    *    oVertices
@@ -121,7 +119,7 @@ class GeomCleaner {
    *    iIndices
    *      The array containing the vertex indices
    *      (used to refer to the vertex coordinates in an indexed face).
-   *      Each element is an unsignedeger multiple of 3.
+   *      Each element is a uint multiple of 3.
    *    iISize
    *      The size of iIndices array
    *    oVertices
@@ -140,9 +138,7 @@ class GeomCleaner {
                                       uint *oVSize,
                                       uint **oIndices);
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("Freestyle:GeomCleaner")
-#endif
 };
 
 /** Binary operators */
@@ -225,9 +221,7 @@ class IndexedVertex {
     return (_Vector == v._Vector);
   }
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("Freestyle:IndexedVertex")
-#endif
 };
 
 #if 0

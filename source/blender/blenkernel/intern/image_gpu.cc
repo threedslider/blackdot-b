@@ -11,6 +11,8 @@
 #include "BLI_boxpack_2d.h"
 #include "BLI_linklist.h"
 #include "BLI_listbase.h"
+#include "BLI_math_base.hh"
+#include "BLI_rect.h"
 #include "BLI_threads.h"
 #include "BLI_time.h"
 
@@ -22,7 +24,7 @@
 #include "IMB_imbuf_types.hh"
 
 #include "BKE_global.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_image_partial_update.hh"
 #include "BKE_main.hh"
 
@@ -31,8 +33,6 @@
 #include "GPU_texture.hh"
 
 using namespace blender::bke::image::partial_update;
-
-extern "C" {
 
 /* Prototypes. */
 static void gpu_free_unused_buffers();
@@ -210,10 +210,10 @@ static GPUTexture *gpu_texture_create_tile_array(Image *ima, ImBuf *main_ibuf)
 
   /* Upload each tile one by one. */
   LISTBASE_FOREACH (ImageTile *, tile, &ima->tiles) {
-    ImageTile_Runtime *tile_runtime = &tile->runtime;
-    int tilelayer = tile_runtime->tilearray_layer;
-    int *tileoffset = tile_runtime->tilearray_offset;
-    int *tilesize = tile_runtime->tilearray_size;
+    const ImageTile_Runtime *tile_runtime = &tile->runtime;
+    const int tilelayer = tile_runtime->tilearray_layer;
+    const int *tileoffset = tile_runtime->tilearray_offset;
+    const int *tilesize = tile_runtime->tilearray_size;
 
     if (tilesize[0] == 0 || tilesize[1] == 0) {
       continue;
@@ -656,7 +656,7 @@ static ImBuf *update_do_scale(const uchar *rect,
 
   /* Scale pixels. */
   ImBuf *ibuf = IMB_allocFromBuffer(rect, rect_float, part_w, part_h, 4);
-  IMB_scaleImBuf(ibuf, *w, *h);
+  IMB_scale(ibuf, *w, *h, IMBScaleFilter::Box, false);
 
   return ibuf;
 }
@@ -695,7 +695,7 @@ static void gpu_texture_update_scaled(GPUTexture *tex,
                                            (void *)(ibuf->byte_buffer.data);
   eGPUDataFormat data_format = (ibuf->float_buffer.data) ? GPU_DATA_FLOAT : GPU_DATA_UBYTE;
 
-  GPU_texture_update_sub(tex, data_format, data, x, y, layer, w, h, 1);
+  GPU_texture_update_sub(tex, data_format, data, x, y, blender::math::max(layer, 0), w, h, 1);
 
   IMB_freeImBuf(ibuf);
 }
@@ -725,7 +725,7 @@ static void gpu_texture_update_unscaled(GPUTexture *tex,
    * subset of a possible larger buffer than what we are updating. */
   GPU_unpack_row_length_set(tex_stride);
 
-  GPU_texture_update_sub(tex, data_format, data, x, y, layer, w, h, 1);
+  GPU_texture_update_sub(tex, data_format, data, x, y, blender::math::max(layer, 0), w, h, 1);
   /* Restore default. */
   GPU_unpack_row_length_set(0);
 }
@@ -932,4 +932,3 @@ void BKE_image_paint_set_mipmap(Main *bmain, bool mipmap)
 }
 
 /** \} */
-}

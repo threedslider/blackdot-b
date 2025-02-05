@@ -6,14 +6,12 @@
  * \ingroup modifiers
  */
 
-#include <cstdio>
-
 #include "BLI_utildefines.h"
 
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 
 #include "BLT_translation.hh"
@@ -215,13 +213,13 @@ static void meshcache_do(MeshCacheModifierData *mcmd,
     if (mcmd->flip_axis) {
       float tmat[3][3];
       unit_m3(tmat);
-      if (mcmd->flip_axis & (1 << 0)) {
+      if (mcmd->flip_axis & MOD_MESHCACHE_FLIP_AXIS_X) {
         tmat[0][0] = -1.0f;
       }
-      if (mcmd->flip_axis & (1 << 1)) {
+      if (mcmd->flip_axis & MOD_MESHCACHE_FLIP_AXIS_Y) {
         tmat[1][1] = -1.0f;
       }
-      if (mcmd->flip_axis & (1 << 2)) {
+      if (mcmd->flip_axis & MOD_MESHCACHE_FLIP_AXIS_Z) {
         tmat[2][2] = -1.0f;
       }
       mul_m3_m3m3(mat, tmat, mat);
@@ -298,13 +296,13 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "cache_format", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "filepath", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "cache_format", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "filepath", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "factor", UI_ITEM_R_SLIDER, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "deform_mode", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "interpolation", UI_ITEM_NONE, nullptr, ICON_NONE);
-  modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", nullptr);
+  uiItemR(layout, ptr, "factor", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "deform_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "interpolation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  modifier_vgroup_ui(layout, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
 
   modifier_panel_end(layout, ptr);
 }
@@ -315,26 +313,26 @@ static void time_remapping_panel_draw(const bContext * /*C*/, Panel *panel)
 
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
-  uiItemR(layout, ptr, "time_mode", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "time_mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "play_mode", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "play_mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
   if (RNA_enum_get(ptr, "play_mode") == MOD_MESHCACHE_PLAY_CFEA) {
-    uiItemR(layout, ptr, "frame_start", UI_ITEM_NONE, nullptr, ICON_NONE);
-    uiItemR(layout, ptr, "frame_scale", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(layout, ptr, "frame_start", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiItemR(layout, ptr, "frame_scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   else { /* play_mode == MOD_MESHCACHE_PLAY_EVAL */
     int time_mode = RNA_enum_get(ptr, "time_mode");
     if (time_mode == MOD_MESHCACHE_TIME_FRAME) {
-      uiItemR(layout, ptr, "eval_frame", UI_ITEM_NONE, nullptr, ICON_NONE);
+      uiItemR(layout, ptr, "eval_frame", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
     else if (time_mode == MOD_MESHCACHE_TIME_SECONDS) {
-      uiItemR(layout, ptr, "eval_time", UI_ITEM_NONE, nullptr, ICON_NONE);
+      uiItemR(layout, ptr, "eval_time", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
     else { /* time_mode == MOD_MESHCACHE_TIME_FACTOR */
-      uiItemR(layout, ptr, "eval_factor", UI_ITEM_NONE, nullptr, ICON_NONE);
+      uiItemR(layout, ptr, "eval_factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
   }
 }
@@ -350,10 +348,15 @@ static void axis_mapping_panel_draw(const bContext * /*C*/, Panel *panel)
 
   col = uiLayoutColumn(layout, true);
   uiLayoutSetRedAlert(col, RNA_enum_get(ptr, "forward_axis") == RNA_enum_get(ptr, "up_axis"));
-  uiItemR(col, ptr, "forward_axis", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "up_axis", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "forward_axis", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "up_axis", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  uiItemR(layout, ptr, "flip_axis", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  const eUI_Item_Flag toggles_flag = UI_ITEM_R_TOGGLE | UI_ITEM_R_FORCE_BLANK_DECORATE;
+  PropertyRNA *prop = RNA_struct_find_property(ptr, "flip_axis");
+  uiLayout *row = uiLayoutRowWithHeading(col, true, IFACE_("Flip Axis"));
+  uiItemFullR(row, ptr, prop, 0, 0, toggles_flag, IFACE_("X"), ICON_NONE);
+  uiItemFullR(row, ptr, prop, 1, 0, toggles_flag, IFACE_("Y"), ICON_NONE);
+  uiItemFullR(row, ptr, prop, 2, 0, toggles_flag, IFACE_("Z"), ICON_NONE);
 }
 
 static void panel_register(ARegionType *region_type)

@@ -9,27 +9,18 @@
 #include <climits>
 #include <cstdlib>
 
-#include "BLI_math_vector.h"
-#include "BLI_path_util.h"
-#include "BLI_sys_types.h"
-#include "BLI_utildefines.h"
+#include "BLI_path_utils.hh"
 
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
 #include "rna_internal.hh"
 
-#include "BKE_fluid.h"
 #include "BKE_modifier.hh"
-#include "BKE_pointcache.h"
 
 #include "BLT_translation.hh"
 
 #include "DNA_fluid_types.h"
-#include "DNA_modifier_types.h"
-#include "DNA_object_force_types.h"
-#include "DNA_object_types.h"
-#include "DNA_particle_types.h"
 #include "DNA_scene_types.h"
 
 #include "WM_api.hh"
@@ -39,10 +30,13 @@
 
 #  include <fmt/format.h>
 
+#  include "BLI_math_vector.h"
+#  include "BLI_string.h"
 #  include "BLI_threads.h"
 
 #  include "BKE_colorband.hh"
 #  include "BKE_context.hh"
+#  include "BKE_fluid.h"
 #  include "BKE_particle.h"
 
 #  include "DEG_depsgraph.hh"
@@ -1303,7 +1297,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
        0,
        "Domain",
        "Use a fluid domain for guiding (domain needs to be baked already so that velocities can "
-       "be extracted). Guiding domain can be of any type (i.e. gas or liquid)"},
+       "be extracted). Guiding domain can be of any type (i.e. gas or liquid)."},
       {FLUID_DOMAIN_GUIDE_SRC_EFFECTOR,
        "EFFECTOR",
        0,
@@ -1315,7 +1309,9 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
 
   /*  Cache type - generated dynamically based on domain type */
   static const EnumPropertyItem cache_file_type_items[] = {
-      {0, "NONE", 0, "", ""},
+      {FLUID_DOMAIN_FILE_UNI, "UNI", 0, "Uni Cache", "Uni file format (.uni)"},
+      {FLUID_DOMAIN_FILE_OPENVDB, "OPENVDB", 0, "OpenVDB", "OpenVDB file format (.vdb)"},
+      {FLUID_DOMAIN_FILE_RAW, "RAW", 0, "Raw Cache", "Raw file format (.raw)"},
       {0, nullptr, 0, nullptr, nullptr},
   };
 
@@ -1365,7 +1361,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
   };
 
   static const EnumPropertyItem gridlines_color_field_items[] = {
-      {0, "NONE", 0, "None", "None"},
+      {FLUID_GRIDLINE_COLOR_TYPE_NONE, "NONE", 0, "None", "None"},
       {FLUID_GRIDLINE_COLOR_TYPE_FLAGS, "FLAGS", 0, "Flags", "Flag grid of the fluid domain"},
       {FLUID_GRIDLINE_COLOR_TYPE_RANGE,
        "RANGE",
@@ -1601,7 +1597,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
       prop,
       "Maximum Resolution",
       "Resolution used for the fluid domain. Value corresponds to the longest domain side "
-      "(resolution for other domain sides is calculated automatically)");
+      "(resolution for other domain sides is calculated automatically).");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_domain_data_reset");
 
@@ -1708,7 +1704,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
   RNA_def_property_ui_text(
       prop,
       "Logarithmic Dissolve",
-      "Dissolve smoke in a logarithmic fashion. Dissolves quickly at first, but lingers longer");
+      "Dissolve smoke in a logarithmic fashion. Dissolves quickly at first, but lingers longer.");
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_datacache_reset");
 
   /* flame options */
@@ -1762,6 +1758,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
   RNA_def_property_range(prop, 0.0, 10.0);
   RNA_def_property_ui_range(prop, 0.0, 10.0, 1, 2);
   RNA_def_property_ui_text(prop, "Strength", "Strength of noise");
+  RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_AMOUNT);
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_noisecache_reset");
 
   prop = RNA_def_property(srna, "noise_pos_scale", PROP_FLOAT, PROP_NONE);
@@ -1809,7 +1806,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
       prop,
       "FLIP Ratio",
       "PIC/FLIP Ratio. A value of 1.0 will result in a completely FLIP based simulation. Use a "
-      "lower value for simulations which should produce smaller splashes");
+      "lower value for simulations which should produce smaller splashes.");
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_datacache_reset");
 
   prop = RNA_def_property(srna, "particle_randomness", PROP_FLOAT, PROP_NONE);
@@ -1847,7 +1844,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Radius",
                            "Particle radius factor. Increase this value if the simulation appears "
-                           "to leak volume, decrease it if the simulation seems to gain volume");
+                           "to leak volume, decrease it if the simulation seems to gain volume.");
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_datacache_reset");
 
   prop = RNA_def_property(srna, "particle_band_width", PROP_FLOAT, PROP_NONE);
@@ -1917,6 +1914,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
                            "Strength",
                            "Viscosity of liquid (higher values result in more viscous fluids, a "
                            "value of 0 will still apply some viscosity)");
+  RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_AMOUNT);
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_datacache_reset");
 
   /*  diffusion options */
@@ -1991,7 +1989,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
                            "Mesh scale",
                            "The mesh simulation is scaled up by this factor (compared to the base "
                            "resolution of the domain). For best meshing, it is recommended to "
-                           "adjust the mesh particle radius alongside this value");
+                           "adjust the mesh particle radius alongside this value.");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_domain_mesh_reset");
 
@@ -2012,7 +2010,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Speed Vectors",
                            "Caches velocities of mesh vertices. These will be used "
-                           "(automatically) when rendering with motion blur enabled");
+                           "(automatically) when rendering with motion blur enabled.");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_meshcache_reset");
 
@@ -2021,7 +2019,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Radius",
                            "Particle radius factor (higher value results in larger (meshed) "
-                           "particles). Needs to be adjusted after changing the mesh scale");
+                           "particles). Needs to be adjusted after changing the mesh scale.");
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_meshcache_reset");
 
   /*  secondary particles options */
@@ -2264,19 +2262,14 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
   RNA_def_property_range(prop, -MAXFRAME, MAXFRAME);
   RNA_def_property_int_funcs(prop, nullptr, "rna_Fluid_cache_startframe_set", nullptr);
   RNA_def_property_ui_text(
-      prop,
-      "Start",
-      "Frame on which the simulation starts. This is the first frame that will be baked");
+      prop, "Start", "Frame on which the simulation starts (first frame baked)");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
 
   prop = RNA_def_property(srna, "cache_frame_end", PROP_INT, PROP_TIME);
   RNA_def_property_int_sdna(prop, nullptr, "cache_frame_end");
   RNA_def_property_range(prop, -MAXFRAME, MAXFRAME);
   RNA_def_property_int_funcs(prop, nullptr, "rna_Fluid_cache_endframe_set", nullptr);
-  RNA_def_property_ui_text(
-      prop,
-      "End",
-      "Frame on which the simulation stops. This is the last frame that will be baked");
+  RNA_def_property_ui_text(prop, "End", "Frame on which the simulation stops (last frame baked)");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
 
   prop = RNA_def_property(srna, "cache_frame_offset", PROP_INT, PROP_TIME);
@@ -2286,7 +2279,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
       prop,
       "Offset",
       "Frame offset that is used when loading the simulation from the cache. It is not considered "
-      "when baking the simulation, only when loading it");
+      "when baking the simulation, only when loading it.");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
 
   prop = RNA_def_property(srna, "cache_frame_pause_data", PROP_INT, PROP_TIME);
@@ -2359,7 +2352,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
       "Resumable",
       "Additional data will be saved so that the bake jobs can be resumed after pausing. Because "
       "more data will be written to disk it is recommended to avoid enabling this option when "
-      "baking at high resolutions");
+      "baking at high resolutions.");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_datacache_reset");
 
@@ -2426,7 +2419,7 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
       "Export Mantaflow Script",
       "Generate and export Mantaflow script from current domain settings during bake. This is "
       "only needed if you plan to analyze the cache (e.g. view grids, velocity vectors, "
-      "particles) in Mantaflow directly (outside of Blender) after baking the simulation");
+      "particles) in Mantaflow directly (outside of Blender) after baking the simulation.");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_domain_data_reset");
 
@@ -2458,8 +2451,8 @@ static void rna_def_fluid_domain_settings(BlenderRNA *brna)
   RNA_def_property_boolean_sdna(prop, nullptr, "flags", FLUID_DOMAIN_USE_ADAPTIVE_TIME);
   RNA_def_property_ui_text(
       prop,
-      "Use Adaptive Time Steps",
-      "Lets the solver automatically decide when to perform multiple simulation steps per frame");
+      "Adaptive Time Steps",
+      "Automatically decide when to perform multiple simulation steps per frame");
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_datacache_reset");
 
   prop = RNA_def_property(srna, "cfl_condition", PROP_FLOAT, PROP_NONE);
@@ -2837,7 +2830,7 @@ static void rna_def_fluid_flow_settings(BlenderRNA *brna)
       prop,
       "Is Planar",
       "Treat this object as a planar and unclosed mesh. Fluid will only be emitted from the mesh "
-      "surface and based on the surface emission value");
+      "surface and based on the surface emission value.");
   RNA_def_property_update(prop, NC_OBJECT | ND_MODIFIER, "rna_Fluid_flow_reset");
 
   prop = RNA_def_property(srna, "particle_size", PROP_FLOAT, PROP_NONE);

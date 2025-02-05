@@ -33,12 +33,14 @@
 #include "BKE_main.hh"
 #include "BKE_main_namemap.hh"
 
+#include "BLO_readfile.hh"
+
 #include "lib_intern.hh"
 
 #include "DEG_depsgraph.hh"
 
 #ifdef WITH_PYTHON
-#  include "BPY_extern.h"
+#  include "BPY_extern.hh"
 #endif
 
 using namespace blender::bke::id;
@@ -64,6 +66,8 @@ void BKE_libblock_free_data(ID *id, const bool do_id_user)
     MEM_freeN(id->library_weak_reference);
   }
 
+  BKE_libblock_free_runtime_data(id);
+
   BKE_animdata_free(id, do_id_user);
 }
 
@@ -81,26 +85,35 @@ void BKE_libblock_free_datablock(ID *id, const int /*flag*/)
   BLI_assert_msg(0, "IDType Missing IDTypeInfo");
 }
 
+void BKE_libblock_free_runtime_data(ID *id)
+{
+  /* During "normal" file loading this data is released when versioning ends. Some versioning code
+   * also deletes IDs, though. For example, in the startup blend file, brushes that were replaced
+   * by assets are deleted. This means that the regular "delete this ID" flow (aka this code here)
+   * also needs to free this data. */
+  BLO_readfile_id_runtime_data_free(*id);
+}
+
 static int id_free(Main *bmain, void *idv, int flag, const bool use_flag_from_idtag)
 {
   ID *id = static_cast<ID *>(idv);
 
   if (use_flag_from_idtag) {
-    if ((id->tag & LIB_TAG_NO_MAIN) != 0) {
+    if ((id->tag & ID_TAG_NO_MAIN) != 0) {
       flag |= LIB_ID_FREE_NO_MAIN | LIB_ID_FREE_NO_UI_USER | LIB_ID_FREE_NO_DEG_TAG;
     }
     else {
       flag &= ~LIB_ID_FREE_NO_MAIN;
     }
 
-    if ((id->tag & LIB_TAG_NO_USER_REFCOUNT) != 0) {
+    if ((id->tag & ID_TAG_NO_USER_REFCOUNT) != 0) {
       flag |= LIB_ID_FREE_NO_USER_REFCOUNT;
     }
     else {
       flag &= ~LIB_ID_FREE_NO_USER_REFCOUNT;
     }
 
-    if ((id->tag & LIB_TAG_NOT_ALLOCATED) != 0) {
+    if ((id->tag & ID_TAG_NOT_ALLOCATED) != 0) {
       flag |= LIB_ID_FREE_NOT_ALLOCATED;
     }
     else {
@@ -181,6 +194,8 @@ void BKE_id_free_ex(Main *bmain, void *idv, const int flag_orig, const bool use_
     BKE_layer_collection_resync_forbid();
   }
 
+  const ID_Type id_type = GS(static_cast<ID *>(idv)->name);
+
   int flag_final = id_free(bmain, idv, flag_orig, use_flag_from_idtag);
 
   if (bmain) {
@@ -189,7 +204,9 @@ void BKE_id_free_ex(Main *bmain, void *idv, const int flag_orig, const bool use_
     }
 
     if ((flag_final & LIB_ID_FREE_NO_MAIN) == 0) {
-      BKE_main_collection_sync_remap(bmain);
+      if (ELEM(id_type, ID_SCE, ID_GR, ID_OB)) {
+        BKE_main_collection_sync_remap(bmain);
+      }
     }
   }
 }
@@ -328,7 +345,7 @@ static size_t id_delete(Main *bmain,
    * deleted IDs may not be properly decreased by the remappings (since `NO_MAIN` ID user-counts
    * is never affected). */
   for (ID *id : ids_to_delete) {
-    id->tag |= LIB_TAG_NO_MAIN;
+    id->tag |= ID_TAG_NO_MAIN;
     /* User-count needs to be reset artificially, since some usages may not be cleared in batch
      * deletion (typically, if one deleted ID uses another deleted ID, this may not be cleared by
      * remapping code, depending on order in which these are handled). */
@@ -356,7 +373,7 @@ static size_t id_delete(Main *bmain,
 void BKE_id_delete_ex(Main *bmain, void *idv, const int extra_remapping_flags)
 {
   ID *id = static_cast<ID *>(idv);
-  BLI_assert_msg((id->tag & LIB_TAG_NO_MAIN) == 0, "Cannot be used with IDs outside of Main");
+  BLI_assert_msg((id->tag & ID_TAG_NO_MAIN) == 0, "Cannot be used with IDs outside of Main");
 
   blender::Set<ID *> ids_to_delete = {id};
   id_delete(bmain, ids_to_delete, extra_remapping_flags);
@@ -372,7 +389,7 @@ size_t BKE_id_multi_tagged_delete(Main *bmain)
   blender::Set<ID *> ids_to_delete;
   ID *id_iter;
   FOREACH_MAIN_ID_BEGIN (bmain, id_iter) {
-    if (id_iter->tag & LIB_TAG_DOIT) {
+    if (id_iter->tag & ID_TAG_DOIT) {
       ids_to_delete.add(id_iter);
     }
   }

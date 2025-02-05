@@ -82,8 +82,8 @@ set(OPENIMAGEIO_EXTRA_ARGS
   -DPNG_PNG_INCLUDE_DIR=${LIBDIR}/png/include
   -DTIFF_LIBRARY=${LIBDIR}/tiff/lib/${LIBPREFIX}tiff${TIFF_POSTFIX}${LIBEXT}
   -DTIFF_INCLUDE_DIR=${LIBDIR}/tiff/include
-  -DJPEG_LIBRARY=${LIBDIR}/jpeg/lib/${JPEG_LIBRARY}
-  -DJPEG_INCLUDE_DIR=${LIBDIR}/jpeg/include
+  -DJPEG_ROOT=${LIBDIR}/jpeg/
+  -Dlibjpeg-turbo_ROOT=${LIBDIR}/jpeg/
   ${OPENJPEG_FLAGS}
   -DOPENEXR_ILMTHREAD_LIBRARY=${LIBDIR}/openexr/lib/${LIBPREFIX}IlmThread${OPENEXR_VERSION_POSTFIX}${SHAREDLIBEXT}
   -DOPENEXR_IEX_LIBRARY=${LIBDIR}/openexr/lib/${LIBPREFIX}Iex${OPENEXR_VERSION_POSTFIX}${SHAREDLIBEXT}
@@ -115,11 +115,11 @@ if(WIN32)
   # python interperter doesn't match the old one, overwriting our preference.
   # To side step this behavior we set PYBIND11_PYTHON_EXECUTABLE_LAST so it'll
   # leave the PYTHON_MODULE_EXTENSION value we set alone.
-  LIST(APPEND OPENIMAGEIO_EXTRA_ARGS -DPYBIND11_PYTHON_EXECUTABLE_LAST=${PYTHON_BINARY})
+  list(APPEND OPENIMAGEIO_EXTRA_ARGS -DPYBIND11_PYTHON_EXECUTABLE_LAST=${PYTHON_BINARY})
   if(BUILD_MODE STREQUAL Release)
-     LIST(APPEND OPENIMAGEIO_EXTRA_ARGS -DPYTHON_MODULE_EXTENSION=.pyd)
+    list(APPEND OPENIMAGEIO_EXTRA_ARGS -DPYTHON_MODULE_EXTENSION=.pyd)
   else()
-    LIST(APPEND OPENIMAGEIO_EXTRA_ARGS -DPYTHON_MODULE_EXTENSION=_d.pyd)
+    list(APPEND OPENIMAGEIO_EXTRA_ARGS -DPYTHON_MODULE_EXTENSION=_d.pyd)
   endif()
 endif()
 
@@ -142,7 +142,10 @@ ExternalProject_Add(external_openimageio
       ${PATCH_DIR}/oiio_4062.diff &&
     ${PATCH_CMD} -p 1 -N -d
       ${BUILD_DIR}/openimageio/src/external_openimageio/ <
-      ${PATCH_DIR}/oiio_4302.diff
+      ${PATCH_DIR}/oiio_4302.diff &&
+    ${PATCH_CMD} -p 1 -N -d
+      ${BUILD_DIR}/openimageio/src/external_openimageio/ <
+      ${PATCH_DIR}/oiio_windows_arm64.diff
   CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=${LIBDIR}/openimageio
     ${DEFAULT_CMAKE_FLAGS}

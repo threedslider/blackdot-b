@@ -177,8 +177,8 @@ template<typename T> class Span {
   }
 
   /**
-   * Returns a new Span with n elements removed from the beginning. This invokes undefined
-   * behavior when n is negative.
+   * Returns a new Span with n elements removed from the end. This invokes undefined behavior when
+   * n is negative.
    */
   constexpr Span drop_back(int64_t n) const
   {
@@ -707,6 +707,20 @@ template<typename T> class MutableSpan {
       }
     }
     return counter;
+  }
+
+  /**
+   * Does a linear search to see of the value is in the array.
+   * Returns true if it is, otherwise false.
+   */
+  constexpr bool contains(const T &value) const
+  {
+    for (const T &element : *this) {
+      if (element == value) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

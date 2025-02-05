@@ -7,8 +7,11 @@ from bpy.types import (
     Menu,
 )
 
-from bpy.app.translations import pgettext_tip as tip_
-from bpy.app.translations import pgettext_iface as iface_
+from bpy.app.translations import (
+    pgettext_iface as iface_,
+    pgettext_tip as tip_,
+    contexts as i18n_contexts,
+)
 
 __all__ = (
     "ToolDef",
@@ -43,7 +46,7 @@ def _keymap_fn_from_seq(keymap_data):
 
 
 def _item_is_fn(item):
-    return (not (type(item) is ToolDef) and callable(item))
+    return ((type(item) is not ToolDef) and callable(item))
 
 
 from collections import namedtuple
@@ -95,8 +98,11 @@ ToolDef = namedtuple(
         # so internally we can swap the key-map function for the key-map itself.
         # This isn't very nice and may change, tool definitions shouldn't care about this.
         "keymap",
+        # Optional brush type this tool is limited to. Ignored if 'USE_BRUSH' isn't set in the
+        # options.
+        "brush_type",
         # Optional data-block associated with this tool.
-        # (Typically brush name, usage depends on mode, we could use for non-brush ID's in other modes).
+        # Currently only used as an identifier for particle brushes.
         "data_block",
         # Optional primary operator (for introspection only).
         "operator",
@@ -125,6 +131,7 @@ def from_dict(kw_args):
         "widget": None,
         "widget_properties": None,
         "keymap": None,
+        "brush_type": None,
         "data_block": None,
         "operator": None,
         "draw_settings": None,
@@ -241,7 +248,7 @@ class ToolSelectPanelHelper:
                 filepath = os.path.join(dirname, icon_name + ".dat")
                 try:
                     icon_value = bpy.app.icons.new_triangles_from_file(filepath)
-                except BaseException as ex:
+                except Exception as ex:
                     if not os.path.exists(filepath):
                         print("Missing icons:", filepath, ex)
                     else:
@@ -809,7 +816,11 @@ class ToolSelectPanelHelper:
         # NOTE: we could show `item.text` here but it makes the layout jitter when switching tools.
         # Add some spacing since the icon is currently assuming regular small icon size.
         if show_tool_icon_always:
-            layout.label(text="    " + iface_(item.label, "Operator"), icon_value=icon_value)
+            layout.label(
+                text="    " + iface_(item.label, i18n_contexts.operator_default),
+                icon_value=icon_value,
+                translate=False,
+            )
             layout.separator()
         else:
             if not context.space_data.show_region_toolbar:
@@ -832,9 +843,13 @@ class ToolSelectPanelHelper:
             else:
                 label = "Active Tool"
 
-            row = layout.row(heading="Drag")
+            row = layout.row(heading="Drag", heading_ctxt=i18n_contexts.editor_view3d)
             row.context_pointer_set("tool", tool)
-            row.popover(panel="TOPBAR_PT_tool_fallback", text=iface_(label, "Operator"))
+            row.popover(
+                panel="TOPBAR_PT_tool_fallback",
+                text=iface_(label, i18n_contexts.operator_default),
+                translate=False,
+            )
 
         return tool
 
@@ -1032,6 +1047,7 @@ def _activate_by_item(context, space_type, item, index, *, as_fallback=False):
         cursor=item.cursor or 'DEFAULT',
         options=item.options or set(),
         gizmo_group=gizmo_group,
+        brush_type=item.brush_type or 'ANY',
         data_block=item.data_block or "",
         operator=item.operator or "",
         index=index,

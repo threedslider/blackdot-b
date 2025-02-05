@@ -5,6 +5,10 @@
 #include "util/aligned_malloc.h"
 #include "util/guarded_allocator.h"
 
+#ifdef WITH_BLENDER_GUARDEDALLOC
+#  include "../../guardedalloc/MEM_guardedalloc.h"
+#endif
+
 #include <cassert>
 
 /* Adopted from Libmv. */
@@ -20,38 +24,43 @@
 #  endif /* FREE_WINDOWS */
 #  include <malloc.h>
 #else
-/* Apple's malloc is 16-byte aligned, and does not have malloc.h, so include
- * stdilb instead.
+/* Apple's `malloc` is 16-byte aligned, and does not have `malloc.h`, so include
+ * `stdilb` instead.
  */
 #  include <cstdlib>
 #endif
 
 CCL_NAMESPACE_BEGIN
 
-void *util_aligned_malloc(size_t size, int alignment)
+void *util_aligned_malloc(const size_t size, const int alignment)
 {
+  void *mem = nullptr;
 #ifdef WITH_BLENDER_GUARDEDALLOC
-  return MEM_mallocN_aligned(size, alignment, "Cycles Aligned Alloc");
+  mem = MEM_mallocN_aligned(size, alignment, "Cycles Aligned Alloc");
 #elif defined(_WIN32)
-  return _aligned_malloc(size, alignment);
+  mem = _aligned_malloc(size, alignment);
 #elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-  void *result;
-  if (posix_memalign(&result, alignment, size)) {
+  if (posix_memalign(&mem, alignment, size)) {
     /* Non-zero means allocation error
-     * either no allocation or bad alignment value.
-     */
-    return NULL;
+     * either no allocation or bad alignment value. */
+    mem = nullptr;
   }
-  return result;
 #else /* This is for Linux. */
-  return memalign(alignment, size);
+  mem = memalign(alignment, size);
 #endif
+  if (mem) {
+    util_guarded_mem_alloc(size);
+  }
+  return mem;
 }
 
-void util_aligned_free(void *ptr)
+void util_aligned_free(void *ptr, const size_t size)
 {
+  if (ptr) {
+    util_guarded_mem_free(size);
+  }
 #if defined(WITH_BLENDER_GUARDEDALLOC)
-  if (ptr != NULL) {
+  if (ptr != nullptr) {
     MEM_freeN(ptr);
   }
 #elif defined(_WIN32)

@@ -51,11 +51,11 @@ set(INC
 )
 
 set(INC_SYS
-  ${BOOST_INCLUDE_DIR}
   ${EIGEN3_INCLUDE_DIRS}
 )
 
 set(SRC
+  patches/boykov_kolmogorov_max_flow.hpp
   src/adjacent-matrix.cpp
   src/adjacent-matrix.hpp
   src/compare-key.hpp
@@ -83,6 +83,7 @@ set(SRC
   src/parametrizer-scale.cpp
   src/parametrizer-sing.cpp
   src/parametrizer.hpp
+  src/post-solver.hpp
   src/serialize.hpp
   src/subdivide.cpp
   src/subdivide.hpp
@@ -90,7 +91,6 @@ set(SRC
 )
 
 set(LIB
-  ${BOOST_LIBRARIES}
 )
 
 blender_add_lib(extern_quadriflow "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")

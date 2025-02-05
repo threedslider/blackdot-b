@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "testing/testing.h"
 
-#include "BLI_utildefines.h"
-
 #include "CLG_log.h"
 
 #include "GHOST_Path-api.hh"
@@ -23,7 +21,7 @@
 #include "BKE_lib_id.hh"
 #include "BKE_lib_remap.hh"
 #include "BKE_main.hh"
-#include "BKE_mesh.hh"
+#include "BKE_mesh.h"
 #include "BKE_node.hh"
 #include "BKE_object.hh"
 #include "BKE_scene.hh"
@@ -31,8 +29,6 @@
 #include "IMB_imbuf.hh"
 
 #include "ED_node.hh"
-
-#include "MEM_guardedalloc.h"
 
 using namespace blender::bke::id;
 
@@ -136,7 +132,7 @@ template<typename TestData> class Context {
     CLG_init();
     BKE_idtype_init();
     RNA_init();
-    bke::BKE_node_system_init();
+    bke::node_system_init();
     BKE_appdir_init();
     IMB_init();
 
@@ -147,7 +143,7 @@ template<typename TestData> class Context {
   {
     test_data.teardown();
 
-    bke::BKE_node_system_exit();
+    bke::node_system_exit();
     RNA_exit();
     IMB_exit();
     BKE_appdir_exit();
@@ -227,7 +223,7 @@ TEST(lib_remap, users_are_decreased_when_not_skipping_never_null)
 
   EXPECT_NE(context.test_data.object, nullptr);
   EXPECT_EQ(context.test_data.object->data, context.test_data.mesh);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
   EXPECT_EQ(context.test_data.mesh->id.us, 1);
 
   /* This is an invalid situation, test case tests this in between value until we have a better
@@ -236,7 +232,7 @@ TEST(lib_remap, users_are_decreased_when_not_skipping_never_null)
   EXPECT_EQ(context.test_data.mesh->id.us, 0);
   EXPECT_EQ(context.test_data.object->data, context.test_data.mesh);
   EXPECT_NE(context.test_data.object->data, nullptr);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
 }
 
 TEST(lib_remap, users_are_same_when_skipping_never_null)
@@ -245,7 +241,7 @@ TEST(lib_remap, users_are_same_when_skipping_never_null)
 
   EXPECT_NE(context.test_data.object, nullptr);
   EXPECT_EQ(context.test_data.object->data, context.test_data.mesh);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
   EXPECT_EQ(context.test_data.mesh->id.us, 1);
 
   BKE_libblock_remap(
@@ -253,7 +249,7 @@ TEST(lib_remap, users_are_same_when_skipping_never_null)
   EXPECT_EQ(context.test_data.mesh->id.us, 1);
   EXPECT_EQ(context.test_data.object->data, context.test_data.mesh);
   EXPECT_NE(context.test_data.object->data, nullptr);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
 }
 
 /** \} */
@@ -293,14 +289,14 @@ TEST(lib_remap, never_null_usage_flag_not_requested_on_delete)
 
   EXPECT_NE(context.test_data.object, nullptr);
   EXPECT_EQ(context.test_data.object->data, context.test_data.mesh);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
 
   /* Never null usage isn't requested so the flag should not be set. */
   BKE_libblock_remap(
       context.test_data.bmain, context.test_data.mesh, nullptr, ID_REMAP_SKIP_NEVER_NULL_USAGE);
   EXPECT_EQ(context.test_data.object->data, context.test_data.mesh);
   EXPECT_NE(context.test_data.object->data, nullptr);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
 }
 
 TEST(lib_remap, never_null_usage_storage_requested_on_delete)
@@ -309,7 +305,7 @@ TEST(lib_remap, never_null_usage_storage_requested_on_delete)
 
   EXPECT_NE(context.test_data.object, nullptr);
   EXPECT_EQ(context.test_data.object->data, context.test_data.mesh);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
 
   /* Never null usage is requested so the owner ID (the Object) should be added to the set. */
   IDRemapper remapper;
@@ -333,13 +329,13 @@ TEST(lib_remap, never_null_usage_flag_not_requested_on_remap)
 
   EXPECT_NE(context.test_data.object, nullptr);
   EXPECT_EQ(context.test_data.object->data, context.test_data.mesh);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
 
   /* Never null usage isn't requested so the flag should not be set. */
   BKE_libblock_remap(
       context.test_data.bmain, context.test_data.mesh, other_mesh, ID_REMAP_SKIP_NEVER_NULL_USAGE);
   EXPECT_EQ(context.test_data.object->data, other_mesh);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
 }
 
 TEST(lib_remap, never_null_usage_storage_requested_on_remap)
@@ -349,7 +345,7 @@ TEST(lib_remap, never_null_usage_storage_requested_on_remap)
 
   EXPECT_NE(context.test_data.object, nullptr);
   EXPECT_EQ(context.test_data.object->data, context.test_data.mesh);
-  EXPECT_EQ(context.test_data.object->id.tag & LIB_TAG_DOIT, 0);
+  EXPECT_EQ(context.test_data.object->id.tag & ID_TAG_DOIT, 0);
 
   /* Never null usage is requested, but the obdata is remapped to another Mesh, not to `nullptr`,
    * so the `never_null_users` set should remain empty. */

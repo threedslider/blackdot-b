@@ -4,13 +4,18 @@
 
 #include "testing/testing.h"
 
+#include <fmt/format.h>
+
 #include "BLI_array.hh"
+#include "BLI_bit_span_ops.hh"
+#include "BLI_bit_vector.hh"
 #include "BLI_index_mask.hh"
+#include "BLI_index_ranges_builder.hh"
 #include "BLI_rand.hh"
 #include "BLI_set.hh"
 #include "BLI_timeit.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 namespace blender::index_mask::tests {
 
@@ -27,7 +32,7 @@ TEST(index_mask, IndicesToMask)
   EXPECT_EQ(mask.bounds(), IndexRange::from_begin_end_inclusive(5, 101000));
 }
 
-TEST(index_mask, FromBits)
+TEST(index_mask, FromBitsManual)
 {
   IndexMaskMemory memory;
   const uint64_t bits =
@@ -40,6 +45,269 @@ TEST(index_mask, FromBits)
   EXPECT_EQ(indices[2], 7);
   EXPECT_EQ(indices[3], 8);
   EXPECT_EQ(indices[4], 9);
+}
+
+TEST(index_mask, FromBitsSimple)
+{
+  IndexMaskMemory memory;
+  BitVector bit_vec(200, true);
+  bit_vec[0].reset();
+  bit_vec[100].reset();
+  const IndexMask mask = IndexMask::from_bits(bit_vec, memory);
+
+  EXPECT_EQ(mask.size(), 198);
+  EXPECT_FALSE(mask.contains(0));
+  EXPECT_FALSE(mask.contains(100));
+}
+
+TEST(index_mask, FromBitsWithUniverse)
+{
+  IndexMaskMemory memory;
+  BitVector bit_vec(200, true);
+  bit_vec[6].reset();
+  bit_vec[100].reset();
+
+  const IndexMask universe = IndexMask::from_indices<int>({4, 6, 7, 8, 9, 100, 101, 102}, memory);
+  const IndexMask mask = IndexMask::from_bits(universe, bit_vec, memory);
+  EXPECT_EQ(mask.size(), 6);
+  EXPECT_EQ(mask[0], 4);
+  EXPECT_EQ(mask[1], 7);
+  EXPECT_EQ(mask[2], 8);
+  EXPECT_EQ(mask[3], 9);
+  EXPECT_EQ(mask[4], 101);
+  EXPECT_EQ(mask[5], 102);
+}
+
+TEST(index_mask, FromBitsSparse)
+{
+  BitVector bit_vec(100'000, false);
+  bit_vec[5].set();
+  bit_vec[100].set();
+  bit_vec[200].set();
+  bit_vec[500].set();
+  bit_vec[800].set();
+  bit_vec[10'000].set();
+  bit_vec[10'002].set();
+  bit_vec[50'000].set();
+  bit_vec[70'000].set();
+  bit_vec[70'002].set();
+  bit_vec[70'004].set();
+  bit_vec[70'005].set();
+
+  IndexMaskMemory memory;
+  const IndexMask mask = IndexMask::from_bits(bit_vec, memory);
+  EXPECT_EQ(mask.size(), 12);
+  EXPECT_EQ(mask[0], 5);
+  EXPECT_EQ(mask[1], 100);
+  EXPECT_EQ(mask[2], 200);
+  EXPECT_EQ(mask[3], 500);
+  EXPECT_EQ(mask[4], 800);
+  EXPECT_EQ(mask[5], 10'000);
+  EXPECT_EQ(mask[6], 10'002);
+  EXPECT_EQ(mask[7], 50'000);
+  EXPECT_EQ(mask[8], 70'000);
+  EXPECT_EQ(mask[9], 70'002);
+  EXPECT_EQ(mask[10], 70'004);
+  EXPECT_EQ(mask[11], 70'005);
+}
+
+TEST(index_mask, FromBoolsSparse)
+{
+  Vector<bool> bools(10'000'000, false);
+  bools[5] = true;
+  bools[100] = true;
+  bools[200] = true;
+  bools[500] = true;
+  bools[800] = true;
+  bools[10'000] = true;
+  bools[10'002] = true;
+  bools[50'000] = true;
+  bools[70'000] = true;
+  bools[70'002] = true;
+  bools[70'004] = true;
+  bools[70'005] = true;
+
+  IndexMaskMemory memory;
+  const IndexMask mask = IndexMask::from_bools(bools, memory);
+  EXPECT_EQ(mask.size(), 12);
+  EXPECT_EQ(mask[0], 5);
+  EXPECT_EQ(mask[1], 100);
+  EXPECT_EQ(mask[2], 200);
+  EXPECT_EQ(mask[3], 500);
+  EXPECT_EQ(mask[4], 800);
+  EXPECT_EQ(mask[5], 10'000);
+  EXPECT_EQ(mask[6], 10'002);
+  EXPECT_EQ(mask[7], 50'000);
+  EXPECT_EQ(mask[8], 70'000);
+  EXPECT_EQ(mask[9], 70'002);
+  EXPECT_EQ(mask[10], 70'004);
+  EXPECT_EQ(mask[11], 70'005);
+}
+
+TEST(index_mask, FromBitsAlternating)
+{
+  int64_t size = 100'000;
+  BitVector<> bits(size, false);
+  for (const int64_t i : IndexRange(size / 2)) {
+    bits[i * 2].set();
+  }
+
+  IndexMaskMemory memory;
+  const IndexMask mask = IndexMask::from_bits(bits, memory);
+  EXPECT_EQ(mask.size(), size / 2);
+  EXPECT_EQ(mask[0], 0);
+  EXPECT_EQ(mask[1], 2);
+  EXPECT_EQ(mask[2], 4);
+  EXPECT_EQ(mask[3], 6);
+}
+
+/* The benchmark is too slow to run during normal test runs. */
+#if 0
+
+static BitVector<> build_bits_with_uniform_distribution(const int bits_num,
+                                                        const int set_bits_num,
+                                                        const uint32_t seed = 0)
+{
+  if (set_bits_num > bits_num / 2) {
+    BitVector bit_vec = build_bits_with_uniform_distribution(bits_num, bits_num - set_bits_num);
+    bits::invert(bit_vec);
+    return bit_vec;
+  }
+  BitVector bit_vec(bits_num, false);
+  RandomNumberGenerator rng(seed);
+  int counter = 0;
+  while (counter < set_bits_num) {
+    const int i = rng.get_int32(int(bits_num));
+    MutableBitRef bit = bit_vec[i];
+    if (!bit) {
+      bit.set();
+      counter++;
+    }
+  }
+  return bit_vec;
+}
+
+static void benchmark_uniform_bit_distribution(const int bits_num,
+                                               const int set_bits_num,
+                                               const int iterations)
+{
+  const bool machine_readable = true;
+  BitVector bit_vec = build_bits_with_uniform_distribution(bits_num, set_bits_num);
+  std::locale loc("en_US.UTF-8");
+  timeit::Nanoseconds min_duration{INT64_MAX};
+  for ([[maybe_unused]] const int64_t i : IndexRange(iterations)) {
+    IndexMaskMemory memory;
+    timeit::TimePoint start = timeit::Clock::now();
+    const IndexMask mask = IndexMask::from_bits(bit_vec, memory);
+    timeit::TimePoint end = timeit::Clock::now();
+    const timeit::Nanoseconds duration = end - start;
+    // const double ms = double(duration.count()) / 1'000'000.0;
+    // std::cout << fmt::format(loc, "{:15L} / {:L}: {:.4} ms\n", set_bits_num, bits_num, ms);
+    min_duration = std::min(min_duration, duration);
+    EXPECT_EQ(mask.size(), set_bits_num);
+  }
+  const double ms = double(min_duration.count()) / 1'000'000.0;
+  if (machine_readable) {
+    std::cout << fmt::format("{},{:.6}\n", set_bits_num, ms);
+  }
+  else {
+    std::cout << fmt::format(loc, "{:15L} / {:L}: {:.4} ms\n", set_bits_num, bits_num, ms);
+  }
+}
+
+TEST(index_mask, FromBitsBenchmark)
+{
+  const int size = 100'000'000;
+  const int iterations = 5;
+  Vector<int> set_bit_nums;
+  set_bit_nums.append(0);
+  int current = 100;
+  while (current < size / 2) {
+    set_bit_nums.append(current);
+    set_bit_nums.append(size - current);
+    current = int(current * 1.3);
+  }
+  set_bit_nums.append(size);
+  std::sort(set_bit_nums.begin(), set_bit_nums.end());
+
+  for (const int set_bit_num : set_bit_nums) {
+    benchmark_uniform_bit_distribution(size, set_bit_num, iterations);
+  }
+}
+
+/* Benchmark. */
+#endif
+
+TEST(index_mask, FromBitsFuzzy)
+{
+  RandomNumberGenerator rng(0);
+  for ([[maybe_unused]] const int64_t iteration : IndexRange(10)) {
+    const int size = rng.get_int32(100'000) + 1;
+    const int set_bits = rng.get_int32(size);
+
+    /* Remove part of the beginning and end of the bits to test unaligned bit spans. */
+    const int64_t slice_inset = rng.get_int32(size / 10);
+    const IndexRange slice = IndexRange::from_begin_end(slice_inset, size - slice_inset);
+
+    BitVector<> bits(size, false);
+    for ([[maybe_unused]] const int64_t set_bit_i : IndexRange(set_bits)) {
+      int index = rng.get_int32(size);
+      /* This is like linear probing which results in a somewhat random distribution but also leads
+       * to having longer ranges every now and then. */
+      while (true) {
+        if (!bits[index]) {
+          bits[index].set();
+          break;
+        }
+        index = (index + 1) % size;
+      }
+    }
+
+    IndexMaskMemory memory;
+
+    /* The universe is partially a range and partially only even/odd indices.
+     * For example: [1, 2, 3, 4, 6, 8, 10, 12]. */
+    const int64_t slice_half_size = slice.size() / 2;
+    const IndexMask universe = IndexMask::from_union(
+                                   IndexRange(slice_half_size),
+                                   IndexMask::from_repeating(
+                                       IndexRange(1), slice_half_size, 2, slice_half_size, memory),
+                                   memory)
+                                   .slice_content(slice.index_range());
+
+    const IndexMask mask = IndexMask::from_bits(universe, BitSpan(bits).slice(slice), memory);
+
+    BitVector<> inverted_bits{bits};
+    bits::invert(inverted_bits);
+    const IndexMask inverted_mask = IndexMask::from_bits(
+        universe, BitSpan(inverted_bits).slice(slice), memory);
+
+    const IndexMask double_inverted_mask = inverted_mask.complement(universe, memory);
+    EXPECT_EQ(mask, double_inverted_mask);
+  }
+}
+
+TEST(index_mask, FromBitsDense)
+{
+  BitVector bit_vec(1'000, true);
+  bit_vec[5].reset();
+  bit_vec[200].reset();
+  bit_vec[201].reset();
+  bit_vec[500].reset();
+  bit_vec[502].reset();
+  bit_vec[504].reset();
+  bit_vec[506].reset();
+
+  IndexMaskMemory memory;
+  const IndexMask mask = IndexMask::from_bits(bit_vec, memory);
+  EXPECT_EQ(mask.size(), 993);
+  EXPECT_FALSE(mask.contains(5));
+  EXPECT_FALSE(mask.contains(200));
+  EXPECT_FALSE(mask.contains(201));
+  EXPECT_FALSE(mask.contains(500));
+  EXPECT_FALSE(mask.contains(502));
+  EXPECT_FALSE(mask.contains(504));
+  EXPECT_FALSE(mask.contains(506));
 }
 
 TEST(index_mask, FromSize)
@@ -101,6 +369,19 @@ TEST(index_mask, FromUnion)
     EXPECT_EQ(mask_union[3], 20000);
     EXPECT_EQ(mask_union[4], 20001);
     EXPECT_EQ(mask_union[5], 20002);
+  }
+  {
+    IndexMaskMemory memory;
+    IndexMask mask_union = IndexMask::from_union({}, memory);
+    EXPECT_TRUE(mask_union.is_empty());
+  }
+  {
+    IndexMaskMemory memory;
+    IndexMask mask_union = IndexMask::from_union({IndexRange::from_begin_end(0, 10000),
+                                                  IndexRange::from_begin_end(20000, 30000),
+                                                  IndexRange::from_begin_end(40000, 50000)},
+                                                 memory);
+    EXPECT_EQ(mask_union.size(), 30000);
   }
 }
 
@@ -203,6 +484,39 @@ TEST(index_mask, ToRange)
     const IndexMask mask{range};
     EXPECT_TRUE(mask.to_range().has_value());
     EXPECT_EQ(*mask.to_range(), range);
+  }
+}
+
+TEST(index_mask, ToBits)
+{
+  IndexMaskMemory memory;
+  {
+    const IndexMask mask = IndexMask::from_indices<int>({4, 5, 6, 7}, memory);
+    BitVector<> bits(mask.min_array_size());
+    mask.to_bits(bits);
+    EXPECT_EQ(bits[0].test(), false);
+    EXPECT_EQ(bits[1].test(), false);
+    EXPECT_EQ(bits[2].test(), false);
+    EXPECT_EQ(bits[3].test(), false);
+    EXPECT_EQ(bits[4].test(), true);
+    EXPECT_EQ(bits[5].test(), true);
+    EXPECT_EQ(bits[6].test(), true);
+    EXPECT_EQ(bits[7].test(), true);
+  }
+  {
+    const IndexMask mask = IndexMask::from_indices<int>({4, 5, 6, 7}, memory);
+    BitVector<> bits(mask.min_array_size());
+    bits[0].set();
+    bits[2].set();
+    mask.set_bits(bits);
+    EXPECT_EQ(bits[0].test(), true);
+    EXPECT_EQ(bits[1].test(), false);
+    EXPECT_EQ(bits[2].test(), true);
+    EXPECT_EQ(bits[3].test(), false);
+    EXPECT_EQ(bits[4].test(), true);
+    EXPECT_EQ(bits[5].test(), true);
+    EXPECT_EQ(bits[6].test(), true);
+    EXPECT_EQ(bits[7].test(), true);
   }
 }
 
@@ -905,6 +1219,59 @@ TEST(index_mask, SliceAndShift)
     const IndexMask mask = IndexMask::from_indices<int>({10, 100}, memory);
     const IndexMask new_mask = mask.slice_and_shift(1, 0, 100, memory);
     EXPECT_TRUE(new_mask.is_empty());
+  }
+}
+
+TEST(index_mask, IndexRangeToMaskSegments)
+{
+  auto test_range = [](const IndexRange range) {
+    Vector<IndexMaskSegment> segments;
+    index_range_to_mask_segments(range, segments);
+    IndexMaskMemory memory;
+    const IndexMask mask = IndexMask::from_segments(segments, memory);
+    const std::optional<IndexRange> new_range = mask.to_range();
+    EXPECT_TRUE(new_range.has_value());
+    EXPECT_EQ(range, *new_range);
+  };
+
+  test_range(IndexRange::from_begin_size(1'000, 0));
+
+  test_range(IndexRange::from_begin_end_inclusive(0, 10));
+  test_range(IndexRange::from_begin_end_inclusive(0, 10'000));
+  test_range(IndexRange::from_begin_end_inclusive(0, 100'000));
+  test_range(IndexRange::from_begin_end_inclusive(0, 1'000'000));
+
+  test_range(IndexRange::from_begin_end_inclusive(50'000, 1'000'000));
+  test_range(IndexRange::from_begin_end_inclusive(999'999, 1'000'000));
+  test_range(IndexRange::from_begin_end_inclusive(1'000'000, 1'000'000));
+}
+
+TEST(index_mask, FromRanges)
+{
+  IndexMaskMemory memory;
+  Array<int> data = {5, 100, 400, 500, 100'000, 200'000};
+  OffsetIndices<int> offsets(data);
+
+  {
+    const IndexMask mask = IndexMask::from_ranges(offsets, offsets.index_range(), memory);
+    EXPECT_EQ(mask.size(), 199'995);
+    EXPECT_EQ(*mask.to_range(), IndexRange::from_begin_end(5, 200'000));
+  }
+  {
+    const IndexMask mask = IndexMask::from_ranges(offsets, IndexRange(0), memory);
+    EXPECT_TRUE(mask.is_empty());
+  }
+  {
+    const IndexMask mask = IndexMask::from_ranges(offsets, IndexRange(1), memory);
+    EXPECT_EQ(*mask.to_range(), IndexRange::from_begin_end(5, 100));
+  }
+  {
+    const IndexMask offsets_mask = IndexMask::from_indices(Span<int>({1, 4}), memory);
+    const IndexMask mask = IndexMask::from_ranges(offsets, offsets_mask, memory);
+    EXPECT_EQ(mask,
+              IndexMask::from_initializers({IndexRange::from_begin_end(100, 400),
+                                            IndexRange::from_begin_end(100'000, 200'000)},
+                                           memory));
   }
 }
 

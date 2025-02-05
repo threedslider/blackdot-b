@@ -4,6 +4,8 @@
 
 """
 Tests the evaluation of NLA strips based on their properties and placement on NLA tracks.
+
+blender -b --factory-startup --python tests/python/bl_animation_nla_strip.py
 """
 
 import bpy
@@ -23,24 +25,19 @@ class AbstractNlaStripTest(unittest.TestCase):
     action: bpy.types.Action = None
     """ Action with X Location keyed on frames 1 to 4 with the same value as the frame, with constant interpolation. """
 
-    @classmethod
-    def setUpClass(cls):
+    def setUp(self):
         bpy.ops.wm.read_factory_settings(use_empty=True)
 
-        cls.test_object = bpy.data.objects.new(name="Object", object_data=bpy.data.meshes.new("Mesh"))
-        bpy.context.collection.objects.link(cls.test_object)
-        cls.test_object.animation_data_create()
+        self.test_object = bpy.data.objects.new(name="Object", object_data=bpy.data.meshes.new("Mesh"))
+        bpy.context.collection.objects.link(self.test_object)
+        self.test_object.animation_data_create()
 
-        cls.nla_tracks = cls.test_object.animation_data.nla_tracks
+        self.nla_tracks = self.test_object.animation_data.nla_tracks
 
-        cls.action = bpy.data.actions.new(name="ObjectAction")
-        x_location_fcurve = cls.action.fcurves.new(data_path="location", index=0, action_group="Object Transforms")
+        self.action = bpy.data.actions.new(name="ObjectAction")
+        x_location_fcurve = self.action.fcurves.new(data_path="location", index=0, action_group="Object Transforms")
         for frame in range(1, 5):
             x_location_fcurve.keyframe_points.insert(frame, value=frame).interpolation = "CONSTANT"
-
-    def tearDown(self):
-        while len(self.nla_tracks):
-            self.nla_tracks.remove(self.nla_tracks[0])
 
     def add_strip_no_extrapolation(self, nla_track: bpy.types.NlaTrack, start: int) -> bpy.types.NlaStrip:
         """ Places a new strip with the test action on the given track, setting extrapolation to nothing. """
@@ -114,6 +111,46 @@ class NlaStripBoundaryTest(AbstractNlaStripTest):
         self.assertFrameValue(3.9, 3.0)
         self.assertFrameValue(4.0, 1.0)
         self.assertFrameValue(4.1, 1.0)
+
+
+class NLAStripActionSlotSelectionTest(AbstractNlaStripTest):
+    def test_two_strips_for_same_action(self):
+        action = bpy.data.actions.new("StripAction")
+        action.slots.new('OBJECT', "Slot")
+        self.assertTrue(action.is_action_layered)
+        self.assertEqual(1, len(action.slots))
+
+        track = self.nla_tracks.new()
+
+        strip1 = track.strips.new("name", 1, action)
+        self.assertEqual(action.slots[0], strip1.action_slot)
+        self.assertEqual('OBJECT', action.slots[0].target_id_type, "Slot should have been rooted to object")
+
+        strip2 = track.strips.new("name", 10, action)
+        self.assertEqual(action.slots[0], strip2.action_slot)
+
+    def test_switch_action_via_assignment(self):
+        action1 = bpy.data.actions.new("StripAction 1")
+        action1.slots.new('OBJECT', "Slot")
+        self.assertTrue(action1.is_action_layered)
+        self.assertEqual(1, len(action1.slots))
+
+        action2 = bpy.data.actions.new("StripAction 2")
+        action2.slots.new('OBJECT', "Slot")
+        self.assertTrue(action2.is_action_layered)
+        self.assertEqual(1, len(action2.slots))
+
+        track = self.nla_tracks.new()
+
+        strip = track.strips.new("name", 1, action1)
+        self.assertEqual(action1.slots[0], strip.action_slot)
+        self.assertEqual('OBJECT', action1.slots[0].target_id_type,
+                         "Slot of Action 1 should have been rooted to object")
+
+        strip.action = action2
+        self.assertEqual(action2.slots[0], strip.action_slot)
+        self.assertEqual('OBJECT', action2.slots[0].target_id_type,
+                         "Slot of Action 2 should have been rooted to object")
 
 
 if __name__ == "__main__":

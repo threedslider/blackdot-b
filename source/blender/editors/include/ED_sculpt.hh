@@ -8,25 +8,28 @@
 
 #pragma once
 
-struct ARegion;
+struct Depsgraph;
+struct Main;
+struct Mesh;
 struct Object;
 struct ReportList;
+struct Scene;
 struct UndoType;
-struct ViewContext;
 struct bContext;
-struct rcti;
-struct wmOperator;
 struct wmKeyConfig;
+struct wmOperator;
 
-void ED_object_sculptmode_enter_ex(Main &bmain,
-                                   Depsgraph &depsgraph,
-                                   Scene &scene,
-                                   Object &ob,
-                                   bool force_dyntopo,
-                                   ReportList *reports);
-void ED_object_sculptmode_enter(bContext *C, Depsgraph &depsgraph, ReportList *reports);
-void ED_object_sculptmode_exit_ex(Main &bmain, Depsgraph &depsgraph, Scene &scene, Object &ob);
-void ED_object_sculptmode_exit(bContext *C, Depsgraph &depsgraph);
+namespace blender::ed::sculpt_paint {
+
+void object_sculpt_mode_enter(Main &bmain,
+                              Depsgraph &depsgraph,
+                              Scene &scene,
+                              Object &ob,
+                              bool force_dyntopo,
+                              ReportList *reports);
+void object_sculpt_mode_enter(bContext *C, Depsgraph &depsgraph, ReportList *reports);
+void object_sculpt_mode_exit(Main &bmain, Depsgraph &depsgraph, Scene &scene, Object &ob);
+void object_sculpt_mode_exit(bContext *C, Depsgraph &depsgraph);
 
 /* `sculpt.cc` */
 
@@ -35,9 +38,7 @@ void ED_object_sculptmode_exit(bContext *C, Depsgraph &depsgraph);
  * and produces an error message if so (unless \a reports is null).
  * \return true if the shape key was locked.
  */
-bool ED_sculpt_report_if_shape_key_is_locked(const Object &ob, ReportList *reports);
-
-namespace blender::ed::sculpt_paint {
+bool report_if_shape_key_is_locked(const Object &ob, ReportList *reports);
 
 void operatortypes_sculpt();
 
@@ -60,8 +61,8 @@ void register_type(UndoType *ut);
  * redo panels to work; operators that do not support that may use
  * #geometry_begin_ex instead if so desired.
  */
-void geometry_begin(Object &ob, const wmOperator *op);
-void geometry_begin_ex(Object &ob, const char *name);
+void geometry_begin(const Scene &scene, Object &ob, const wmOperator *op);
+void geometry_begin_ex(const Scene &scene, Object &ob, const char *name);
 void geometry_end(Object &ob);
 
 /**

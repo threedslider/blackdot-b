@@ -10,8 +10,6 @@
 
 #include "intern/eval/deg_eval_copy_on_write.h"
 
-#include "BLI_utildefines.h"
-
 #include "DRW_engine.hh"
 
 namespace blender::deg {
@@ -25,8 +23,7 @@ RuntimeBackup::RuntimeBackup(const Depsgraph *depsgraph)
       object_backup(depsgraph),
       drawdata_ptr(nullptr),
       movieclip_backup(depsgraph),
-      volume_backup(depsgraph),
-      gpencil_backup(depsgraph)
+      volume_backup(depsgraph)
 {
   drawdata_backup.first = drawdata_backup.last = nullptr;
 }
@@ -60,9 +57,6 @@ void RuntimeBackup::init_from_id(ID *id)
       break;
     case ID_VO:
       volume_backup.init_from_volume(reinterpret_cast<Volume *>(id));
-      break;
-    case ID_GD_LEGACY:
-      gpencil_backup.init_from_gpencil(reinterpret_cast<bGPdata *>(id));
       break;
     default:
       break;
@@ -103,9 +97,6 @@ void RuntimeBackup::restore_to_id(ID *id)
       break;
     case ID_VO:
       volume_backup.restore_to_volume(reinterpret_cast<Volume *>(id));
-      break;
-    case ID_GD_LEGACY:
-      gpencil_backup.restore_to_gpencil(reinterpret_cast<bGPdata *>(id));
       break;
     default:
       break;

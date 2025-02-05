@@ -6,8 +6,6 @@
  * \ingroup spview3d
  */
 
-#include "BLI_utildefines.h"
-
 #include "BKE_context.hh"
 #include "BKE_layer.hh"
 
@@ -70,6 +68,11 @@ static void WIDGETGROUP_forcefield_setup(const bContext * /*C*/, wmGizmoGroup *g
 
   UI_GetThemeColor3fv(TH_GIZMO_PRIMARY, gz->color);
   UI_GetThemeColor3fv(TH_GIZMO_HI, gz->color_hi);
+
+  /* All gizmos must perform undo. */
+  LISTBASE_FOREACH (wmGizmo *, gz_iter, &gzgroup->gizmos) {
+    WM_gizmo_set_flag(gz_iter, WM_GIZMO_NEEDS_UNDO, true);
+  }
 }
 
 static void WIDGETGROUP_forcefield_refresh(const bContext *C, wmGizmoGroup *gzgroup)
@@ -86,7 +89,7 @@ static void WIDGETGROUP_forcefield_refresh(const bContext *C, wmGizmoGroup *gzgr
     const float size = (ob->type == OB_EMPTY) ? ob->empty_drawsize : 1.0f;
     const float ofs[3] = {0.0f, -size, 0.0f};
 
-    PointerRNA field_ptr = RNA_pointer_create(&ob->id, &RNA_FieldSettings, pd);
+    PointerRNA field_ptr = RNA_pointer_create_discrete(&ob->id, &RNA_FieldSettings, pd);
     WM_gizmo_set_matrix_location(gz, ob->object_to_world().location());
     WM_gizmo_set_matrix_rotation_from_z_axis(gz, ob->object_to_world().ptr()[2]);
     WM_gizmo_set_matrix_offset_location(gz, ofs);

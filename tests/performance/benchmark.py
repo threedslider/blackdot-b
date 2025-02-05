@@ -2,6 +2,12 @@
 # SPDX-FileCopyrightText: 2020-2023 Blender Authors
 #
 # SPDX-License-Identifier: Apache-2.0
+"""
+The main entry point to running benchmark tests.
+
+See https://developer.blender.org/docs/handbook/testing/performance/
+for a general introduction to the topic.
+"""
 
 import api
 import argparse
@@ -10,7 +16,6 @@ import glob
 import pathlib
 import shutil
 import sys
-from typing import List
 
 
 def find_blender_git_dir() -> pathlib.Path:
@@ -49,7 +54,7 @@ def print_header(config: api.TestConfig) -> None:
         print(header)
 
 
-def print_row(config: api.TestConfig, entries: List, end='\n') -> None:
+def print_row(config: api.TestConfig, entries: list, end='\n') -> None:
     # Print one or more test entries on a row.
     row = ""
 
@@ -99,7 +104,7 @@ def match_entry(entry: api.TestEntry, args: argparse.Namespace):
 
 def run_entry(env: api.TestEnvironment,
               config: api.TestConfig,
-              row: List,
+              row: list,
               entry: api.TestEntry,
               update_only: bool):
     updated = False
@@ -185,7 +190,7 @@ def run_entry(env: api.TestEnvironment,
     return updated, failed
 
 
-def cmd_init(env: api.TestEnvironment, argv: List):
+def cmd_init(env: api.TestEnvironment, argv: list):
     # Initialize benchmarks folder.
     parser = argparse.ArgumentParser()
     parser.add_argument('--build', default=False, action='store_true')
@@ -195,7 +200,7 @@ def cmd_init(env: api.TestEnvironment, argv: List):
     env.unset_log_file()
 
 
-def cmd_list(env: api.TestEnvironment, argv: List) -> None:
+def cmd_list(env: api.TestEnvironment, argv: list) -> None:
     # List devices, tests and configurations.
     print('DEVICES')
     machine = env.get_machine()
@@ -216,7 +221,7 @@ def cmd_list(env: api.TestEnvironment, argv: List) -> None:
         print(config_name)
 
 
-def cmd_status(env: api.TestEnvironment, argv: List):
+def cmd_status(env: api.TestEnvironment, argv: list):
     # Print status of tests in configurations.
     parser = argparse.ArgumentParser()
     parser.add_argument('config', nargs='?', default=None)
@@ -239,7 +244,7 @@ def cmd_status(env: api.TestEnvironment, argv: List):
                 print_row(config, row)
 
 
-def cmd_reset(env: api.TestEnvironment, argv: List):
+def cmd_reset(env: api.TestEnvironment, argv: list):
     # Reset tests to re-run them.
     parser = argparse.ArgumentParser()
     parser.add_argument('config', nargs='?', default=None)
@@ -262,7 +267,7 @@ def cmd_reset(env: api.TestEnvironment, argv: List):
             shutil.rmtree(config.logs_dir)
 
 
-def cmd_run(env: api.TestEnvironment, argv: List, update_only: bool):
+def cmd_run(env: api.TestEnvironment, argv: list, update_only: bool):
     # Run tests.
     parser = argparse.ArgumentParser()
     parser.add_argument('config', nargs='?', default=None)
@@ -309,7 +314,7 @@ def cmd_run(env: api.TestEnvironment, argv: List, update_only: bool):
     sys.exit(exit_code)
 
 
-def cmd_graph(argv: List):
+def cmd_graph(argv: list):
     # Create graph from a given JSON results file.
     parser = argparse.ArgumentParser()
     parser.add_argument('json_file', nargs='+')
@@ -370,7 +375,9 @@ def main():
         sys.exit(0)
 
     if not env.base_dir.exists():
-        sys.stderr.write('Error: benchmark directory not initialized\n')
+        sys.stderr.write(
+            'Error: benchmark directory not initialized. '
+            'Run the \"init\" command to create the directory and a default configuration.\n')
         sys.exit(1)
 
     if args.command == 'list':

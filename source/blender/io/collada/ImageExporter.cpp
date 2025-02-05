@@ -10,23 +10,18 @@
 #include "COLLADASWImage.h"
 
 #include "DNA_image_types.h"
-#include "DNA_texture_types.h"
 
-#include "BKE_customdata.hh"
-#include "BKE_global.hh"
-#include "BKE_image.h"
-#include "BKE_image_format.h"
+#include "BKE_image.hh"
+#include "BKE_image_format.hh"
 #include "BKE_main.hh"
-#include "BKE_mesh.hh"
 
 #include "BLI_fileops.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 
 #include "IMB_imbuf_types.hh"
 
 #include "ImageExporter.h"
-#include "MaterialExporter.h"
 
 ImagesExporter::ImagesExporter(COLLADASW::StreamWriter *sw,
                                BCExportSettings &export_settings,
@@ -82,7 +77,7 @@ void ImagesExporter::export_UV_Image(Image *image, bool use_copies)
      * So we have to export it. The export will keep the image state intact,
      * so the exported file will not be associated with the image. */
 
-    if (BKE_imbuf_write_as(imbuf, export_path, &imageFormat, true) == 0) {
+    if (BKE_imbuf_write_as(imbuf, export_path, &imageFormat, true) == false) {
       fprintf(stderr, "Collada export: Cannot export image to:\n%s\n", export_path);
       return;
     }
@@ -144,9 +139,6 @@ void ImagesExporter::exportImages(Scene *sce)
   for (iter = key_image_map.begin(); iter != key_image_map.end(); iter++) {
 
     Image *image = iter->second;
-    std::string uid(id_name(image));
-    std::string key = translate_id(uid);
-
     export_UV_Image(image, use_texture_copies);
   }
 

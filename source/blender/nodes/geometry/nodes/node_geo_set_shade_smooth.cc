@@ -25,7 +25,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "domain", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "domain", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
@@ -110,12 +110,18 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_SET_SHADE_SMOOTH, "Set Shade Smooth", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeSetShadeSmooth", GEO_NODE_SET_SHADE_SMOOTH);
+  ntype.ui_name = "Set Shade Smooth";
+  ntype.ui_description =
+      "Control the smoothness of mesh normals around each face by changing the \"shade smooth\" "
+      "attribute";
+  ntype.enum_name_legacy = "SET_SHADE_SMOOTH";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
   ntype.initfunc = node_init;
   ntype.draw_buttons = node_layout;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

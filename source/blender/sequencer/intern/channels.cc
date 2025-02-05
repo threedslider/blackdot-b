@@ -13,11 +13,12 @@
 #include "DNA_listBase.h"
 #include "DNA_sequence_types.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_string.h"
 
 #include "BLT_translation.hh"
 
 #include "SEQ_channels.hh"
+#include "SEQ_sequencer.hh"
 
 ListBase *SEQ_channels_displayed_get(Editing *ed)
 {
@@ -32,7 +33,7 @@ void SEQ_channels_displayed_set(Editing *ed, ListBase *channels)
 void SEQ_channels_ensure(ListBase *channels)
 {
   /* Allocate channels. Channel 0 is never used, but allocated to prevent off by 1 issues. */
-  for (int i = 0; i < MAXSEQ + 1; i++) {
+  for (int i = 0; i < SEQ_MAX_CHANNELS + 1; i++) {
     SeqTimelineChannel *channel = static_cast<SeqTimelineChannel *>(
         MEM_callocN(sizeof(SeqTimelineChannel), "seq timeline channel"));
     SNPRINTF(channel->name, DATA_("Channel %d"), i);
@@ -83,15 +84,15 @@ bool SEQ_channel_is_muted(const SeqTimelineChannel *channel)
   return (channel->flag & SEQ_CHANNEL_MUTE) != 0;
 }
 
-ListBase *SEQ_get_channels_by_seq(ListBase *seqbase, ListBase *channels, const Sequence *seq)
+ListBase *SEQ_get_channels_by_seq(ListBase *seqbase, ListBase *channels, const Strip *strip)
 {
   ListBase *lb = nullptr;
 
-  LISTBASE_FOREACH (Sequence *, iseq, seqbase) {
-    if (seq == iseq) {
+  LISTBASE_FOREACH (Strip *, istrip, seqbase) {
+    if (strip == istrip) {
       return channels;
     }
-    if ((lb = SEQ_get_channels_by_seq(&iseq->seqbase, &iseq->channels, seq))) {
+    if ((lb = SEQ_get_channels_by_seq(&istrip->seqbase, &istrip->channels, strip))) {
       return lb;
     }
   }

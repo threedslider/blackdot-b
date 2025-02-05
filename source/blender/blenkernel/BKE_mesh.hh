@@ -10,16 +10,15 @@
 
 #include "BLI_index_mask_fwd.hh"
 #include "BLI_offset_indices.hh"
+#include "BLI_string_ref.hh"
 
-#include "BKE_mesh.h"
-#include "BKE_mesh_types.hh"
-
-struct ModifierData;
+#include "BKE_mesh.h"         // IWYU pragma: export
+#include "BKE_mesh_types.hh"  // IWYU pragma: export
 
 namespace blender::bke {
 
 enum class AttrDomain : int8_t;
-class AttributeIDRef;
+struct AttributeAccessorFunctions;
 
 namespace mesh {
 /* -------------------------------------------------------------------- */
@@ -120,13 +119,29 @@ void normals_calc_verts(Span<float3> vert_positions,
 struct CornerNormalSpace {
   /** The automatically computed face corner normal, not including influence of custom normals. */
   float3 vec_lnor;
-  /** Reference vector, orthogonal to #vec_lnor. */
+  /**
+   * Reference vector, orthogonal to #vec_lnor, aligned with one of the edges (borders) of the
+   * smooth fan, called 'reference edge'.
+   */
   float3 vec_ref;
   /** Third vector, orthogonal to #vec_lnor and #vec_ref. */
   float3 vec_ortho;
-  /** Reference angle around #vec_ortho, in [0, pi] range (0.0 marks space as invalid). */
+  /**
+   * Reference angle around #vec_ortho, in ]0, pi] range, between #vec_lnor and the reference edge.
+   *
+   * A 0.0 value marks that space as invalid, as it can only happen in extremely degenerate
+   * geometry cases (it would mean that the default normal is perfectly aligned with the reference
+   * edge).
+   */
   float ref_alpha;
-  /** Reference angle around #vec_lnor, in [0, 2pi] range (0.0 marks space as invalid). */
+  /**
+   * Reference angle around #vec_lnor, in ]0, 2pi] range, between the reference edge and the other
+   * border edge of the fan.
+   *
+   * A 0.0 value marks that space as invalid, as it can only happen in degenerate geometry cases
+   * (it would mean that all the edges connected to that corner of the smooth fan are perfectly
+   * aligned).
+   */
   float ref_beta;
 };
 
@@ -177,11 +192,10 @@ void normals_calc_corners(Span<float3> vert_positions,
                           Span<int> corner_verts,
                           Span<int> corner_edges,
                           Span<int> corner_to_face_map,
-                          Span<float3> vert_normals,
                           Span<float3> face_normals,
                           Span<bool> sharp_edges,
                           Span<bool> sharp_faces,
-                          const short2 *clnors_data,
+                          Span<short2> custom_normals,
                           CornerNormalSpaceArray *r_lnors_spacearr,
                           MutableSpan<float3> r_corner_normals);
 
@@ -232,14 +246,38 @@ void edges_sharp_from_angle_set(OffsetIndices<int> faces,
                                 const float split_angle,
                                 MutableSpan<bool> sharp_edges);
 
+}  // namespace mesh
+
+/**
+ * Higher level functions hiding most of the code needed around call to
+ * #normals_corner_custom_set().
+ *
+ * \param corner_normals: Is mutable because zero vectors are replaced with automatically
+ * computed normals.
+ */
+void mesh_set_custom_normals(Mesh &mesh, MutableSpan<float3> corner_normals);
+void mesh_set_custom_normals_normalized(Mesh &mesh, MutableSpan<float3> corner_normals);
+
+/**
+ * Higher level functions hiding most of the code needed around call to
+ * #normals_corner_custom_set_from_verts().
+ *
+ * \param vert_normals: Is mutable because zero vectors are replaced with automatically
+ * computed normals.
+ */
+void mesh_set_custom_normals_from_verts(Mesh &mesh, MutableSpan<float3> vert_normals);
+void mesh_set_custom_normals_from_verts_normalized(Mesh &mesh, MutableSpan<float3> vert_normals);
+
 /** \} */
 
 /* -------------------------------------------------------------------- */
 /** \name Topology Queries
  * \{ */
 
+namespace mesh {
+
 /**
- * Find the index of the next corner in the face, looping to the start if necessary.
+ * Find the index of the previous corner in the face, looping to the end if necessary.
  * The indices are into the entire corners array, not just the face's corners.
  */
 inline int face_corner_prev(const IndexRange face, const int corner)
@@ -248,7 +286,7 @@ inline int face_corner_prev(const IndexRange face, const int corner)
 }
 
 /**
- * Find the index of the previous corner in the face, looping to the end if necessary.
+ * Find the index of the next corner in the face, looping to the start if necessary.
  * The indices are into the entire corners array, not just the face's corners.
  */
 inline int face_corner_next(const IndexRange face, const int corner)
@@ -363,7 +401,7 @@ void mesh_select_face_flush(Mesh &mesh);
 
 /** Set the default name when adding a color attribute if there is no default yet. */
 void mesh_ensure_default_color_attribute_on_add(Mesh &mesh,
-                                                const AttributeIDRef &id,
+                                                StringRef id,
                                                 AttrDomain domain,
                                                 eCustomDataType data_type);
 
@@ -371,5 +409,7 @@ void mesh_data_update(Depsgraph &depsgraph,
                       const Scene &scene,
                       Object &ob,
                       const CustomData_MeshMasks &dataMask);
+
+const AttributeAccessorFunctions &mesh_attribute_accessor_functions();
 
 }  // namespace blender::bke

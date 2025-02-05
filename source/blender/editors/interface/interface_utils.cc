@@ -6,6 +6,7 @@
  * \ingroup edinterface
  */
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +33,7 @@
 #include "MEM_guardedalloc.h"
 
 #include "RNA_access.hh"
+#include "RNA_prototypes.hh"
 
 #include "UI_interface.hh"
 #include "UI_interface_icons.hh"
@@ -44,13 +46,15 @@
 
 #include "interface_intern.hh"
 
+using blender::StringRefNull;
+
 /*************************** RNA Utilities ******************************/
 
 uiBut *uiDefAutoButR(uiBlock *block,
                      PointerRNA *ptr,
                      PropertyRNA *prop,
                      int index,
-                     const char *name,
+                     const std::optional<StringRefNull> name,
                      int icon,
                      int x,
                      int y,
@@ -65,7 +69,7 @@ uiBut *uiDefAutoButR(uiBlock *block,
         return nullptr;
       }
 
-      if (icon && name && name[0] == '\0') {
+      if (icon && name && name->is_empty()) {
         but = uiDefIconButR_prop(block,
                                  UI_BTYPE_ICON_TOGGLE,
                                  0,
@@ -156,7 +160,7 @@ uiBut *uiDefAutoButR(uiBlock *block,
       break;
     }
     case PROP_ENUM:
-      if (icon && name && name[0] == '\0') {
+      if (icon && name && name->is_empty()) {
         but = uiDefIconButR_prop(
             block, UI_BTYPE_MENU, 0, icon, x, y, width, height, ptr, prop, index, 0, 0, nullptr);
       }
@@ -165,7 +169,7 @@ uiBut *uiDefAutoButR(uiBlock *block,
                                      UI_BTYPE_MENU,
                                      0,
                                      icon,
-                                     nullptr,
+                                     std::nullopt,
                                      x,
                                      y,
                                      width,
@@ -183,7 +187,7 @@ uiBut *uiDefAutoButR(uiBlock *block,
       }
       break;
     case PROP_STRING:
-      if (icon && name && name[0] == '\0') {
+      if (icon && name && name->is_empty()) {
         but = uiDefIconButR_prop(
             block, UI_BTYPE_TEXT, 0, icon, x, y, width, height, ptr, prop, index, 0, 0, nullptr);
       }
@@ -292,7 +296,7 @@ eAutoPropButsReturn uiDefAutoButsRNA(uiLayout *layout,
 {
   eAutoPropButsReturn return_info = UI_PROP_BUTS_NONE_ADDED;
   uiLayout *col;
-  const char *name;
+  std::optional<StringRefNull> name;
 
   RNA_STRUCT_BEGIN (ptr, prop) {
     const int flag = RNA_property_flag(prop);
@@ -317,7 +321,7 @@ eAutoPropButsReturn uiDefAutoButsRNA(uiLayout *layout,
           col = uiLayoutColumn(layout, true);
 
           if (!is_boolean) {
-            uiItemL(col, name, ICON_NONE);
+            uiItemL(col, *name, ICON_NONE);
           }
         }
         else {
@@ -332,7 +336,7 @@ eAutoPropButsReturn uiDefAutoButsRNA(uiLayout *layout,
       case UI_BUT_LABEL_ALIGN_NONE:
       default:
         col = layout;
-        name = nullptr; /* no smart label alignment, show default name with button */
+        name = std::nullopt; /* no smart label alignment, show default name with button */
         break;
     }
 
@@ -456,6 +460,10 @@ void ui_rna_collection_search_update_fn(
           name = name_buf;
           has_sep_char = ID_IS_LINKED(id);
         }
+      }
+      else if (itemptr.type == &RNA_ActionSlot) {
+        PropertyRNA *prop = RNA_struct_find_property(&itemptr, "name_display");
+        name = RNA_property_string_get_alloc(&itemptr, prop, name_buf, sizeof(name_buf), nullptr);
       }
       else {
         name = RNA_struct_name_get_alloc(&itemptr, name_buf, sizeof(name_buf), nullptr);
@@ -681,9 +689,7 @@ int UI_calc_float_precision(int prec, double value)
         dec_flag = dec_flag >> 1;
       }
 
-      if (test_prec > prec) {
-        prec = test_prec;
-      }
+      prec = std::max(test_prec, prec);
     }
   }
 
@@ -851,9 +857,9 @@ void UI_butstore_free(uiBlock *block, uiButStore *bs_handle)
   MEM_freeN(bs_handle);
 }
 
-bool UI_butstore_is_valid(uiButStore *bs)
+bool UI_butstore_is_valid(uiButStore *bs_handle)
 {
-  return (bs->block != nullptr);
+  return (bs_handle->block != nullptr);
 }
 
 bool UI_butstore_is_registered(uiBlock *block, uiBut *but)
@@ -961,13 +967,13 @@ void UI_butstore_update(uiBlock *block)
 /**
  * Follow the logic from #wm_keymap_item_find_in_keymap.
  */
-static bool ui_key_event_property_match(const char *opname,
+static bool ui_key_event_property_match(const StringRefNull opname,
                                         IDProperty *properties,
                                         const bool is_strict,
                                         wmOperatorType *ui_optype,
                                         PointerRNA *ui_opptr)
 {
-  if (!STREQ(ui_optype->idname, opname)) {
+  if (ui_optype->idname != opname) {
     return false;
   }
 
@@ -986,7 +992,7 @@ static bool ui_key_event_property_match(const char *opname,
 }
 
 std::optional<std::string> UI_key_event_operator_string(const bContext *C,
-                                                        const char *opname,
+                                                        const StringRefNull opname,
                                                         IDProperty *properties,
                                                         const bool is_strict)
 {
@@ -999,7 +1005,7 @@ std::optional<std::string> UI_key_event_operator_string(const bContext *C,
   }
 
   /* Early exit regions which don't have UI-Lists. */
-  if ((region->type->keymapflag & ED_KEYMAP_UI) == 0) {
+  if ((region->runtime->type->keymapflag & ED_KEYMAP_UI) == 0) {
     return std::nullopt;
   }
 

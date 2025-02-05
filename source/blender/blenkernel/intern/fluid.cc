@@ -15,7 +15,7 @@
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_task.h"
 #include "BLI_utildefines.h"
@@ -37,6 +37,7 @@
 
 #ifdef WITH_FLUID
 
+#  include <algorithm>
 #  include <cfloat>
 #  include <cmath>
 #  include <cstdio>
@@ -49,8 +50,9 @@
 #  include "DNA_particle_types.h"
 #  include "DNA_scene_types.h"
 
-#  include "BLI_kdopbvh.h"
+#  include "BLI_kdopbvh.hh"
 #  include "BLI_kdtree.h"
+#  include "BLI_math_vector.hh"
 #  include "BLI_threads.h"
 #  include "BLI_voxel.h"
 
@@ -551,7 +553,7 @@ static float calc_voxel_transp(
     float *result, const float *input, int res[3], int *pixel, float *t_ray, float correct);
 static void update_distances(int index,
                              float *distance_map,
-                             BVHTreeFromMesh *tree_data,
+                             blender::bke::BVHTreeFromMesh *tree_data,
                              const float ray_start[3],
                              float surface_thickness,
                              bool use_plane_init);
@@ -854,7 +856,7 @@ static void update_velocities(FluidEffectorSettings *fes,
                               const blender::int3 *corner_tris,
                               float *velocity_map,
                               int index,
-                              BVHTreeFromMesh *tree_data,
+                              blender::bke::BVHTreeFromMesh *tree_data,
                               const float ray_start[3],
                               const float *vert_vel,
                               bool has_velocity)
@@ -893,14 +895,10 @@ static void update_velocities(FluidEffectorSettings *fes,
       mul_v3_fl(hit_vel, fes->vel_multi);
 
       /* Absolute representation of new object velocity. */
-      float abs_hit_vel[3];
-      copy_v3_v3(abs_hit_vel, hit_vel);
-      abs_v3(abs_hit_vel);
+      blender::float3 abs_hit_vel = blender::math::abs(blender::float3(hit_vel));
 
       /* Absolute representation of current object velocity. */
-      float abs_vel[3];
-      copy_v3_v3(abs_vel, &velocity_map[index * 3]);
-      abs_v3(abs_vel);
+      blender::float3 abs_vel = blender::math::abs(blender::float3(&velocity_map[index * 3]));
 
       switch (fes->guide_mode) {
         case FLUID_EFFECTOR_GUIDE_AVERAGED:
@@ -953,7 +951,7 @@ struct ObstaclesFromDMData {
   blender::Span<int> corner_verts;
   blender::Span<blender::int3> corner_tris;
 
-  BVHTreeFromMesh *tree;
+  blender::bke::BVHTreeFromMesh *tree;
   FluidObjectBB *bb;
 
   bool has_velocity;
@@ -1009,7 +1007,6 @@ static void obstacles_from_mesh(Object *coll_ob,
                                 float dt)
 {
   if (fes->mesh) {
-    BVHTreeFromMesh tree_data = {nullptr};
     int numverts, i;
 
     float *vert_vel = nullptr;
@@ -1079,8 +1076,8 @@ static void obstacles_from_mesh(Object *coll_ob,
 
     /* Skip effector sampling loop if object has disabled effector. */
     bool use_effector = fes->flags & FLUID_EFFECTOR_USE_EFFEC;
-    if (use_effector && BKE_bvhtree_from_mesh_get(&tree_data, mesh, BVHTREE_FROM_CORNER_TRIS, 4)) {
-
+    blender::bke::BVHTreeFromMesh tree_data = mesh->bvh_corner_tris();
+    if (use_effector && tree_data.tree != nullptr) {
       ObstaclesFromDMData data{};
       data.fes = fes;
       data.vert_positions = positions;
@@ -1099,8 +1096,6 @@ static void obstacles_from_mesh(Object *coll_ob,
       settings.min_iter_per_thread = 2;
       BLI_task_parallel_range(min[2], max[2], &data, obstacles_from_mesh_task_cb, &settings);
     }
-    /* Free bvh tree. */
-    free_bvhtree_from_mesh(&tree_data);
 
     if (vert_vel) {
       MEM_freeN(vert_vel);
@@ -1697,7 +1692,7 @@ static void emit_from_particles(Object *flow_ob,
  * positive, inside negative. */
 static void update_distances(int index,
                              float *distance_map,
-                             BVHTreeFromMesh *tree_data,
+                             blender::bke::BVHTreeFromMesh *tree_data,
                              const float ray_start[3],
                              float surface_thickness,
                              bool use_plane_init)
@@ -1774,9 +1769,7 @@ static void update_distances(int index,
         dir_count++;
       }
 
-      if (hit_tree.dist < min_dist) {
-        min_dist = hit_tree.dist;
-      }
+      min_dist = std::min(hit_tree.dist, min_dist);
     }
 
     /* Point lies inside mesh. Use negative sign for distance value.
@@ -1810,7 +1803,7 @@ static void sample_mesh(FluidFlowSettings *ffs,
                         const int base_res[3],
                         const float global_size[3],
                         const float flow_center[3],
-                        BVHTreeFromMesh *tree_data,
+                        blender::bke::BVHTreeFromMesh *tree_data,
                         const float ray_start[3],
                         const float *vert_vel,
                         bool has_velocity,
@@ -2005,7 +1998,7 @@ struct EmitFromDMData {
   const MDeformVert *dvert;
   int defgrp_index;
 
-  BVHTreeFromMesh *tree;
+  blender::bke::BVHTreeFromMesh *tree;
   FluidObjectBB *bb;
 
   bool has_velocity;
@@ -2068,7 +2061,6 @@ static void emit_from_mesh(
     Object *flow_ob, FluidDomainSettings *fds, FluidFlowSettings *ffs, FluidObjectBB *bb, float dt)
 {
   if (ffs->mesh) {
-    BVHTreeFromMesh tree_data = {nullptr};
     int i;
 
     float *vert_vel = nullptr;
@@ -2147,7 +2139,8 @@ static void emit_from_mesh(
 
     /* Skip flow sampling loop if object has disabled flow. */
     bool use_flow = ffs->flags & FLUID_FLOW_USE_INFLOW;
-    if (use_flow && BKE_bvhtree_from_mesh_get(&tree_data, mesh, BVHTREE_FROM_CORNER_TRIS, 4)) {
+    blender::bke::BVHTreeFromMesh tree_data = mesh->bvh_corner_tris();
+    if (use_flow && tree_data.tree != nullptr) {
 
       EmitFromDMData data{};
       data.fds = fds;
@@ -2173,8 +2166,6 @@ static void emit_from_mesh(
       settings.min_iter_per_thread = 2;
       BLI_task_parallel_range(min[2], max[2], &data, emit_from_mesh_task_cb, &settings);
     }
-    /* Free bvh tree. */
-    free_bvhtree_from_mesh(&tree_data);
 
     if (vert_vel) {
       MEM_freeN(vert_vel);
@@ -2285,9 +2276,7 @@ static void adaptive_domain_adjust(
                 int big_index = manta_get_index(xx + i, wt_res[0], yy + j, wt_res[1], zz + k);
                 float den = (bigfuel) ? std::max(bigdensity[big_index], bigfuel[big_index]) :
                                         bigdensity[big_index];
-                if (den > max_den) {
-                  max_den = den;
-                }
+                max_den = std::max(den, max_den);
               }
             }
           }
@@ -2295,45 +2284,21 @@ static void adaptive_domain_adjust(
 
         /* content bounds (use shifted coordinates) */
         if (max_den >= fds->adapt_threshold) {
-          if (min[0] > xn) {
-            min[0] = xn;
-          }
-          if (min[1] > yn) {
-            min[1] = yn;
-          }
-          if (min[2] > zn) {
-            min[2] = zn;
-          }
-          if (max[0] < xn) {
-            max[0] = xn;
-          }
-          if (max[1] < yn) {
-            max[1] = yn;
-          }
-          if (max[2] < zn) {
-            max[2] = zn;
-          }
+          min[0] = std::min(min[0], xn);
+          min[1] = std::min(min[1], yn);
+          min[2] = std::min(min[2], zn);
+          max[0] = std::max(max[0], xn);
+          max[1] = std::max(max[1], yn);
+          max[2] = std::max(max[2], zn);
         }
 
         /* velocity bounds */
-        if (min_vel[0] > vx[index]) {
-          min_vel[0] = vx[index];
-        }
-        if (min_vel[1] > vy[index]) {
-          min_vel[1] = vy[index];
-        }
-        if (min_vel[2] > vz[index]) {
-          min_vel[2] = vz[index];
-        }
-        if (max_vel[0] < vx[index]) {
-          max_vel[0] = vx[index];
-        }
-        if (max_vel[1] < vy[index]) {
-          max_vel[1] = vy[index];
-        }
-        if (max_vel[2] < vz[index]) {
-          max_vel[2] = vz[index];
-        }
+        min_vel[0] = std::min(min_vel[0], vx[index]);
+        min_vel[1] = std::min(min_vel[1], vy[index]);
+        min_vel[2] = std::min(min_vel[2], vz[index]);
+        max_vel[0] = std::max(max_vel[0], vx[index]);
+        max_vel[1] = std::max(max_vel[1], vy[index]);
+        max_vel[2] = std::max(max_vel[2], vz[index]);
       }
     }
   }
@@ -2351,24 +2316,12 @@ static void adaptive_domain_adjust(
 
           /* density bounds */
           if (max_den >= fds->adapt_threshold) {
-            if (min[0] > x) {
-              min[0] = x;
-            }
-            if (min[1] > y) {
-              min[1] = y;
-            }
-            if (min[2] > z) {
-              min[2] = z;
-            }
-            if (max[0] < x) {
-              max[0] = x;
-            }
-            if (max[1] < y) {
-              max[1] = y;
-            }
-            if (max[2] < z) {
-              max[2] = z;
-            }
+            min[0] = std::min(min[0], x);
+            min[1] = std::min(min[1], y);
+            min[2] = std::min(min[2], z);
+            max[0] = std::max(max[0], x);
+            max[1] = std::max(max[1], y);
+            max[2] = std::max(max[2], z);
           }
         }
       }
@@ -3167,8 +3120,8 @@ static void update_effectors_task_cb(void *__restrict userdata,
       mul_v3_fl(retvel, mag);
 
       /* Copy computed force to fluid solver forces. */
-      mul_v3_fl(retvel, 0.2f);     /* Factor from 0e6820cc5d62. */
-      CLAMP3(retvel, -1.0f, 1.0f); /* Restrict forces to +-1 interval. */
+      mul_v3_fl(retvel, 0.2f);       /* Factor from 0e6820cc5d62. */
+      clamp_v3(retvel, -1.0f, 1.0f); /* Restrict forces to +-1 interval. */
       data->force_x[index] = retvel[0];
       data->force_y[index] = retvel[1];
       data->force_z[index] = retvel[2];

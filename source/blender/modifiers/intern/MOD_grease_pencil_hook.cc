@@ -7,8 +7,6 @@
  */
 
 #include "BLI_index_mask.hh"
-#include "BLI_math_rotation.hh"
-#include "BLI_string.h" /* For #STRNCPY. */
 
 #include "BLT_translation.hh"
 
@@ -20,7 +18,7 @@
 
 #include "RNA_access.hh"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_colortools.hh"
 #include "BKE_curves.hh"
 #include "BKE_geometry_set.hh"
@@ -123,7 +121,7 @@ static float hook_falloff(const float falloff,
   if (falloff_type == MOD_GREASE_PENCIL_HOOK_Falloff_Const) {
     return fac_orig;
   }
-  else if (falloff_type == MOD_GREASE_PENCIL_HOOK_Falloff_InvSquare) {
+  if (falloff_type == MOD_GREASE_PENCIL_HOOK_Falloff_InvSquare) {
     /* Avoid sqrt below. */
     return (1.0f - (len_sq / falloff_sq)) * fac_orig;
   }
@@ -154,8 +152,10 @@ static void deform_drawing(const ModifierData &md,
                            bke::greasepencil::Drawing &drawing)
 {
   const auto &mmd = reinterpret_cast<const GreasePencilHookModifierData &>(md);
+  modifier::greasepencil::ensure_no_bezier_curves(drawing);
   bke::CurvesGeometry &curves = drawing.strokes_for_write();
-  if (curves.points_num() == 0) {
+
+  if (curves.is_empty()) {
     return;
   }
   IndexMaskMemory memory;
@@ -195,14 +195,6 @@ static void deform_drawing(const ModifierData &md,
   }
   float4x4 use_mat = ob.world_to_object() * dmat * float4x4(mmd.parentinv);
 
-  auto get_weight = [&](const int point) {
-    const float weight = input_weights[point];
-    if (mmd.influence.flag & GREASE_PENCIL_INFLUENCE_INVERT_VERTEX_GROUP) {
-      return 1.0f - weight;
-    }
-    return weight;
-  };
-
   const OffsetIndices<int> points_by_curve = curves.points_by_curve();
   MutableSpan<float3> positions = curves.positions_for_write();
 
@@ -210,7 +202,7 @@ static void deform_drawing(const ModifierData &md,
     const IndexRange points_range = points_by_curve[stroke].index_range();
     for (const int point_i : points_range) {
       const int point = point_i + points_by_curve[stroke].first();
-      const float weight = get_weight(point);
+      const float weight = input_weights[point];
       if (weight < 0.0f) {
         continue;
       }
@@ -279,7 +271,7 @@ static void panel_draw(const bContext *C, Panel *panel)
   uiLayoutSetPropSep(layout, true);
 
   uiLayout *col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "object", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   if (!RNA_pointer_is_null(&hook_object_ptr) &&
       RNA_enum_get(&hook_object_ptr, "type") == OB_ARMATURE)
   {
@@ -288,9 +280,9 @@ static void panel_draw(const bContext *C, Panel *panel)
         col, ptr, "subtarget", &hook_object_data_ptr, "bones", IFACE_("Bone"), ICON_NONE);
   }
 
-  uiItemR(layout, ptr, "strength", UI_ITEM_R_SLIDER, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "strength", UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
 
-  if (uiLayout *sub = uiLayoutPanelProp(C, layout, ptr, "open_falloff_panel", "Falloff")) {
+  if (uiLayout *sub = uiLayoutPanelProp(C, layout, ptr, "open_falloff_panel", IFACE_("Falloff"))) {
     uiLayoutSetPropSep(sub, true);
 
     uiItemR(sub, ptr, "falloff_type", UI_ITEM_NONE, IFACE_("Type"), ICON_NONE);
@@ -299,9 +291,9 @@ static void panel_draw(const bContext *C, Panel *panel)
 
     uiLayout *row = uiLayoutRow(sub, false);
     uiLayoutSetActive(row, use_falloff);
-    uiItemR(row, ptr, "falloff_radius", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(row, ptr, "falloff_radius", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-    uiItemR(sub, ptr, "use_falloff_uniform", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(sub, ptr, "use_falloff_uniform", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
     if (RNA_enum_get(ptr, "falloff_type") == eWarp_Falloff_Curve) {
       uiTemplateCurveMapping(sub, ptr, "custom_curve", 0, false, false, false, false);
@@ -309,7 +301,7 @@ static void panel_draw(const bContext *C, Panel *panel)
   }
 
   if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", "Influence"))
+          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);

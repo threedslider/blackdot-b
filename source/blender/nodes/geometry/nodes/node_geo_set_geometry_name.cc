@@ -9,7 +9,7 @@ namespace blender::nodes::node_geo_set_geometry_name {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Geometry>("Geometry");
-  b.add_input<decl::String>("Name");
+  b.add_input<decl::String>("Name").hide_label();
   b.add_output<decl::Geometry>("Geometry").propagate_all();
 }
 
@@ -25,10 +25,14 @@ static void node_register()
 {
   static bke::bNodeType ntype;
 
-  geo_node_type_base(&ntype, GEO_NODE_SET_GEOMETRY_NAME, "Set Geometry Name", NODE_CLASS_GEOMETRY);
+  geo_node_type_base(&ntype, "GeometryNodeSetGeometryName", GEO_NODE_SET_GEOMETRY_NAME);
+  ntype.ui_name = "Set Geometry Name";
+  ntype.ui_description = "Set the name of a geometry for easier debugging";
+  ntype.enum_name_legacy = "SET_GEOMETRY_NAME";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.geometry_node_execute = node_geo_exec;
   ntype.declare = node_declare;
-  bke::nodeRegisterType(&ntype);
+  bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

@@ -89,7 +89,7 @@ static void deform_drawing(const ModifierData &md,
                            const Object &ob,
                            bke::greasepencil::Drawing &drawing)
 {
-  auto &mmd = reinterpret_cast<const GreasePencilSmoothModifierData &>(md);
+  const auto &mmd = reinterpret_cast<const GreasePencilSmoothModifierData &>(md);
 
   const int iterations = mmd.step;
   const float influence = mmd.factor;
@@ -109,8 +109,9 @@ static void deform_drawing(const ModifierData &md,
     return;
   }
 
+  modifier::greasepencil::ensure_no_bezier_curves(drawing);
   bke::CurvesGeometry &curves = drawing.strokes_for_write();
-  if (curves.points_num() == 0) {
+  if (curves.is_empty()) {
     return;
   }
 
@@ -127,6 +128,24 @@ static void deform_drawing(const ModifierData &md,
   const VArray<bool> cyclic = curves.cyclic();
   const VArray<bool> point_selection = VArray<bool>::ForSingle(true, curves.points_num());
 
+  VArray<float> influences;
+  const bool use_influence_vertex_group = mmd.influence.vertex_group_name[0] != '\0';
+  if (use_influence_vertex_group) {
+    const VArray<float> vgroup_weights = modifier::greasepencil::get_influence_vertex_weights(
+        curves, mmd.influence);
+    Array<float> vgroup_weights_factored(vgroup_weights.size());
+    threading::parallel_for(
+        vgroup_weights_factored.index_range(), 4096, [&](const IndexRange range) {
+          for (const int i : range) {
+            vgroup_weights_factored[i] = vgroup_weights[i] * influence;
+          }
+        });
+    influences = VArray<float>::ForContainer(vgroup_weights_factored);
+  }
+  else {
+    influences = VArray<float>::ForSingle(influence, curves.points_num());
+  }
+
   if (smooth_position) {
     bke::GSpanAttributeWriter positions = attributes.lookup_for_write_span("position");
     geometry::smooth_curve_attribute(strokes,
@@ -134,7 +153,7 @@ static void deform_drawing(const ModifierData &md,
                                      point_selection,
                                      cyclic,
                                      iterations,
-                                     influence,
+                                     influences,
                                      smooth_ends,
                                      keep_shape,
                                      positions.span);
@@ -148,7 +167,7 @@ static void deform_drawing(const ModifierData &md,
                                      point_selection,
                                      cyclic,
                                      iterations,
-                                     influence,
+                                     influences,
                                      smooth_ends,
                                      false,
                                      opacities.span);
@@ -161,7 +180,7 @@ static void deform_drawing(const ModifierData &md,
                                      point_selection,
                                      cyclic,
                                      iterations,
-                                     influence,
+                                     influences,
                                      smooth_ends,
                                      false,
                                      radii.span);
@@ -175,7 +194,7 @@ static void deform_drawing(const ModifierData &md,
                                        point_selection,
                                        cyclic,
                                        iterations,
-                                       influence,
+                                       influences,
                                        smooth_ends,
                                        false,
                                        rotation.span);
@@ -216,23 +235,28 @@ static void panel_draw(const bContext *C, Panel *panel)
 
   row = uiLayoutRow(layout, true);
   uiItemR(row, ptr, "use_edit_position", UI_ITEM_R_TOGGLE, IFACE_("Position"), ICON_NONE);
-  uiItemR(row, ptr, "use_edit_strength", UI_ITEM_R_TOGGLE, IFACE_("Strength"), ICON_NONE);
+  uiItemR(row,
+          ptr,
+          "use_edit_strength",
+          UI_ITEM_R_TOGGLE,
+          CTX_IFACE_(BLT_I18NCONTEXT_ID_GPENCIL, "Strength"),
+          ICON_NONE);
   uiItemR(row, ptr, "use_edit_thickness", UI_ITEM_R_TOGGLE, IFACE_("Thickness"), ICON_NONE);
 
   uiItemR(row, ptr, "use_edit_uv", UI_ITEM_R_TOGGLE, IFACE_("UV"), ICON_NONE);
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "factor", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   uiItemR(layout, ptr, "step", UI_ITEM_NONE, IFACE_("Repeat"), ICON_NONE);
 
   col = uiLayoutColumn(layout, false);
   uiLayoutSetActive(col, RNA_boolean_get(ptr, "use_edit_position"));
-  uiItemR(col, ptr, "use_keep_shape", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "use_smooth_ends", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "use_keep_shape", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "use_smooth_ends", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", "Influence"))
+          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);

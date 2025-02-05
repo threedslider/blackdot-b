@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include <cmath>
+
+#include "BLI_math_numbers.hh"
+
 #include "BKE_attribute.hh"
 #include "BKE_mesh.hh"
 
@@ -253,7 +257,7 @@ int ConeConfig::calculate_total_corners()
 static void calculate_cone_verts(const ConeConfig &config, MutableSpan<float3> positions)
 {
   Array<float2> circle(config.circle_segments);
-  const float angle_delta = 2.0f * (M_PI / float(config.circle_segments));
+  const float angle_delta = 2.0f * (math::numbers::pi / float(config.circle_segments));
   float angle = 0.0f;
   for (const int i : IndexRange(config.circle_segments)) {
     circle[i].x = std::cos(angle);
@@ -473,7 +477,7 @@ static void calculate_selection_outputs(const ConeConfig &config,
   if (attribute_outputs.top_id) {
     const bool face = !config.top_is_point && config.fill_type != ConeFillType::None;
     bke::SpanAttributeWriter<bool> selection = attributes.lookup_or_add_for_write_span<bool>(
-        attribute_outputs.top_id.get(), face ? bke::AttrDomain::Face : bke::AttrDomain::Point);
+        *attribute_outputs.top_id, face ? bke::AttrDomain::Face : bke::AttrDomain::Point);
 
     if (config.top_is_point) {
       selection.span[config.first_vert] = true;
@@ -488,7 +492,7 @@ static void calculate_selection_outputs(const ConeConfig &config,
   if (attribute_outputs.bottom_id) {
     const bool face = !config.bottom_is_point && config.fill_type != ConeFillType::None;
     bke::SpanAttributeWriter<bool> selection = attributes.lookup_or_add_for_write_span<bool>(
-        attribute_outputs.bottom_id.get(), face ? bke::AttrDomain::Face : bke::AttrDomain::Point);
+        *attribute_outputs.bottom_id, face ? bke::AttrDomain::Face : bke::AttrDomain::Point);
 
     if (config.bottom_is_point) {
       selection.span[config.last_vert] = true;
@@ -505,7 +509,7 @@ static void calculate_selection_outputs(const ConeConfig &config,
   /* Populate "Side" selection output. */
   if (attribute_outputs.side_id) {
     bke::SpanAttributeWriter<bool> selection = attributes.lookup_or_add_for_write_span<bool>(
-        attribute_outputs.side_id.get(), bke::AttrDomain::Face);
+        *attribute_outputs.side_id, bke::AttrDomain::Face);
 
     selection.span.slice(config.side_faces_start, config.side_faces_len).fill(true);
     selection.finish();
@@ -520,9 +524,7 @@ static void calculate_selection_outputs(const ConeConfig &config,
  * If the mesh is a truncated cone or a cylinder, the side faces are unwrapped into
  * a rectangle that fills the top half of the UV (or the entire UV, if there are no fills).
  */
-static void calculate_cone_uvs(const ConeConfig &config,
-                               Mesh *mesh,
-                               const bke::AttributeIDRef &uv_map_id)
+static void calculate_cone_uvs(const ConeConfig &config, Mesh *mesh, const StringRef uv_map_id)
 {
   bke::MutableAttributeAccessor attributes = mesh->attributes_for_write();
 
@@ -532,7 +534,7 @@ static void calculate_cone_uvs(const ConeConfig &config,
 
   Array<float2> circle(config.circle_segments);
   float angle = 0.0f;
-  const float angle_delta = 2.0f * M_PI / float(config.circle_segments);
+  const float angle_delta = 2.0f * math::numbers::pi / float(config.circle_segments);
   for (const int i : IndexRange(config.circle_segments)) {
     circle[i].x = std::cos(angle) * 0.225f;
     circle[i].y = std::sin(angle) * 0.225f;
@@ -693,7 +695,7 @@ Mesh *create_cylinder_or_cone_mesh(const float radius_top,
   calculate_cone_faces(config, corner_verts, corner_edges, face_offsets.drop_back(1));
   offset_indices::accumulate_counts_to_offsets(face_offsets);
   if (attribute_outputs.uv_map_id) {
-    calculate_cone_uvs(config, mesh, attribute_outputs.uv_map_id.get());
+    calculate_cone_uvs(config, mesh, *attribute_outputs.uv_map_id);
   }
   calculate_selection_outputs(config, attribute_outputs, mesh->attributes_for_write());
 

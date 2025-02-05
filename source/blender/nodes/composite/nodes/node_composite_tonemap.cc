@@ -61,22 +61,35 @@ static void node_composit_buts_tonemap(uiLayout *layout, bContext * /*C*/, Point
   col = uiLayoutColumn(layout, false);
   uiItemR(col, ptr, "tonemap_type", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
   if (RNA_enum_get(ptr, "tonemap_type") == 0) {
-    uiItemR(col, ptr, "key", UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER, nullptr, ICON_NONE);
-    uiItemR(col, ptr, "offset", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
-    uiItemR(col, ptr, "gamma", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
+    uiItemR(
+        col, ptr, "key", UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER, std::nullopt, ICON_NONE);
+    uiItemR(col, ptr, "offset", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    uiItemR(col, ptr, "gamma", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
   }
   else {
-    uiItemR(col, ptr, "intensity", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
-    uiItemR(
-        col, ptr, "contrast", UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER, nullptr, ICON_NONE);
-    uiItemR(
-        col, ptr, "adaptation", UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER, nullptr, ICON_NONE);
-    uiItemR(
-        col, ptr, "correction", UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER, nullptr, ICON_NONE);
+    uiItemR(col, ptr, "intensity", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
+    uiItemR(col,
+            ptr,
+            "contrast",
+            UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER,
+            std::nullopt,
+            ICON_NONE);
+    uiItemR(col,
+            ptr,
+            "adaptation",
+            UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER,
+            std::nullopt,
+            ICON_NONE);
+    uiItemR(col,
+            ptr,
+            "correction",
+            UI_ITEM_R_SPLIT_EMPTY_NAME | UI_ITEM_R_SLIDER,
+            std::nullopt,
+            ICON_NONE);
   }
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class ToneMapOperation : public NodeOperation {
  public:
@@ -109,6 +122,16 @@ class ToneMapOperation : public NodeOperation {
    * interactive techniques. 2002. */
   void execute_simple()
   {
+    if (this->context().use_gpu()) {
+      execute_simple_gpu();
+    }
+    else {
+      execute_simple_cpu();
+    }
+  }
+
+  void execute_simple_gpu()
+  {
     const float luminance_scale = compute_luminance_scale();
     const float luminance_scale_blend_factor = compute_luminance_scale_blend_factor();
     const float gamma = node_storage(bnode()).gamma;
@@ -134,6 +157,38 @@ class ToneMapOperation : public NodeOperation {
     GPU_shader_unbind();
     output_image.unbind_as_image();
     input_image.unbind_as_texture();
+  }
+
+  void execute_simple_cpu()
+  {
+    const float luminance_scale = compute_luminance_scale();
+    const float luminance_scale_blend_factor = compute_luminance_scale_blend_factor();
+    const float gamma = node_storage(bnode()).gamma;
+    const float inverse_gamma = gamma != 0.0f ? 1.0f / gamma : 0.0f;
+
+    const Result &image = get_input("Image");
+
+    const Domain domain = compute_domain();
+    Result &output = get_result("Image");
+    output.allocate_texture(domain);
+
+    parallel_for(domain.size, [&](const int2 texel) {
+      float4 input_color = image.load_pixel<float4>(texel);
+
+      /* Equation (2) from Reinhard's 2002 paper. */
+      float4 scaled_color = input_color * luminance_scale;
+
+      /* Equation (3) from Reinhard's 2002 paper, but with the 1 replaced with the blend factor for
+       * more flexibility. See ToneMapOperation::compute_luminance_scale_blend_factor. */
+      float4 denominator = luminance_scale_blend_factor + scaled_color;
+      float4 tone_mapped_color = math::safe_divide(scaled_color, denominator);
+
+      if (inverse_gamma != 0.0f) {
+        tone_mapped_color = math::pow(math::max(tone_mapped_color, float4(0.0f)), inverse_gamma);
+      }
+
+      output.store_pixel(texel, float4(tone_mapped_color.xyz(), input_color.w));
+    });
   }
 
   /* Computes the scaling factor in equation (2) from Reinhard's 2002 paper. */
@@ -169,6 +224,16 @@ class ToneMapOperation : public NodeOperation {
    * physiology." IEEE transactions on visualization and computer graphics 11.1 (2005): 13-24. */
   void execute_photoreceptor()
   {
+    if (this->context().use_gpu()) {
+      execute_photoreceptor_gpu();
+    }
+    else {
+      execute_photoreceptor_cpu();
+    }
+  }
+
+  void execute_photoreceptor_gpu()
+  {
     const float4 global_adaptation_level = compute_global_adaptation_level();
     const float contrast = compute_contrast();
     const float intensity = compute_intensity();
@@ -203,6 +268,41 @@ class ToneMapOperation : public NodeOperation {
     input_image.unbind_as_texture();
   }
 
+  void execute_photoreceptor_cpu()
+  {
+    const float4 global_adaptation_level = compute_global_adaptation_level();
+    const float contrast = compute_contrast();
+    const float intensity = compute_intensity();
+    const float chromatic_adaptation = get_chromatic_adaptation();
+    const float light_adaptation = get_light_adaptation();
+
+    float3 luminance_coefficients;
+    IMB_colormanagement_get_luminance_coefficients(luminance_coefficients);
+
+    const Result &input = get_input("Image");
+
+    const Domain domain = compute_domain();
+    Result &output = get_result("Image");
+    output.allocate_texture(domain);
+
+    parallel_for(domain.size, [&](const int2 texel) {
+      float4 input_color = input.load_pixel<float4>(texel);
+      float input_luminance = math::dot(input_color.xyz(), luminance_coefficients);
+
+      /* Trilinear interpolation between equations (6) and (7) from Reinhard's 2005 paper. */
+      float4 local_adaptation_level = math::interpolate(
+          float4(input_luminance), input_color, chromatic_adaptation);
+      float4 adaptation_level = math::interpolate(
+          global_adaptation_level, local_adaptation_level, light_adaptation);
+
+      /* Equation (1) from Reinhard's 2005 paper, assuming `Vmax` is 1. */
+      float4 semi_saturation = math::pow(intensity * adaptation_level, contrast);
+      float4 tone_mapped_color = math::safe_divide(input_color, input_color + semi_saturation);
+
+      output.store_pixel(texel, float4(tone_mapped_color.xyz(), input_color.w));
+    });
+  }
+
   /* Computes the global adaptation level from the trilinear interpolation equations constructed
    * from equations (6) and (7) in Reinhard's 2005 paper. */
   float4 compute_global_adaptation_level()
@@ -223,7 +323,7 @@ class ToneMapOperation : public NodeOperation {
     }
 
     const Result &input = get_input("Image");
-    return sum_color(context(), input.texture()) / (input.domain().size.x * input.domain().size.y);
+    return sum_color(context(), input) / (input.domain().size.x * input.domain().size.y);
   }
 
   float compute_average_luminance()
@@ -238,7 +338,7 @@ class ToneMapOperation : public NodeOperation {
     float luminance_coefficients[3];
     IMB_colormanagement_get_luminance_coefficients(luminance_coefficients);
     const Result &input = get_input("Image");
-    float sum = sum_luminance(context(), input.texture(), luminance_coefficients);
+    float sum = sum_luminance(context(), input, luminance_coefficients);
     return sum / (input.domain().size.x * input.domain().size.y);
   }
 
@@ -278,7 +378,7 @@ class ToneMapOperation : public NodeOperation {
     float luminance_coefficients[3];
     IMB_colormanagement_get_luminance_coefficients(luminance_coefficients);
     const float sum_of_log_luminance = sum_log_luminance(
-        context(), input_image.texture(), luminance_coefficients);
+        context(), input_image, luminance_coefficients);
 
     return sum_of_log_luminance / (input_image.domain().size.x * input_image.domain().size.y);
   }
@@ -287,8 +387,7 @@ class ToneMapOperation : public NodeOperation {
   {
     float luminance_coefficients[3];
     IMB_colormanagement_get_luminance_coefficients(luminance_coefficients);
-    const float maximum = maximum_luminance(
-        context(), get_input("Image").texture(), luminance_coefficients);
+    const float maximum = maximum_luminance(context(), get_input("Image"), luminance_coefficients);
     return std::log(math::max(maximum, 1e-5f));
   }
 
@@ -296,8 +395,7 @@ class ToneMapOperation : public NodeOperation {
   {
     float luminance_coefficients[3];
     IMB_colormanagement_get_luminance_coefficients(luminance_coefficients);
-    const float minimum = minimum_luminance(
-        context(), get_input("Image").texture(), luminance_coefficients);
+    const float minimum = minimum_luminance(context(), get_input("Image"), luminance_coefficients);
     return std::log(math::max(minimum, 1e-5f));
   }
 
@@ -330,7 +428,13 @@ void register_node_type_cmp_tonemap()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(&ntype, CMP_NODE_TONEMAP, "Tonemap", NODE_CLASS_OP_COLOR);
+  cmp_node_type_base(&ntype, "CompositorNodeTonemap", CMP_NODE_TONEMAP);
+  ntype.ui_name = "Tonemap";
+  ntype.ui_description =
+      "Map one set of colors to another in order to approximate the appearance of high dynamic "
+      "range";
+  ntype.enum_name_legacy = "TONEMAP";
+  ntype.nclass = NODE_CLASS_OP_COLOR;
   ntype.declare = file_ns::cmp_node_tonemap_declare;
   ntype.draw_buttons = file_ns::node_composit_buts_tonemap;
   ntype.initfunc = file_ns::node_composit_init_tonemap;
@@ -338,5 +442,5 @@ void register_node_type_cmp_tonemap()
       &ntype, "NodeTonemap", node_free_standard_storage, node_copy_standard_storage);
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

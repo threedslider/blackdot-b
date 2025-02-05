@@ -6,8 +6,6 @@
  * \ingroup edmesh
  */
 
-#include "DNA_scene_types.h"
-
 #include "RNA_access.hh"
 
 #include "WM_api.hh"
@@ -35,6 +33,7 @@ void ED_operatortypes_mesh()
   WM_operatortype_append(MESH_OT_hide);
   WM_operatortype_append(MESH_OT_reveal);
   WM_operatortype_append(MESH_OT_select_face_by_sides);
+  WM_operatortype_append(MESH_OT_select_by_pole_count);
   WM_operatortype_append(MESH_OT_select_loose);
   WM_operatortype_append(MESH_OT_select_mirror);
   WM_operatortype_append(MESH_OT_normals_make_consistent);

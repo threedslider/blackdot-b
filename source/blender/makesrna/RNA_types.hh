@@ -29,6 +29,17 @@ struct StructRNA;
 struct bContext;
 
 /**
+ * An ancestor of a given PointerRNA. The owner ID is not needed here, it is assumed to always be
+ * the same as the owner ID of the PropertyRNA itself.
+ */
+struct AncestorPointerRNA {
+  StructRNA *type;
+  void *data;
+};
+/** Allows to benefit from the `max_full_copy_size` optimization on copy of #blender::Vector. */
+constexpr int64_t ANCESTOR_POINTERRNA_DEFAULT_SIZE = 2;
+
+/**
  * Pointer
  *
  * RNA pointers are not a single C pointer but include the type,
@@ -37,12 +48,55 @@ struct bContext;
  * the properties and validate them. */
 
 struct PointerRNA {
-  ID *owner_id;
-  StructRNA *type;
-  void *data;
+  ID *owner_id = nullptr;
+  StructRNA *type = nullptr;
+  void *data = nullptr;
+
+  /**
+   * A chain of ancestors of this PointerRNA, if known. The last item is the closest ancestor.
+   *
+   * E.g. Parsing `vgroup = C.object.data.vertices[0].groups[0]` would result in the PointerRNA of
+   * `vgroup` having two ancestors: `vertices[0]` and `data` (aka the Mesh ID).
+   *
+   * By definition, PointerRNA of IDs are currently always 'discrete', i.e. do not have ancestors
+   * information, since an ID PointerRNA should always be its own root.
+   *
+   * \note: Currently, it is assumed that embedded or evaluated IDs can also be discrete
+   * PointerRNA. This should be fine, since they should all have their 'owner ID' or 'orig ID'
+   * pointer info. This may become a problem e.g. if in the future we allow embedded IDs into
+   * sub-structs of IDs.
+   *
+   * There is no guarantee that this chain is always (fully) valid and will lead to the root owner
+   * of the wrapped data (an ID). Depending on how the PointerRNA was created, and the available
+   * information at that time, it could be empty or only feature a partial ancestors chain. This
+   * can happen if the initial pointer is created as discrete (e.g. from an operator that does not
+   * have access to/knowledge of the whole ancestor chain), and a sub-struct is accessed through
+   * regular RNA property access (like a call to RNA_property_pointer_get etc.).
+   */
+  blender::Vector<AncestorPointerRNA, ANCESTOR_POINTERRNA_DEFAULT_SIZE> ancestors = {};
+
+  PointerRNA() = default;
+  PointerRNA(const PointerRNA &) = default;
+  PointerRNA(PointerRNA &&) = default;
+  PointerRNA &operator=(const PointerRNA &other) = default;
+  PointerRNA &operator=(PointerRNA &&other) = default;
+
+  PointerRNA(ID *owner_id, StructRNA *type, void *data)
+      : owner_id(owner_id), type(type), data(data), ancestors{}
+  {
+  }
+  PointerRNA(ID *owner_id, StructRNA *type, void *data, const PointerRNA &parent)
+      : owner_id(owner_id), type(type), data(data), ancestors(parent.ancestors)
+  {
+    this->ancestors.append({parent.type, parent.data});
+  }
+  PointerRNA(ID *owner_id, StructRNA *type, void *data, blender::Span<AncestorPointerRNA> parents)
+      : owner_id(owner_id), type(type), data(data), ancestors(parents)
+  {
+  }
 };
 
-constexpr PointerRNA PointerRNA_NULL{nullptr, nullptr, nullptr};
+extern const PointerRNA PointerRNA_NULL;
 
 struct PropertyPointerRNA {
   PointerRNA ptr;
@@ -88,6 +142,7 @@ enum PropertyUnit {
   PROP_UNIT_TEMPERATURE = (12 << 16),       /* C */
   PROP_UNIT_WAVELENGTH = (13 << 16),        /* `nm` (independent of scene). */
   PROP_UNIT_COLOR_TEMPERATURE = (14 << 16), /* K */
+  PROP_UNIT_FREQUENCY = (15 << 16),         /* Hz */
 };
 ENUM_OPERATORS(PropertyUnit, PROP_UNIT_TEMPERATURE)
 
@@ -190,6 +245,8 @@ enum PropertySubType {
 
   /* wavelength */
   PROP_COLOR_TEMPERATURE = 45 | PROP_UNIT_COLOR_TEMPERATURE,
+
+  PROP_FREQUENCY = 46 | PROP_UNIT_FREQUENCY,
 };
 
 /* Make sure enums are updated with these */
@@ -227,9 +284,18 @@ enum PropertyFlag {
   PROP_ICONS_CONSECUTIVE = (1 << 12),
   PROP_ICONS_REVERSE = (1 << 8),
 
-  /** Hidden in the user interface. Inherits #ROP_SKIP_PRESET. */
+  /**
+   * Hide in the user interface. That is, from auto-generated operator property UIs (like the
+   * redo panel) and the outliner "Data API" display mode. Does not hide it in the keymap UI.
+   *
+   * Also don't save in presets, as if #PROP_SKIP_PRESET was set.
+   */
   PROP_HIDDEN = (1 << 19),
-  /** Do not use ghost values. Inherits #PROP_SKIP_PRESET. */
+  /**
+   * Doesn't preserve the last value for repeated operator calls.
+   *
+   * Also don't save in presets, as if #PROP_SKIP_PRESET was set.
+   */
   PROP_SKIP_SAVE = (1 << 28),
 
   /* numbers */
@@ -327,7 +393,7 @@ enum PropertyFlag {
    */
   PROP_PATH_OUTPUT = (1 << 2),
 
-  /** Do not write in presets. */
+  /** Do not write in presets (#PROP_HIDDEN and #PROP_SKIP_SAVE won't either). */
   PROP_SKIP_PRESET = (1 << 11),
 };
 ENUM_OPERATORS(PropertyFlag, PROP_TEXTEDIT_UPDATE)
@@ -439,6 +505,7 @@ struct CollectionPropertyIterator {
   PointerRNA builtin_parent;
   PropertyRNA *prop;
   union {
+    /* Keep biggest object first in the union, for zero-initialization to work properly. */
     ArrayIterator array;
     ListBaseIterator listbase;
     CountIterator count;

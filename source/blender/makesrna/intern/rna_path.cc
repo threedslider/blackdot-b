@@ -13,6 +13,7 @@
 
 #include "BLI_alloca.h"
 #include "BLI_dynstr.h"
+#include "BLI_hash.hh"
 #include "BLI_listbase.h"
 #include "BLI_string.h"
 #include "BLI_string_ref.hh"
@@ -33,6 +34,14 @@
 
 #include "rna_access_internal.hh"
 #include "rna_internal.hh"
+
+int64_t RNAPath::hash() const
+{
+  if (key.has_value()) {
+    return blender::get_default_hash(path, key.value());
+  }
+  return blender::get_default_hash(path, index.value_or(0));
+};
 
 bool operator==(const RNAPath &left, const RNAPath &right)
 {
@@ -436,7 +445,7 @@ static bool rna_path_parse(const PointerRNA *ptr,
     }
 
     if (r_elements) {
-      prop_elem = MEM_cnew<PropertyElemRNA>(__func__);
+      prop_elem = MEM_new<PropertyElemRNA>(__func__);
       prop_elem->ptr = curptr;
       prop_elem->prop = prop;
       prop_elem->index = -1; /* index will be added later, if needed. */
@@ -512,7 +521,7 @@ static bool rna_path_parse(const PointerRNA *ptr,
   if (prop_elem &&
       (prop_elem->ptr.data != curptr.data || prop_elem->prop != prop || prop_elem->index != index))
   {
-    prop_elem = MEM_cnew<PropertyElemRNA>(__func__);
+    prop_elem = MEM_new<PropertyElemRNA>(__func__);
     prop_elem->ptr = curptr;
     prop_elem->prop = prop;
     prop_elem->index = index;
@@ -729,7 +738,7 @@ const char *RNA_path_array_index_token_find(const char *rna_path, const Property
   if (UNLIKELY(rna_path[0] == '\0')) {
     return nullptr;
   }
-  size_t rna_path_len = size_t(strlen(rna_path)) - 1;
+  size_t rna_path_len = strlen(rna_path) - 1;
   if (rna_path[rna_path_len] != ']') {
     return nullptr;
   }
@@ -950,7 +959,7 @@ ID *RNA_find_real_ID_and_path(ID *id, const char **r_path)
     *r_path = "";
   }
 
-  if ((id == nullptr) || (id->flag & LIB_EMBEDDED_DATA) == 0) {
+  if ((id == nullptr) || (id->flag & ID_FLAG_EMBEDDED_DATA) == 0) {
     return id;
   }
 
@@ -1213,7 +1222,10 @@ std::optional<std::string> RNA_path_resolve_from_type_to_property(const PointerR
       }
     }
 
-    BLI_freelistN(&path_elems);
+    LISTBASE_FOREACH_MUTABLE (PropertyElemRNA *, prop_elem, &path_elems) {
+      MEM_delete(prop_elem);
+    }
+    BLI_listbase_clear(&path_elems);
   }
 
   return path;
@@ -1334,7 +1346,7 @@ std::optional<std::string> RNA_path_struct_property_py(PointerRNA *ptr,
   }
 
   if ((index == -1) || (RNA_property_array_check(prop) == false)) {
-    return *data_path;
+    return data_path;
   }
   return fmt::format("{}[{}]", data_path.value_or(""), index);
 }

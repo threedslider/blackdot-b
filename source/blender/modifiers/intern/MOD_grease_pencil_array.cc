@@ -14,7 +14,7 @@
 #include "BKE_grease_pencil.hh"
 #include "BKE_instances.hh"
 #include "BKE_lib_query.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_modifier.hh"
 #include "BKE_screen.hh"
 
@@ -213,7 +213,6 @@ static bke::CurvesGeometry create_array_copies(const Object &ob,
   geometry::RealizeInstancesOptions options;
   options.keep_original_ids = true;
   options.realize_instance_attributes = false; /* Should this be true? */
-  options.propagation_info = {};
   bke::GeometrySet result_geo = geometry::realize_instances(
       bke::GeometrySet::from_instances(instances.release()), options);
   return std::move(result_geo.get_curves_for_write()->geometry.wrap());
@@ -284,53 +283,58 @@ static void panel_draw(const bContext *C, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "count", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "count", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   uiItemR(layout, ptr, "replace_material", UI_ITEM_NONE, IFACE_("Material Override"), ICON_NONE);
 
-  if (uiLayout *sub = uiLayoutPanelProp(
-          C, layout, ptr, "open_relative_offset_panel", "Relative Offset"))
+  if (uiLayout *sub = uiLayoutPanelPropWithBoolHeader(C,
+                                                      layout,
+                                                      ptr,
+                                                      "open_relative_offset_panel",
+                                                      "use_relative_offset",
+                                                      IFACE_("Relative Offset")))
   {
-    uiLayoutSetPropSep(sub, true);
-    uiItemR(sub, ptr, "use_relative_offset", UI_ITEM_NONE, IFACE_("Enable"), ICON_NONE);
-
     uiLayout *col = uiLayoutColumn(sub, false);
     uiLayoutSetActive(col, RNA_boolean_get(ptr, "use_relative_offset"));
     uiItemR(col, ptr, "relative_offset", UI_ITEM_NONE, IFACE_("Factor"), ICON_NONE);
   }
 
-  if (uiLayout *sub = uiLayoutPanelProp(
-          C, layout, ptr, "open_constant_offset_panel", "Constant Offset"))
+  if (uiLayout *sub = uiLayoutPanelPropWithBoolHeader(C,
+                                                      layout,
+                                                      ptr,
+                                                      "open_constant_offset_panel",
+                                                      "use_constant_offset",
+                                                      IFACE_("Constant Offset")))
   {
-    uiLayoutSetPropSep(sub, true);
-    uiItemR(sub, ptr, "use_constant_offset", UI_ITEM_NONE, IFACE_("Enable"), ICON_NONE);
-
     uiLayout *col = uiLayoutColumn(sub, false);
     uiLayoutSetActive(col, RNA_boolean_get(ptr, "use_constant_offset"));
     uiItemR(col, ptr, "constant_offset", UI_ITEM_NONE, IFACE_("Distance"), ICON_NONE);
   }
 
-  if (uiLayout *sub = uiLayoutPanelProp(
-          C, layout, ptr, "open_object_offset_panel", "Object Offset"))
+  if (uiLayout *sub = uiLayoutPanelPropWithBoolHeader(C,
+                                                      layout,
+                                                      ptr,
+                                                      "open_object_offset_panel",
+                                                      "use_object_offset",
+                                                      IFACE_("Object Offset")))
   {
-    uiLayoutSetPropSep(sub, true);
-    uiItemR(sub, ptr, "use_object_offset", UI_ITEM_NONE, IFACE_("Enable"), ICON_NONE);
-
     uiLayout *col = uiLayoutColumn(sub, false);
     uiLayoutSetActive(col, RNA_boolean_get(ptr, "use_object_offset"));
     uiItemR(col, ptr, "offset_object", UI_ITEM_NONE, IFACE_("Object"), ICON_NONE);
   }
 
-  if (uiLayout *sub = uiLayoutPanelProp(C, layout, ptr, "open_randomize_panel", "Randomize")) {
+  if (uiLayout *sub = uiLayoutPanelProp(
+          C, layout, ptr, "open_randomize_panel", IFACE_("Randomize")))
+  {
     uiLayoutSetPropSep(sub, true);
     uiItemR(sub, ptr, "random_offset", UI_ITEM_NONE, IFACE_("Offset"), ICON_NONE);
     uiItemR(sub, ptr, "random_rotation", UI_ITEM_NONE, IFACE_("Rotation"), ICON_NONE);
     uiItemR(sub, ptr, "random_scale", UI_ITEM_NONE, IFACE_("Scale"), ICON_NONE);
-    uiItemR(sub, ptr, "use_uniform_random_scale", UI_ITEM_NONE, nullptr, ICON_NONE);
-    uiItemR(sub, ptr, "seed", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(sub, ptr, "use_uniform_random_scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiItemR(sub, ptr, "seed", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 
   if (uiLayout *influence_panel = uiLayoutPanelProp(
-          C, layout, ptr, "open_influence_panel", "Influence"))
+          C, layout, ptr, "open_influence_panel", IFACE_("Influence")))
   {
     modifier::greasepencil::draw_layer_filter_settings(C, influence_panel, ptr);
     modifier::greasepencil::draw_material_filter_settings(C, influence_panel, ptr);

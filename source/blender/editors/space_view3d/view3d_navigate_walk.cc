@@ -18,7 +18,7 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_kdopbvh.h"
+#include "BLI_kdopbvh.hh"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_rect.h"
@@ -28,6 +28,9 @@
 #include "BKE_context.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_report.hh"
+#include "BKE_screen.hh"
+
+#include "BLT_translation.hh"
 
 #include "WM_api.hh"
 #include "WM_types.hh"
@@ -35,6 +38,7 @@
 #include "ED_screen.hh"
 #include "ED_space_api.hh"
 #include "ED_transform_snap_object_context.hh"
+#include "ED_undo.hh"
 
 #include "UI_resources.hh"
 
@@ -43,7 +47,9 @@
 #include "view3d_intern.hh" /* own include */
 #include "view3d_navigate.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include <fmt/format.h>
+
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 #ifdef WITH_INPUT_NDOF
 // #  define NDOF_WALK_DEBUG
@@ -352,7 +358,7 @@ static void drawWalkPixel(const bContext * /*C*/, ARegion *region, void *arg)
 
   if (ED_view3d_cameracontrol_object_get(walk->v3d_camera_control)) {
     ED_view3d_calc_camera_border(
-        walk->scene, walk->depsgraph, region, walk->v3d, walk->rv3d, &viewborder, false);
+        walk->scene, walk->depsgraph, region, walk->v3d, walk->rv3d, false, &viewborder);
     xoff = int(viewborder.xmin + BLI_rctf_size_x(&viewborder) * 0.5f);
     yoff = int(viewborder.ymin + BLI_rctf_size_y(&viewborder) * 0.5f);
   }
@@ -620,7 +626,7 @@ static bool initWalkInfo(bContext *C, WalkInfo *walk, wmOperator *op, const int 
   walk->time_lastdraw = BLI_time_now_seconds();
 
   walk->draw_handle_pixel = ED_region_draw_cb_activate(
-      walk->region->type, drawWalkPixel, walk, REGION_DRAW_POST_PIXEL);
+      walk->region->runtime->type, drawWalkPixel, walk, REGION_DRAW_POST_PIXEL);
 
   walk->rv3d->rflag |= RV3D_NAVIGATING;
 
@@ -665,9 +671,11 @@ static int walkEnd(bContext *C, WalkInfo *walk)
   win = CTX_wm_window(C);
   rv3d = walk->rv3d;
 
+  ED_workspace_status_text(C, nullptr);
+
   WM_event_timer_remove(CTX_wm_manager(C), win, walk->timer);
 
-  ED_region_draw_cb_exit(walk->region->type, walk->draw_handle_pixel);
+  ED_region_draw_cb_exit(walk->region->runtime->type, walk->draw_handle_pixel);
 
   ED_transform_snap_object_context_destroy(walk->snap_context);
 
@@ -1459,6 +1467,65 @@ static void walkApply_ndof(bContext *C, WalkInfo *walk, bool is_confirm)
 /** \name Walk Operator
  * \{ */
 
+static void walk_draw_status(bContext *C, wmOperator *op)
+{
+  WalkInfo *walk = static_cast<WalkInfo *>(op->customdata);
+
+  WorkspaceStatus status(C);
+
+  status.opmodal(IFACE_("Confirm"), op->type, WALK_MODAL_CONFIRM);
+  status.opmodal(IFACE_("Cancel"), op->type, WALK_MODAL_CANCEL);
+
+  status.opmodal(
+      "", op->type, WALK_MODAL_DIR_FORWARD, walk->active_directions & WALK_BIT_LOCAL_FORWARD);
+  status.opmodal("", op->type, WALK_MODAL_DIR_LEFT, walk->active_directions & WALK_BIT_LOCAL_LEFT);
+  status.opmodal(
+      "", op->type, WALK_MODAL_DIR_BACKWARD, walk->active_directions & WALK_BIT_LOCAL_BACKWARD);
+  status.opmodal(
+      "", op->type, WALK_MODAL_DIR_RIGHT, walk->active_directions & WALK_BIT_LOCAL_RIGHT);
+  status.item(IFACE_("Move"), ICON_NONE);
+
+  status.opmodal("", op->type, WALK_MODAL_DIR_UP, walk->active_directions & WALK_BIT_GLOBAL_UP);
+  status.opmodal(
+      "", op->type, WALK_MODAL_DIR_DOWN, walk->active_directions & WALK_BIT_GLOBAL_DOWN);
+  status.item(IFACE_("Up/Down"), ICON_NONE);
+
+  status.opmodal(
+      "", op->type, WALK_MODAL_DIR_LOCAL_UP, walk->active_directions & WALK_BIT_LOCAL_UP);
+  status.opmodal(
+      "", op->type, WALK_MODAL_DIR_LOCAL_DOWN, walk->active_directions & WALK_BIT_LOCAL_DOWN);
+  status.item(IFACE_("Local Up/Down"), ICON_NONE);
+
+  status.opmodal(
+      IFACE_("Jump"), op->type, WALK_MODAL_JUMP, walk->gravity_state == WALK_GRAVITY_STATE_JUMP);
+
+  status.opmodal(IFACE_("Teleport"),
+                 op->type,
+                 WALK_MODAL_TELEPORT,
+                 walk->teleport.state == WALK_TELEPORT_STATE_ON);
+
+  status.opmodal(IFACE_("Fast"), op->type, WALK_MODAL_FAST_ENABLE, walk->is_fast);
+  status.opmodal(IFACE_("Slow"), op->type, WALK_MODAL_SLOW_ENABLE, walk->is_slow);
+
+  status.opmodal(IFACE_("Gravity"),
+                 op->type,
+                 WALK_MODAL_GRAVITY_TOGGLE,
+                 walk->navigation_mode == WALK_MODE_GRAVITY);
+
+  status.opmodal("", op->type, WALK_MODAL_ACCELERATE);
+  status.opmodal("", op->type, WALK_MODAL_DECELERATE);
+  status.item(fmt::format("{} ({:.2f})", IFACE_("Acceleration"), g_walk.base_speed), ICON_NONE);
+
+  status.opmodal("", op->type, WALK_MODAL_INCREASE_JUMP);
+  status.opmodal("", op->type, WALK_MODAL_DECREASE_JUMP);
+  status.item(fmt::format("{} ({:.2f})", IFACE_("Jump Height"), g_walk.jump_height), ICON_NONE);
+
+  status.opmodal(IFACE_("Z Axis Correction"),
+                 op->type,
+                 WALK_MODAL_AXIS_LOCK_Z,
+                 walk->zlock != WALK_AXISLOCK_STATE_OFF);
+}
+
 static int walk_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   RegionView3D *rv3d = CTX_wm_region_view3d(C);
@@ -1476,6 +1543,8 @@ static int walk_invoke(bContext *C, wmOperator *op, const wmEvent *event)
   }
 
   walkEvent(walk, event);
+
+  walk_draw_status(C, op);
 
   WM_event_add_modal_handler(C, op);
 
@@ -1503,6 +1572,8 @@ static int walk_modal(bContext *C, wmOperator *op, const wmEvent *event)
 
   walkEvent(walk, event);
 
+  walk_draw_status(C, op);
+
 #ifdef WITH_INPUT_NDOF
   if (walk->ndof) { /* 3D mouse overrules [2D mouse + timer]. */
     if (event->type == NDOF_MOTION) {
@@ -1523,7 +1594,12 @@ static int walk_modal(bContext *C, wmOperator *op, const wmEvent *event)
     do_draw = true;
   }
   if (exit_code == OPERATOR_FINISHED) {
-    ED_view3d_camera_lock_undo_push(op->type->name, v3d, rv3d, C);
+    const bool is_undo_pushed = ED_view3d_camera_lock_undo_push(op->type->name, v3d, rv3d, C);
+    /* If generic 'locked camera' code did not push an undo, but there is a valid 'walking
+     * object', an undo push is still needed, since that object transform was modified. */
+    if (!is_undo_pushed && walk_object && ED_undo_is_memfile_compatible(C)) {
+      ED_undo_push(C, op->type->name);
+    }
   }
 
   if (do_draw) {

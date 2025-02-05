@@ -2,23 +2,16 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include <algorithm>
-
 #include "curves_sculpt_intern.hh"
 
-#include "BLI_kdtree.h"
-#include "BLI_length_parameterize.hh"
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix_types.hh"
-#include "BLI_rand.hh"
 #include "BLI_vector.hh"
 
 #include "DEG_depsgraph.hh"
 
 #include "BKE_attribute.hh"
-#include "BKE_attribute_math.hh"
 #include "BKE_brush.hh"
-#include "BKE_bvhutils.hh"
 #include "BKE_context.hh"
 #include "BKE_curves.hh"
 #include "BKE_mesh.hh"
@@ -30,7 +23,6 @@
 #include "DNA_curves_types.h"
 #include "DNA_object_types.h"
 #include "DNA_screen_types.h"
-#include "DNA_space_types.h"
 
 #include "ED_screen.hh"
 #include "ED_view3d.hh"
@@ -114,7 +106,7 @@ struct SnakeHookOperatorExecutor {
 
     curves_id_ = static_cast<Curves *>(object_->data);
     curves_ = &curves_id_->geometry.wrap();
-    if (curves_->curves_num() == 0) {
+    if (curves_->is_empty()) {
       return;
     }
 
@@ -129,7 +121,7 @@ struct SnakeHookOperatorExecutor {
     brush_pos_diff_re_ = brush_pos_re_ - brush_pos_prev_re_;
 
     if (stroke_extension.is_first) {
-      if (falloff_shape == PAINT_FALLOFF_SHAPE_SPHERE) {
+      if (falloff_shape == PAINT_FALLOFF_SHAPE_SPHERE || (U.uiflag & USER_ORBIT_SELECTION)) {
         std::optional<CurvesBrush3D> brush_3d = sample_curves_3d_brush(*ctx_.depsgraph,
                                                                        *ctx_.region,
                                                                        *ctx_.v3d,
@@ -139,6 +131,9 @@ struct SnakeHookOperatorExecutor {
                                                                        brush_radius_base_re_);
         if (brush_3d.has_value()) {
           self_->brush_3d_ = *brush_3d;
+          remember_stroke_position(
+              *ctx_.scene,
+              math::transform_point(transforms_.curves_to_world, self_->brush_3d_.position_cu));
         }
       }
       return;

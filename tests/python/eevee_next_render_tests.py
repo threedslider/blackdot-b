@@ -9,6 +9,22 @@ import pathlib
 import subprocess
 import sys
 from pathlib import Path
+try:
+    # Render report is not always available and leads to errors in the console logs that can be ignored.
+    from modules import render_report
+
+    class EEVEEReport(render_report.Report):
+        def __init__(self, title, output_dir, oiiotool, variation=None, blocklist=[]):
+            super().__init__(title, output_dir, oiiotool, variation=variation, blocklist=blocklist)
+            self.gpu_backend = variation
+
+        def _get_render_arguments(self, arguments_cb, filepath, base_output_filepath):
+            return arguments_cb(filepath, base_output_filepath, gpu_backend=self.gpu_backend)
+
+except ImportError:
+    # render_report can only be loaded when running the render tests. It errors when
+    # this script is run during preparation steps.
+    pass
 
 # List of .blend files that are known to be failing and are not ready to be
 # tested, or that only make sense on some devices. Accepts regular expressions.
@@ -16,7 +32,24 @@ BLOCKLIST = [
     # Blocked due to point cloud volume differences between platforms (to be fixed).
     "points_volume.blend",
     # Blocked due to GBuffer encoding of small IOR difference between platforms (to be fixed).
-    "principled_thinfilm_transmission.blend",
+    "principled_bsdf_thinfilm_transmission.blend",
+    "ray_offset.blend",
+    # Blocked due to difference in border texel handling between platforms (to be fixed).
+    "render_passes_thinfilm_color.blend",
+]
+
+BLOCKLIST_METAL = [
+    # Blocked due to difference in tangent space calculation (to be fixed).
+    "tangent_no_uv.blend",
+    # Blocked due to difference in volume lightprobe bakes (to be fixed).
+    "clamp_.*.blend",
+    "shadow_all_max_bounces.blend",
+    "light_link_exclude.blend",
+    "light_link_instanced_receiver.blend",
+    # Blocked due to difference in screen space tracing (to be fixed).
+    "sss_reflection_clamp.blend",
+    # Blocked due to difference in volume rendering (to be fixed).
+    "principled_bsdf_interior.blend",
 ]
 
 
@@ -84,8 +117,11 @@ def setup():
                 if mat_slot.material:
                     mat_slot.material.thickness_mode = 'SPHERE'
 
+        if bpy.data.objects.get('Volume_Probe_Baked') is not None:
+            # Some file already have pre existing probe setup with baked data.
+            pass
         # Does not work in edit mode
-        if bpy.context.mode == 'OBJECT':
+        elif bpy.context.mode == 'OBJECT':
             # Simple probe setup
             bpy.ops.object.lightprobe_add(type='SPHERE', location=(0.0, 0.1, 1.0))
             cubemap = bpy.context.selected_objects[0]
@@ -138,35 +174,45 @@ def get_gpu_device_type(blender):
             if line.startswith("GPU_DEVICE_TYPE:"):
                 vendor = line.split(':')[1]
                 return vendor
-    except BaseException as e:
+    except Exception:
         return None
     return None
 
 
-def get_arguments(filepath, output_filepath):
-    return [
+def get_arguments(filepath, output_filepath, gpu_backend):
+    arguments = [
         "--background",
         "--factory-startup",
         "--enable-autoexec",
         "--debug-memory",
-        "--debug-exit-on-error",
+        "--debug-exit-on-error"]
+
+    if gpu_backend:
+        arguments.extend(["--gpu-backend", gpu_backend])
+
+    arguments.extend([
         filepath,
         "-E", "BLENDER_EEVEE_NEXT",
         "-P",
         os.path.realpath(__file__),
         "-o", output_filepath,
         "-F", "PNG",
-        "-f", "1"]
+        "-f", "1"])
+
+    return arguments
 
 
 def create_argparse():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-blender", nargs="+")
-    parser.add_argument("-testdir", nargs=1)
-    parser.add_argument("-outdir", nargs=1)
-    parser.add_argument("-oiiotool", nargs=1)
+    parser = argparse.ArgumentParser(
+        description="Run test script for each blend file in TESTDIR, comparing the render result with known output."
+    )
+    parser.add_argument("--blender", required=True)
+    parser.add_argument("--testdir", required=True)
+    parser.add_argument("--outdir", required=True)
+    parser.add_argument("--oiiotool", required=True)
     parser.add_argument('--batch', default=False, action='store_true')
     parser.add_argument('--fail-silently', default=False, action='store_true')
+    parser.add_argument('--gpu-backend')
     return parser
 
 
@@ -174,30 +220,34 @@ def main():
     parser = create_argparse()
     args = parser.parse_args()
 
-    blender = args.blender[0]
-    test_dir = args.testdir[0]
-    oiiotool = args.oiiotool[0]
-    output_dir = args.outdir[0]
-
-    gpu_device_type = get_gpu_device_type(blender)
+    gpu_device_type = get_gpu_device_type(args.blender)
     reference_override_dir = None
     if gpu_device_type == "AMD":
         reference_override_dir = "eevee_next_renders/amd"
 
-    from modules import render_report
-    report = render_report.Report("Eevee Next", output_dir, oiiotool, blocklist=BLOCKLIST)
+    blocklist = BLOCKLIST
+    if args.gpu_backend == "metal":
+        blocklist += BLOCKLIST_METAL
+
+    report = EEVEEReport("Eevee Next", args.outdir, args.oiiotool, variation=args.gpu_backend, blocklist=blocklist)
+    if args.gpu_backend == "vulkan":
+        report.set_compare_engine('eevee_next', 'opengl')
+    else:
+        report.set_compare_engine('cycles', 'CPU')
+
     report.set_pixelated(True)
-    report.set_engine_name('eevee_next')
     report.set_reference_dir("eevee_next_renders")
     report.set_reference_override_dir(reference_override_dir)
-    report.set_compare_engine('cycles', 'CPU')
 
-    test_dir_name = Path(test_dir).name
+    test_dir_name = Path(args.testdir).name
     if test_dir_name.startswith('image_mapping'):
         # Platform dependent border values. To be fixed
         report.set_fail_threshold(0.2)
     elif test_dir_name.startswith('image'):
         report.set_fail_threshold(0.051)
+    elif test_dir_name.startswith('displacement'):
+        # metal shadow and wireframe difference. To be fixed.
+        report.set_fail_threshold(0.07)
 
     # Noise pattern changes depending on platform. Mostly caused by transparency.
     # TODO(fclem): See if we can just increase number of samples per file.
@@ -213,8 +263,11 @@ def main():
     elif test_dir_name.startswith('pointcloud'):
         # points transparent
         report.set_fail_threshold(0.06)
+    elif test_dir_name.startswith('light_linking'):
+        # Noise difference in transparent material
+        report.set_fail_threshold(0.05)
 
-    ok = report.run(test_dir, blender, get_arguments, batch=args.batch, fail_silently=args.fail_silently)
+    ok = report.run(args.testdir, args.blender, get_arguments, batch=args.batch, fail_silently=args.fail_silently)
     sys.exit(not ok)
 
 

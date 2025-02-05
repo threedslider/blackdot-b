@@ -6,15 +6,14 @@
  * \ingroup eevee
  */
 
-// #include "BLI_map.hh"
 #include "BKE_colortools.hh"
-#include "DEG_depsgraph_query.hh"
+
+#include "RE_engine.h"
+
+#include "draw_manager_profiling.hh"
 
 #include "eevee_instance.hh"
 #include "eevee_motion_blur.hh"
-// #include "eevee_sampling.hh"
-// #include "eevee_shader_shared.hh"
-// #include "eevee_velocity.hh"
 
 namespace blender::eevee {
 
@@ -243,18 +242,7 @@ void MotionBlurModule::render(View &view, GPUTexture **input_tx, GPUTexture **ou
 
   tile_indirection_buf_.clear_to_zero();
 
-  const bool do_motion_vectors_swizzle = inst_.render_buffers.vector_tx_format() == GPU_RG16F;
-  if (do_motion_vectors_swizzle) {
-    /* Change texture swizzling to avoid complexity in gather pass shader. */
-    GPU_texture_swizzle_set(inst_.render_buffers.vector_tx, "rgrg");
-  }
-
   inst_.manager->submit(motion_blur_ps_, view);
-
-  if (do_motion_vectors_swizzle) {
-    /* Reset swizzle since this texture might be reused in other places. */
-    GPU_texture_swizzle_set(inst_.render_buffers.vector_tx, "rgba");
-  }
 
   tiles_tx_.release();
 

@@ -9,7 +9,6 @@
 #include "BLI_math_boolean.hh"
 #include "BLI_math_mpq.hh"
 #include "BLI_math_vector_types.hh"
-#include "BLI_span.hh"
 #include "BLI_utildefines.h"
 
 namespace blender {
@@ -163,7 +162,7 @@ static RobustInitCaller init_caller;
  */
 
 #define INEXACT /* Nothing */
-/* #define INEXACT volatile */
+// #define INEXACT volatile
 
 /* Which of the following two methods of finding the absolute values is
  * fastest is compiler-dependent.  A few compilers can inline and optimize
@@ -173,7 +172,7 @@ static RobustInitCaller init_caller;
  */
 
 #define Absolute(a) ((a) >= 0.0 ? (a) : -(a))
-/* #define Absolute(a)  fabs(a) */
+// #define Absolute(a)  fabs(a)
 
 /* Many of the operations are broken up into two pieces, a main part that
  * performs an approximate operation, and a "tail" that computes the

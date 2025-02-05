@@ -8,8 +8,10 @@
 #include "BKE_compute_contexts.hh"
 #include "BKE_context.hh"
 #include "BKE_main.hh"
+#include "BKE_node_legacy_types.hh"
 #include "BKE_node_runtime.hh"
 #include "BKE_node_tree_zones.hh"
+#include "BKE_viewer_path.hh"
 #include "BKE_workspace.hh"
 
 #include "BLI_listbase.h"
@@ -31,7 +33,7 @@ using bke::bNodeTreeZones;
 
 static ViewerPathElem *viewer_path_elem_for_zone(const bNodeTreeZone &zone)
 {
-  switch (zone.output_node->type) {
+  switch (zone.output_node->type_legacy) {
     case GEO_NODE_SIMULATION_OUTPUT: {
       SimulationZoneViewerPathElem *node_elem = BKE_viewer_path_elem_new_simulation_zone();
       node_elem->sim_output_node_id = zone.output_node->identifier;
@@ -42,6 +44,15 @@ static ViewerPathElem *viewer_path_elem_for_zone(const bNodeTreeZone &zone)
       RepeatZoneViewerPathElem *node_elem = BKE_viewer_path_elem_new_repeat_zone();
       node_elem->repeat_output_node_id = zone.output_node->identifier;
       node_elem->iteration = storage.inspection_index;
+      return &node_elem->base;
+    }
+    case GEO_NODE_FOREACH_GEOMETRY_ELEMENT_OUTPUT: {
+      const auto &storage = *static_cast<NodeGeometryForeachGeometryElementOutput *>(
+          zone.output_node->storage);
+      ForeachGeometryElementZoneViewerPathElem *node_elem =
+          BKE_viewer_path_elem_new_foreach_geometry_element_zone();
+      node_elem->zone_output_node_id = zone.output_node->identifier;
+      node_elem->index = storage.inspection_index;
       return &node_elem->base;
     }
   }
@@ -98,7 +109,7 @@ static void viewer_path_for_geometry_node(const SpaceNode &snode,
     bNodeTree *tree = tree_path[i]->nodetree;
     /* The tree path contains the name of the node but not its ID. */
     const char *node_name = tree_path[i + 1]->node_name;
-    const bNode *node = bke::nodeFindNodebyName(tree, node_name);
+    const bNode *node = bke::node_find_node_by_name(tree, node_name);
     /* The name in the tree path should match a group node in the tree. Sometimes, the tree-path is
      * out of date though. */
     if (node == nullptr) {
@@ -148,7 +159,7 @@ void activate_geometry_node(Main &bmain, SpaceNode &snode, bNode &node)
     return;
   }
   for (bNode *iter_node : snode.edittree->all_nodes()) {
-    if (iter_node->type == GEO_NODE_VIEWER) {
+    if (iter_node->type_legacy == GEO_NODE_VIEWER) {
       SET_FLAG_FROM_TEST(iter_node->flag, iter_node == &node, NODE_DO_OUTPUT);
     }
   }
@@ -256,7 +267,8 @@ std::optional<ViewerPathForGeometryNodesViewer> parse_geometry_nodes_viewer(
     if (!ELEM(elem->type,
               VIEWER_PATH_ELEM_TYPE_GROUP_NODE,
               VIEWER_PATH_ELEM_TYPE_SIMULATION_ZONE,
-              VIEWER_PATH_ELEM_TYPE_REPEAT_ZONE))
+              VIEWER_PATH_ELEM_TYPE_REPEAT_ZONE,
+              VIEWER_PATH_ELEM_TYPE_FOREACH_GEOMETRY_ELEMENT_ZONE))
     {
       return std::nullopt;
     }
@@ -314,6 +326,20 @@ bool exists_geometry_nodes_viewer(const ViewerPathForGeometryNodesViewer &parsed
         const auto &typed_elem = *reinterpret_cast<const RepeatZoneViewerPathElem *>(path_elem);
         const bNodeTreeZone *next_zone = tree_zones->get_zone_by_node(
             typed_elem.repeat_output_node_id);
+        if (next_zone == nullptr) {
+          return false;
+        }
+        if (next_zone->parent_zone != zone) {
+          return false;
+        }
+        zone = next_zone;
+        break;
+      }
+      case VIEWER_PATH_ELEM_TYPE_FOREACH_GEOMETRY_ELEMENT_ZONE: {
+        const auto &typed_elem =
+            *reinterpret_cast<const ForeachGeometryElementZoneViewerPathElem *>(path_elem);
+        const bNodeTreeZone *next_zone = tree_zones->get_zone_by_node(
+            typed_elem.zone_output_node_id);
         if (next_zone == nullptr) {
           return false;
         }
@@ -401,6 +427,9 @@ UpdateActiveGeometryNodesViewerResult update_active_geometry_nodes_viewer(const 
         if (snode.edittree->type != NTREE_GEOMETRY) {
           continue;
         }
+        if (!snode.id) {
+          continue;
+        }
         snode.edittree->ensure_topology_cache();
         const bNode *viewer_node = snode.edittree->node_by_id(viewer_node_id);
         if (viewer_node == nullptr) {
@@ -413,7 +442,7 @@ UpdateActiveGeometryNodesViewerResult update_active_geometry_nodes_viewer(const 
         BLI_SCOPED_DEFER([&]() { BKE_viewer_path_clear(&tmp_viewer_path); });
         viewer_path_for_geometry_node(snode, *viewer_node, tmp_viewer_path);
         if (!BKE_viewer_path_equal(
-                &viewer_path, &tmp_viewer_path, VIEWER_PATH_EQUAL_FLAG_IGNORE_REPEAT_ITERATION))
+                &viewer_path, &tmp_viewer_path, VIEWER_PATH_EQUAL_FLAG_IGNORE_ITERATION))
         {
           continue;
         }
@@ -485,6 +514,13 @@ bNode *find_geometry_nodes_viewer(const ViewerPath &viewer_path, SpaceNode &snod
       const auto &elem = reinterpret_cast<const RepeatZoneViewerPathElem &>(elem_generic);
       compute_context_builder.push<bke::RepeatZoneComputeContext>(elem.repeat_output_node_id,
                                                                   elem.iteration);
+      return true;
+    }
+    case VIEWER_PATH_ELEM_TYPE_FOREACH_GEOMETRY_ELEMENT_ZONE: {
+      const auto &elem = reinterpret_cast<const ForeachGeometryElementZoneViewerPathElem &>(
+          elem_generic);
+      compute_context_builder.push<bke::ForeachGeometryElementZoneComputeContext>(
+          elem.zone_output_node_id, elem.index);
       return true;
     }
   }

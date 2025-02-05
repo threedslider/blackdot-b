@@ -26,7 +26,7 @@ blender --background --factory-startup --python doc/python_api/sphinx_changelog_
 
 # Api comparison can also run without blender,
 # will by default generate changeloig between the last two available versions listed in the index,
-# unless input files are provided explicitely:
+# unless input files are provided explicitly:
 python doc/python_api/sphinx_changelog_gen.py -- \
         --indexpath="path/to/api/docs/api_dump_index.json" \
         changelog --filepath-in-from blender_api_2_63_0.json \
@@ -53,6 +53,9 @@ API dump format:
 ]
 
 """
+__all__ = (
+    "main",
+)
 
 import json
 import os
@@ -66,7 +69,7 @@ API_F_ARGS = 7
 def api_version():
     try:
         import bpy
-    except:
+    except ModuleNotFoundError:
         return None, None
     version = tuple(bpy.app.version[:2])
     version_key = "%d.%d" % (version[0], version[1])

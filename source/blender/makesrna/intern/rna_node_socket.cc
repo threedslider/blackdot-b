@@ -6,8 +6,6 @@
  * \ingroup RNA
  */
 
-#include "BLI_math_vector.h"
-
 #include "DNA_node_types.h"
 
 #include "RNA_define.hh"
@@ -45,6 +43,10 @@ const EnumPropertyItem rna_enum_node_socket_type_items[] = {
 
 #  include "DNA_material_types.h"
 
+#  include "BLI_math_vector.h"
+#  include "BLI_string_ref.hh"
+
+#  include "BKE_main_invariants.hh"
 #  include "BKE_node.hh"
 #  include "BKE_node_enum.hh"
 #  include "BKE_node_runtime.hh"
@@ -62,8 +64,11 @@ extern FunctionRNA rna_NodeSocket_draw_color_simple_func;
 
 /* ******** Node Socket ******** */
 
-static void rna_NodeSocket_draw(
-    bContext *C, uiLayout *layout, PointerRNA *ptr, PointerRNA *node_ptr, const char *text)
+static void rna_NodeSocket_draw(bContext *C,
+                                uiLayout *layout,
+                                PointerRNA *ptr,
+                                PointerRNA *node_ptr,
+                                const blender::StringRefNull text)
 {
   bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
   ParameterList list;
@@ -114,7 +119,7 @@ static void rna_NodeSocket_draw_color_simple(const blender::bke::bNodeSocketType
   func = &rna_NodeSocket_draw_color_simple_func; /* RNA_struct_find_function(&ptr,
                                                   * "draw_color_simple"); */
 
-  PointerRNA ptr = RNA_pointer_create(nullptr, socket_type->ext_socket.srna, nullptr);
+  PointerRNA ptr = RNA_pointer_create_discrete(nullptr, socket_type->ext_socket.srna, nullptr);
   RNA_parameter_list_create(&list, &ptr, func);
   RNA_parameter_set_lookup(&list, "type", socket_type);
   socket_type->ext_socket.call(nullptr, &ptr, func, &list);
@@ -136,7 +141,7 @@ static bool rna_NodeSocket_unregister(Main * /*bmain*/, StructRNA *type)
   RNA_struct_free_extension(type, &st->ext_socket);
   RNA_struct_free(&BLENDER_RNA, type);
 
-  blender::bke::nodeUnregisterSocketType(st);
+  blender::bke::node_unregister_socket_type(st);
 
   /* update while blender is running */
   WM_main_add_notifier(NC_NODE | NA_EDITED, nullptr);
@@ -151,44 +156,41 @@ static StructRNA *rna_NodeSocket_register(Main * /*bmain*/,
                                           StructCallbackFunc call,
                                           StructFreeFunc free)
 {
-  blender::bke::bNodeSocketType *st, dummy_st;
+  blender::bke::bNodeSocketType *st;
   bNodeSocket dummy_sock;
   bool have_function[3];
 
   /* setup dummy socket & socket type to store static properties in */
-  memset(&dummy_st, 0, sizeof(blender::bke::bNodeSocketType));
+  blender::bke::bNodeSocketType dummy_st = {};
   dummy_st.type = SOCK_CUSTOM;
 
   memset(&dummy_sock, 0, sizeof(bNodeSocket));
   dummy_sock.typeinfo = &dummy_st;
-  PointerRNA dummy_sock_ptr = RNA_pointer_create(nullptr, &RNA_NodeSocket, &dummy_sock);
+  PointerRNA dummy_sock_ptr = RNA_pointer_create_discrete(nullptr, &RNA_NodeSocket, &dummy_sock);
 
   /* validate the python class */
   if (validate(&dummy_sock_ptr, data, have_function) != 0) {
     return nullptr;
   }
 
-  if (strlen(identifier) >= sizeof(dummy_st.idname)) {
+  if (strlen(identifier) >= sizeof(dummy_sock.idname)) {
     BKE_reportf(reports,
                 RPT_ERROR,
                 "Registering node socket class: '%s' is too long, maximum length is %d",
                 identifier,
-                int(sizeof(dummy_st.idname)));
+                int(sizeof(dummy_sock.idname)));
     return nullptr;
   }
 
   /* check if we have registered this socket type before */
-  st = blender::bke::nodeSocketTypeFind(dummy_st.idname);
+  st = blender::bke::node_socket_type_find(dummy_st.idname);
   if (!st) {
     /* create a new node socket type */
-    st = static_cast<blender::bke::bNodeSocketType *>(
-        MEM_mallocN(sizeof(blender::bke::bNodeSocketType), "node socket type"));
-    memcpy(st, &dummy_st, sizeof(dummy_st));
-
-    blender::bke::nodeRegisterSocketType(st);
+    st = MEM_new<blender::bke::bNodeSocketType>(__func__, dummy_st);
+    blender::bke::node_register_socket_type(st);
   }
 
-  st->free_self = (void (*)(blender::bke::bNodeSocketType *stype))MEM_freeN;
+  st->free_self = [](blender::bke::bNodeSocketType *stype) { MEM_delete(stype); };
 
   /* if RNA type is already registered, unregister first */
   if (st->ext_socket.srna) {
@@ -196,7 +198,7 @@ static StructRNA *rna_NodeSocket_register(Main * /*bmain*/,
     RNA_struct_free_extension(srna, &st->ext_socket);
     RNA_struct_free(&BLENDER_RNA, srna);
   }
-  st->ext_socket.srna = RNA_def_struct_ptr(&BLENDER_RNA, st->idname, &RNA_NodeSocket);
+  st->ext_socket.srna = RNA_def_struct_ptr(&BLENDER_RNA, st->idname.c_str(), &RNA_NodeSocket);
   st->ext_socket.data = data;
   st->ext_socket.call = call;
   st->ext_socket.free = free;
@@ -229,15 +231,15 @@ static StructRNA *rna_NodeSocket_refine(PointerRNA *ptr)
 
 static std::optional<std::string> rna_NodeSocket_path(const PointerRNA *ptr)
 {
-  bNodeTree *ntree = reinterpret_cast<bNodeTree *>(ptr->owner_id);
-  bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
-  bNode *node;
-  int socketindex;
-  char name_esc[sizeof(node->name) * 2];
+  const bNodeTree *ntree = reinterpret_cast<bNodeTree *>(ptr->owner_id);
+  const bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
 
-  blender::bke::nodeFindNode(ntree, sock, &node, &socketindex);
+  const bNode &node = blender::bke::node_find_node(*ntree, *sock);
+  const ListBase *sockets = (sock->in_out == SOCK_IN) ? &node.inputs : &node.outputs;
+  const int socketindex = BLI_findindex(sockets, sock);
 
-  BLI_str_escape(name_esc, node->name, sizeof(name_esc));
+  char name_esc[sizeof(node.name) * 2];
+  BLI_str_escape(name_esc, node.name, sizeof(name_esc));
 
   if (sock->in_out == SOCK_IN) {
     return fmt::format("nodes[\"{}\"].inputs[{}]", name_esc, socketindex);
@@ -255,29 +257,91 @@ static PointerRNA rna_NodeSocket_node_get(PointerRNA *ptr)
 {
   bNodeTree *ntree = reinterpret_cast<bNodeTree *>(ptr->owner_id);
   bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
-  bNode *node;
-
-  blender::bke::nodeFindNode(ntree, sock, &node, nullptr);
-
-  PointerRNA r_ptr = RNA_pointer_create(&ntree->id, &RNA_Node, node);
-  return r_ptr;
+  bNode &node = blender::bke::node_find_node(*ntree, *sock);
+  return RNA_pointer_create_discrete(&ntree->id, &RNA_Node, &node);
 }
 
 static void rna_NodeSocket_type_set(PointerRNA *ptr, int value)
 {
   bNodeTree *ntree = reinterpret_cast<bNodeTree *>(ptr->owner_id);
   bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
-  bNode *node;
-  blender::bke::nodeFindNode(ntree, sock, &node, nullptr);
-  if (node->type != NODE_CUSTOM) {
+  bNode &node = blender::bke::node_find_node(*ntree, *sock);
+  if (node.type_legacy != NODE_CUSTOM) {
     /* Can't change the socket type on built-in nodes like this. */
-    if (!node->is_reroute()) {
-      /* TODO: Refactor reroute node to avoid direct change of the socket type in built-in node and
-       * use proper node method for this. */
-      return;
-    }
+    return;
   }
-  blender::bke::nodeModifySocketTypeStatic(ntree, node, sock, value, 0);
+  blender::bke::node_modify_socket_type_static(ntree, &node, sock, value, 0);
+}
+
+static void rna_NodeSocket_bl_idname_get(PointerRNA *ptr, char *value)
+{
+  const bNodeSocket *node = static_cast<const bNodeSocket *>(ptr->data);
+  const blender::bke::bNodeSocketType *ntype = node->typeinfo;
+  blender::StringRef(ntype->idname).copy_unsafe(value);
+}
+
+static int rna_NodeSocket_bl_idname_length(PointerRNA *ptr)
+{
+  const bNodeSocket *node = static_cast<const bNodeSocket *>(ptr->data);
+  const blender::bke::bNodeSocketType *ntype = node->typeinfo;
+  return ntype->idname.size();
+}
+
+static void rna_NodeSocket_bl_idname_set(PointerRNA *ptr, const char *value)
+{
+  bNodeSocket *node = static_cast<bNodeSocket *>(ptr->data);
+  blender::bke::bNodeSocketType *ntype = node->typeinfo;
+  ntype->idname = value;
+}
+
+static void rna_NodeSocket_bl_label_get(PointerRNA *ptr, char *value)
+{
+  const bNodeSocket *node = static_cast<const bNodeSocket *>(ptr->data);
+  const blender::bke::bNodeSocketType *ntype = node->typeinfo;
+  blender::StringRef(ntype->label).copy_unsafe(value);
+}
+
+static int rna_NodeSocket_bl_label_length(PointerRNA *ptr)
+{
+  const bNodeSocket *node = static_cast<const bNodeSocket *>(ptr->data);
+  const blender::bke::bNodeSocketType *ntype = node->typeinfo;
+  return ntype->label.size();
+}
+
+static void rna_NodeSocket_bl_label_set(PointerRNA *ptr, const char *value)
+{
+  bNodeSocket *node = static_cast<bNodeSocket *>(ptr->data);
+  blender::bke::bNodeSocketType *ntype = node->typeinfo;
+  ntype->label = value;
+}
+
+static void rna_NodeSocket_bl_subtype_label_get(PointerRNA *ptr, char *value)
+{
+  const bNodeSocket *node = static_cast<const bNodeSocket *>(ptr->data);
+  const blender::bke::bNodeSocketType *ntype = node->typeinfo;
+  blender::StringRef(ntype->subtype_label).copy_unsafe(value);
+}
+
+static int rna_NodeSocket_bl_subtype_label_length(PointerRNA *ptr)
+{
+  const bNodeSocket *node = static_cast<const bNodeSocket *>(ptr->data);
+  const blender::bke::bNodeSocketType *ntype = node->typeinfo;
+  return ntype->subtype_label.size();
+}
+
+static void rna_NodeSocket_bl_subtype_label_set(PointerRNA *ptr, const char *value)
+{
+  bNodeSocket *node = static_cast<bNodeSocket *>(ptr->data);
+  blender::bke::bNodeSocketType *ntype = node->typeinfo;
+  ntype->subtype_label = value;
+}
+
+static bool rna_NodeSocket_is_linked_get(PointerRNA *ptr)
+{
+  bNodeTree *ntree = reinterpret_cast<bNodeTree *>(ptr->owner_id);
+  bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
+  ntree->ensure_topology_cache();
+  return sock->is_directly_linked();
 }
 
 static void rna_NodeSocket_update(Main *bmain, Scene * /*scene*/, PointerRNA *ptr)
@@ -286,13 +350,28 @@ static void rna_NodeSocket_update(Main *bmain, Scene * /*scene*/, PointerRNA *pt
   bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
 
   BKE_ntree_update_tag_socket_property(ntree, sock);
-  ED_node_tree_propagate_change(nullptr, bmain, ntree);
+  BKE_main_ensure_invariants(*bmain, ntree->id);
+}
+
+static void rna_NodeSocket_enabled_update(Main *bmain, Scene * /*scene*/, PointerRNA *ptr)
+{
+  bNodeTree *ntree = reinterpret_cast<bNodeTree *>(ptr->owner_id);
+  bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
+
+  BKE_ntree_update_tag_socket_availability(ntree, sock);
+  BKE_main_ensure_invariants(*bmain, ntree->id);
 }
 
 static bool rna_NodeSocket_is_output_get(PointerRNA *ptr)
 {
   bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
   return sock->in_out == SOCK_OUT;
+}
+
+static int rna_NodeSocket_link_limit_get(PointerRNA *ptr)
+{
+  bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
+  return blender::bke::node_socket_link_limit(sock);
 }
 
 static void rna_NodeSocket_link_limit_set(PointerRNA *ptr, int value)
@@ -311,11 +390,10 @@ static void rna_NodeSocket_hide_set(PointerRNA *ptr, bool value)
   }
 
   bNodeTree *ntree = reinterpret_cast<bNodeTree *>(ptr->owner_id);
-  bNode *node;
-  blender::bke::nodeFindNode(ntree, sock, &node, nullptr);
+  bNode &node = blender::bke::node_find_node(*ntree, *sock);
 
   /* The Reroute node is the socket itself, do not hide this. */
-  if (node->is_reroute()) {
+  if (node.is_reroute()) {
     return;
   }
 
@@ -336,14 +414,14 @@ static void rna_NodeSocketStandard_draw(ID *id,
                                         PointerRNA *nodeptr,
                                         const char *text)
 {
-  PointerRNA ptr = RNA_pointer_create(id, &RNA_NodeSocket, sock);
+  PointerRNA ptr = RNA_pointer_create_discrete(id, &RNA_NodeSocket, sock);
   sock->typeinfo->draw(C, layout, &ptr, nodeptr, text);
 }
 
 static void rna_NodeSocketStandard_draw_color(
     ID *id, bNodeSocket *sock, bContext *C, PointerRNA *nodeptr, float r_color[4])
 {
-  PointerRNA ptr = RNA_pointer_create(id, &RNA_NodeSocket, sock);
+  PointerRNA ptr = RNA_pointer_create_discrete(id, &RNA_NodeSocket, sock);
   sock->typeinfo->draw_color(C, &ptr, nodeptr, r_color);
 }
 
@@ -588,17 +666,18 @@ static void rna_def_node_socket(BlenderRNA *brna)
   prop = RNA_def_property(srna, "enabled", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_negative_sdna(prop, nullptr, "flag", SOCK_UNAVAIL);
   RNA_def_property_ui_text(prop, "Enabled", "Enable the socket");
-  RNA_def_property_update(prop, NC_NODE | ND_DISPLAY, nullptr);
+  RNA_def_property_update(prop, NC_NODE | ND_DISPLAY, "rna_NodeSocket_enabled_update");
 
   prop = RNA_def_property(srna, "link_limit", PROP_INT, PROP_NONE);
   RNA_def_property_int_sdna(prop, nullptr, "limit");
-  RNA_def_property_int_funcs(prop, nullptr, "rna_NodeSocket_link_limit_set", nullptr);
+  RNA_def_property_int_funcs(
+      prop, "rna_NodeSocket_link_limit_get", "rna_NodeSocket_link_limit_set", nullptr);
   RNA_def_property_range(prop, 1, 0xFFF);
   RNA_def_property_ui_text(prop, "Link Limit", "Max number of links allowed for this socket");
   RNA_def_property_update(prop, NC_NODE | NA_EDITED, nullptr);
 
   prop = RNA_def_property(srna, "is_linked", PROP_BOOLEAN, PROP_NONE);
-  RNA_def_property_boolean_sdna(prop, nullptr, "flag", SOCK_IS_LINKED);
+  RNA_def_property_boolean_funcs(prop, "rna_NodeSocket_is_linked_get", nullptr);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_ui_text(prop, "Linked", "True if the socket is connected");
 
@@ -661,17 +740,26 @@ static void rna_def_node_socket(BlenderRNA *brna)
 
   /* registration */
   prop = RNA_def_property(srna, "bl_idname", PROP_STRING, PROP_NONE);
-  RNA_def_property_string_sdna(prop, nullptr, "typeinfo->idname");
+  RNA_def_property_string_funcs(prop,
+                                "rna_NodeSocket_bl_idname_get",
+                                "rna_NodeSocket_bl_idname_length",
+                                "rna_NodeSocket_bl_idname_set");
   RNA_def_property_flag(prop, PROP_REGISTER);
   RNA_def_property_ui_text(prop, "ID Name", "");
 
   prop = RNA_def_property(srna, "bl_label", PROP_STRING, PROP_NONE);
-  RNA_def_property_string_sdna(prop, nullptr, "typeinfo->label");
+  RNA_def_property_string_funcs(prop,
+                                "rna_NodeSocket_bl_label_get",
+                                "rna_NodeSocket_bl_label_length",
+                                "rna_NodeSocket_bl_label_set");
   RNA_def_property_flag(prop, PROP_REGISTER_OPTIONAL);
   RNA_def_property_ui_text(prop, "Type Label", "Label to display for the socket type in the UI");
 
   prop = RNA_def_property(srna, "bl_subtype_label", PROP_STRING, PROP_NONE);
-  RNA_def_property_string_sdna(prop, nullptr, "typeinfo->subtype_label");
+  RNA_def_property_string_funcs(prop,
+                                "rna_NodeSocket_bl_subtype_label_get",
+                                "rna_NodeSocket_bl_subtype_label_length",
+                                "rna_NodeSocket_bl_subtype_label_set");
   RNA_def_property_flag(prop, PROP_REGISTER_OPTIONAL);
   RNA_def_property_ui_text(
       prop, "Subtype Label", "Label to display for the socket subtype in the UI");
@@ -713,7 +801,7 @@ static void rna_def_node_socket(BlenderRNA *brna)
       func,
       "Color of the socket icon. Used to draw sockets in places where the socket does not belong "
       "to a node, like the node interface panel. Also used to draw node sockets if draw_color is "
-      "not defined");
+      "not defined.");
   RNA_def_function_flag(func, FUNC_NO_SELF | FUNC_REGISTER_OPTIONAL);
   parm = RNA_def_float_array(
       func, "color", 4, default_draw_color, 0.0f, 1.0f, "Color", "", 0.0f, 1.0f);
@@ -1620,6 +1708,10 @@ static const bNodeSocketStaticTypeInfo node_socket_subtypes[] = {
      "NodeTreeInterfaceSocketFloatColorTemperature",
      SOCK_FLOAT,
      PROP_COLOR_TEMPERATURE},
+    {"NodeSocketFloatFrequency",
+     "NodeTreeInterfaceSocketFloatFrequency",
+     SOCK_FLOAT,
+     PROP_FREQUENCY},
     {"NodeSocketInt", "NodeTreeInterfaceSocketInt", SOCK_INT, PROP_NONE},
     {"NodeSocketIntUnsigned", "NodeTreeInterfaceSocketIntUnsigned", SOCK_INT, PROP_UNSIGNED},
     {"NodeSocketIntPercentage", "NodeTreeInterfaceSocketIntPercentage", SOCK_INT, PROP_PERCENTAGE},

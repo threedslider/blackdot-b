@@ -4,10 +4,6 @@
 
 set(INC
   PUBLIC .
-  ../blenkernel
-  ../blentranslation
-  ../gpu
-  ../imbuf
   ../makesrna
 )
 
@@ -29,12 +25,13 @@ set(SRC
 )
 
 set(LIB
+  PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
+  PRIVATE bf::blentranslation
   PRIVATE bf::dna
-  bf_gpu
+  PRIVATE bf::gpu
+  PRIVATE bf::imbuf
   PRIVATE bf::intern::guardedalloc
-  PRIVATE bf::extern::nanosvg
-  PRIVATE bf::editor::datafiles
   ${FREETYPE_LIBRARIES} ${BROTLI_LIBRARIES}
 )
 
@@ -51,6 +48,16 @@ if(WITH_PYTHON)
   )
 endif()
 
+if(WITH_HEADLESS)
+  add_definitions(-DWITH_HEADLESS)
+else()
+  # SVG icons.
+  list(APPEND LIB
+    PRIVATE bf::extern::nanosvg
+    PRIVATE bf::editor::datafiles
+  )
+
+endif()
 
 blender_add_lib(bf_blenfont "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")
 add_library(bf::blenfont ALIAS bf_blenfont)

@@ -9,20 +9,10 @@
 #include <cstdlib>
 
 #include "DNA_image_types.h"
-#include "DNA_node_types.h"
 #include "DNA_scene_types.h"
 
-#include "BLI_utildefines.h"
-
-#include "BKE_image.h"
-#include "BKE_image_format.h"
-#include "BKE_node_tree_update.hh"
-
 #include "BLT_translation.hh"
-#include "DEG_depsgraph.hh"
-#include "DEG_depsgraph_build.hh"
 
-#include "RNA_access.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
@@ -55,18 +45,33 @@ static const EnumPropertyItem image_source_items[] = {
 #ifdef RNA_RUNTIME
 
 #  include <algorithm>
+#  include <fmt/format.h>
 
 #  include "BLI_math_base.h"
 #  include "BLI_math_vector.h"
 
 #  include "BKE_global.hh"
+#  include "BKE_image.hh"
+#  include "BKE_image_format.hh"
+#  include "BKE_lib_id.hh"
+#  include "BKE_main.hh"
+#  include "BKE_main_invariants.hh"
+#  include "BKE_node_tree_update.hh"
+#  include "BKE_screen.hh"
 
 #  include "GPU_texture.hh"
 
 #  include "IMB_imbuf.hh"
 #  include "IMB_imbuf_types.hh"
 
+#  include "MOV_read.hh"
+
 #  include "ED_node.hh"
+
+#  include "DNA_space_types.h"
+
+#  include "DEG_depsgraph.hh"
+#  include "DEG_depsgraph_build.hh"
 
 static bool rna_Image_is_stereo_3d_get(PointerRNA *ptr)
 {
@@ -248,7 +253,7 @@ static void rna_ImageUser_update(Main *bmain, Scene *scene, PointerRNA *ptr)
     if (GS(id->name) == ID_NT) {
       /* Special update for node-trees. */
       BKE_ntree_update_tag_image_user_changed((bNodeTree *)id, iuser);
-      ED_node_tree_propagate_change(nullptr, bmain, nullptr);
+      BKE_main_ensure_invariants(*bmain);
     }
     else {
       /* Update material or texture for render preview. */
@@ -267,8 +272,6 @@ static void rna_ImageUser_relations_update(Main *bmain, Scene *scene, PointerRNA
 static std::optional<std::string> rna_ImageUser_path(const PointerRNA *ptr)
 {
   if (ptr->owner_id) {
-    // ImageUser *iuser = ptr->data;
-
     switch (GS(ptr->owner_id->name)) {
       case ID_OB:
       case ID_TE:
@@ -277,8 +280,23 @@ static std::optional<std::string> rna_ImageUser_path(const PointerRNA *ptr)
         return rna_Node_ImageUser_path(ptr);
       case ID_CA:
         return rna_CameraBackgroundImage_image_or_movieclip_user_path(ptr);
-      case ID_SCR:
+      case ID_SCR: {
+        const bScreen *screen = reinterpret_cast<bScreen *>(ptr->owner_id);
+        const ImageUser *iuser = static_cast<ImageUser *>(ptr->data);
+        int area_index;
+        int space_index;
+        LISTBASE_FOREACH_INDEX (ScrArea *, area, &screen->areabase, area_index) {
+          LISTBASE_FOREACH_INDEX (SpaceLink *, sl, &area->spacedata, space_index) {
+            if (sl->spacetype == SPACE_IMAGE) {
+              SpaceImage *sima = reinterpret_cast<SpaceImage *>(sl);
+              if (&sima->iuser == iuser) {
+                return fmt::format("areas[{}].spaces[{}].image_user", area_index, space_index);
+              }
+            }
+          }
+        }
         return " ... image_user";
+      }
       default:
         break;
     }
@@ -465,7 +483,7 @@ static PointerRNA rna_Image_active_tile_get(PointerRNA *ptr)
   ImageTile *tile = static_cast<ImageTile *>(
       BLI_findlink(&image->tiles, image->active_tile_index));
 
-  return rna_pointer_inherit_refine(ptr, &RNA_UDIMTile, tile);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_UDIMTile, tile);
 }
 
 static void rna_Image_active_tile_set(PointerRNA *ptr, PointerRNA value, ReportList * /*reports*/)
@@ -582,9 +600,9 @@ static int rna_Image_frame_duration_get(PointerRNA *ptr)
   }
 
   if (BKE_image_has_anim(ima)) {
-    ImBufAnim *anim = ((ImageAnim *)ima->anims.first)->anim;
+    MovieReader *anim = ((ImageAnim *)ima->anims.first)->anim;
     if (anim) {
-      duration = IMB_anim_get_duration(anim, IMB_TC_RECORD_RUN);
+      duration = MOV_get_duration_frames(anim, IMB_TC_RECORD_RUN);
     }
   }
 
@@ -713,11 +731,9 @@ static PointerRNA rna_Image_packed_file_get(PointerRNA *ptr)
 
   if (BKE_image_has_packedfile(ima)) {
     ImagePackedFile *imapf = static_cast<ImagePackedFile *>(ima->packedfiles.first);
-    return rna_pointer_inherit_refine(ptr, &RNA_PackedFile, imapf->packedfile);
+    return RNA_pointer_create_with_parent(*ptr, &RNA_PackedFile, imapf->packedfile);
   }
-  else {
-    return PointerRNA_NULL;
-  }
+  return PointerRNA_NULL;
 }
 
 static void rna_RenderSlot_clear(ID *id, RenderSlot *slot, ImageUser *iuser)
@@ -734,7 +750,7 @@ static PointerRNA rna_render_slots_active_get(PointerRNA *ptr)
   Image *image = (Image *)ptr->owner_id;
   RenderSlot *render_slot = BKE_image_get_renderslot(image, image->render_slot);
 
-  return rna_pointer_inherit_refine(ptr, &RNA_RenderSlot, render_slot);
+  return RNA_pointer_create_with_parent(*ptr, &RNA_RenderSlot, render_slot);
 }
 
 static void rna_render_slots_active_set(PointerRNA *ptr,
@@ -1032,6 +1048,11 @@ static void rna_def_udim_tile(BlenderRNA *brna)
   RNA_def_property_update(prop, NC_IMAGE | ND_DISPLAY, "rna_UDIMTile_generated_update");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
 
+  prop = RNA_def_property(srna, "is_generated_tile", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "gen_flag", IMA_GEN_TILE);
+  RNA_def_property_ui_text(prop, "Is Generated Tile", "Is this image tile generated");
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+
   prop = RNA_def_property(srna, "generated_color", PROP_FLOAT, PROP_COLOR_GAMMA);
   RNA_def_property_float_sdna(prop, nullptr, "gen_color");
   RNA_def_property_array(prop, 4);
@@ -1110,19 +1131,19 @@ static void rna_def_image(BlenderRNA *brna)
        "Straight",
        "Store RGB and alpha channels separately with alpha acting as a mask, also known as "
        "unassociated alpha. Commonly used by image editing applications and file formats like "
-       "PNG"},
+       "PNG."},
       {IMA_ALPHA_PREMUL,
        "PREMUL",
        0,
        "Premultiplied",
        "Store RGB channels with alpha multiplied in, also known as associated alpha. The natural "
-       "format for renders and used by file formats like OpenEXR"},
+       "format for renders and used by file formats like OpenEXR."},
       {IMA_ALPHA_CHANNEL_PACKED,
        "CHANNEL_PACKED",
        0,
        "Channel Packed",
        "Different images are packed in the RGB and alpha channels, and they should not "
-       "affect each other. Channel packing is commonly used by game engines to save memory"},
+       "affect each other. Channel packing is commonly used by game engines to save memory."},
       {IMA_ALPHA_IGNORE,
        "NONE",
        0,
@@ -1385,7 +1406,7 @@ static void rna_def_image(BlenderRNA *brna)
       prop,
       "Seam Margin",
       "Margin to take into account when fixing UV seams during painting. Higher "
-      "number would improve seam-fixes for mipmaps, but decreases performance");
+      "number would improve seam-fixes for mipmaps, but decreases performance.");
   RNA_def_property_ui_range(prop, 1, 100, 1, 1);
 
   /* multiview */

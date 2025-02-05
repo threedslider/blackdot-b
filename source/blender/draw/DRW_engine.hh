@@ -8,10 +8,6 @@
 
 #pragma once
 
-#include "BLI_sys_types.h" /* for bool */
-
-#include "DNA_object_enums.h"
-
 struct ARegion;
 struct DRWData;
 struct DRWInstanceDataList;
@@ -22,8 +18,6 @@ struct GHash;
 struct GPUMaterial;
 struct GPUOffScreen;
 struct GPUVertFormat;
-struct CustomDataLayer;
-struct CustomData;
 struct GPUViewport;
 struct ID;
 struct Main;
@@ -128,8 +122,6 @@ void DRW_draw_depth_loop(Depsgraph *depsgraph,
                          View3D *v3d,
                          GPUViewport *viewport,
                          const bool use_gpencil,
-                         const bool use_basic,
-                         const bool use_overlay,
                          const bool use_only_selected);
 /**
  * Clears the Depth Buffer and draws only the specified object.

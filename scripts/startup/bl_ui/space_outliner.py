@@ -366,7 +366,8 @@ class OUTLINER_MT_liboverride(Menu):
         layout.operator_menu_enum(
             "outliner.liboverride_operation",
             "selection_set",
-            text="Reset").type = 'OVERRIDE_LIBRARY_RESET'
+            text="Reset",
+        ).type = 'OVERRIDE_LIBRARY_RESET'
         layout.operator_menu_enum(
             "outliner.liboverride_operation", "selection_set",
             text="Clear",
@@ -492,7 +493,7 @@ class OUTLINER_PT_filter(Panel):
             row = sub.row()
             row.label(icon='CAMERA_DATA')
             row.prop(space, "use_filter_object_camera", text="Cameras")
-        if bpy.data.grease_pencils:
+        if bpy.data.grease_pencils_v3:
             row = sub.row()
             row.label(icon='STROKE')
             row.prop(space, "use_filter_object_grease_pencil", text="Grease Pencil")

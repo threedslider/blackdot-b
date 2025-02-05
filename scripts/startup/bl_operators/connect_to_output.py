@@ -5,7 +5,6 @@
 import bpy
 from bpy.types import Operator
 from bpy.props import BoolProperty
-from bpy_extras.node_utils import find_base_socket_type, connect_sockets
 from bpy.app.translations import pgettext_data as data_
 
 from .node_editor.node_functions import (
@@ -34,7 +33,8 @@ class NODE_OT_connect_to_output(Operator, NodeEditorBase):
         default=True,
     )
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.shader_output_idname = ""
 
     @classmethod
@@ -179,8 +179,10 @@ class NODE_OT_connect_to_output(Operator, NodeEditorBase):
                     if mat.node_tree == bpy.context.space_data.node_tree or not hasattr(mat.node_tree, "nodes"):
                         continue
                     # Get viewer node.
-                    output_node = get_group_output_node(mat.node_tree,
-                                                        output_node_idname=self.shader_output_idname)
+                    output_node = get_group_output_node(
+                        mat.node_tree,
+                        output_node_idname=self.shader_output_idname,
+                    )
                     if output_node is not None:
                         self.search_connected_viewer_sockets(output_node, self.other_viewer_sockets_users)
         return socket in self.other_viewer_sockets_users
@@ -206,6 +208,8 @@ class NODE_OT_connect_to_output(Operator, NodeEditorBase):
 
     def create_links(self, path, node, active_node_socket_id, socket_type):
         """Create links at each step in the node group path."""
+        from bpy_extras.node_utils import connect_sockets
+
         path = list(reversed(path))
         # Starting from the level of the active node.
         for path_index, path_element in enumerate(path[:-1]):
@@ -214,7 +218,8 @@ class NODE_OT_connect_to_output(Operator, NodeEditorBase):
             viewer_socket = self.ensure_viewer_socket(
                 tree, socket_type,
                 connect_socket=node.outputs[active_node_socket_id]
-                if path_index == 0 else None)
+                if path_index == 0 else None,
+            )
             if viewer_socket in self.delete_sockets:
                 self.delete_sockets.remove(viewer_socket)
 
@@ -225,9 +230,11 @@ class NODE_OT_connect_to_output(Operator, NodeEditorBase):
 
             # Go up in the node group hierarchy.
             next_tree = path[path_index + 1].node_tree
-            node = next(n for n in next_tree.nodes
-                        if n.type == 'GROUP'
-                        and n.node_tree == tree)
+            node = next(
+                n for n in next_tree.nodes
+                if n.type == 'GROUP' and
+                n.node_tree == tree
+            )
             tree = next_tree
             active_node_socket_id = viewer_socket.identifier
         return node.outputs[active_node_socket_id]
@@ -240,6 +247,11 @@ class NODE_OT_connect_to_output(Operator, NodeEditorBase):
                 self.remove_socket(tree, socket)
 
     def invoke(self, context, event):
+        from bpy_extras.node_utils import (
+            find_base_socket_type,
+            connect_sockets,
+        )
+
         space = context.space_data
         # Ignore operator when running in wrong context.
         if self.run_in_geometry_nodes != (space.tree_type == 'GeometryNodeTree'):
@@ -292,15 +304,18 @@ class NODE_OT_connect_to_output(Operator, NodeEditorBase):
             socket_type = find_base_socket_type(node_output)
             if output_node_socket_index is None:
                 output_node_socket_index = self.ensure_viewer_socket(
-                    base_node_tree, socket_type, connect_socket=None)
+                    base_node_tree, socket_type, connect_socket=None,
+                )
 
         # For shader node trees, we connect to a material output.
         elif space.tree_type == 'ShaderNodeTree':
             self.init_shader_variables(space, space.shader_type)
 
             # Get or create material_output node.
-            output_node = get_group_output_node(base_node_tree,
-                                                output_node_idname=self.shader_output_idname)
+            output_node = get_group_output_node(
+                base_node_tree,
+                output_node_idname=self.shader_output_idname,
+            )
             if not output_node:
                 output_node = base_node_tree.nodes.new(self.shader_output_idname)
                 output_node.location = get_output_location(base_node_tree)

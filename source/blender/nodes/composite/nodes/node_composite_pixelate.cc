@@ -6,6 +6,9 @@
  * \ingroup cmpnodes
  */
 
+#include "BLI_math_vector.hh"
+#include "BLI_math_vector_types.hh"
+
 #include "GPU_shader.hh"
 
 #include "COM_node_operation.hh"
@@ -33,10 +36,10 @@ static void node_composit_init_pixelate(bNodeTree * /*ntree*/, bNode *node)
 
 static void node_composit_buts_pixelate(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "pixel_size", UI_ITEM_R_SPLIT_EMPTY_NAME, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "pixel_size", UI_ITEM_R_SPLIT_EMPTY_NAME, std::nullopt, ICON_NONE);
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class PixelateOperation : public NodeOperation {
  public:
@@ -52,13 +55,26 @@ class PixelateOperation : public NodeOperation {
       return;
     }
 
+    if (this->context().use_gpu()) {
+      this->execute_gpu();
+    }
+    else {
+      this->execute_cpu();
+    }
+  }
+
+  void execute_gpu()
+  {
     GPUShader *shader = context().get_shader("compositor_pixelate");
     GPU_shader_bind(shader);
 
+    const int pixel_size = get_pixel_size();
     GPU_shader_uniform_1i(shader, "pixel_size", pixel_size);
 
+    Result &input_image = get_input("Color");
     input_image.bind_as_texture(shader, "input_tx");
 
+    Result &output_image = get_result("Color");
     const Domain domain = compute_domain();
     output_image.allocate_texture(domain);
     output_image.bind_as_image(shader, "output_img");
@@ -68,6 +84,33 @@ class PixelateOperation : public NodeOperation {
     GPU_shader_unbind();
     output_image.unbind_as_image();
     input_image.unbind_as_texture();
+  }
+
+  void execute_cpu()
+  {
+    Result &input = get_input("Color");
+
+    Result &output = get_result("Color");
+    const Domain domain = compute_domain();
+    output.allocate_texture(domain);
+
+    const int2 size = domain.size;
+    const int pixel_size = get_pixel_size();
+    parallel_for(size, [&](const int2 texel) {
+      int2 start = (texel / int2(pixel_size)) * int2(pixel_size);
+      int2 end = math::min(start + int2(pixel_size), size);
+
+      float4 accumulated_color = float4(0.0f);
+      for (int y = start.y; y < end.y; y++) {
+        for (int x = start.x; x < end.x; x++) {
+          accumulated_color += input.load_pixel<float4>(int2(x, y));
+        }
+      }
+
+      int2 size = end - start;
+      int count = size.x * size.y;
+      output.store_pixel(texel, accumulated_color / count);
+    });
   }
 
   float get_pixel_size()
@@ -89,11 +132,17 @@ void register_node_type_cmp_pixelate()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(&ntype, CMP_NODE_PIXELATE, "Pixelate", NODE_CLASS_OP_FILTER);
+  cmp_node_type_base(&ntype, "CompositorNodePixelate", CMP_NODE_PIXELATE);
+  ntype.ui_name = "Pixelate";
+  ntype.ui_description =
+      "Reduce detail in an image by making individual pixels more prominent, for a blocky or "
+      "mosaic-like appearance";
+  ntype.enum_name_legacy = "PIXELATE";
+  ntype.nclass = NODE_CLASS_OP_FILTER;
   ntype.declare = file_ns::cmp_node_pixelate_declare;
   ntype.draw_buttons = file_ns::node_composit_buts_pixelate;
   ntype.initfunc = file_ns::node_composit_init_pixelate;
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

@@ -4,8 +4,11 @@
 
 #ifdef WITH_METAL
 
-#  include "device/metal/device_impl.h"
+#  include <map>
+#  include <mutex>
+
 #  include "device/metal/device.h"
+#  include "device/metal/device_impl.h"
 
 #  include "scene/scene.h"
 
@@ -14,6 +17,7 @@
 #  include "util/path.h"
 #  include "util/time.h"
 
+#  include <TargetConditionals.h>
 #  include <crt_externs.h>
 
 CCL_NAMESPACE_BEGIN
@@ -25,7 +29,7 @@ std::map<int, MetalDevice *> MetalDevice::active_device_ids;
 
 /* Thread-safe device access for async work. Calling code must pass an appropriately scoped lock
  * to existing_devices_mutex to safeguard against destruction of the returned instance. */
-MetalDevice *MetalDevice::get_device_by_ID(int ID,
+MetalDevice *MetalDevice::get_device_by_ID(const int ID,
                                            thread_scoped_lock & /*existing_devices_mutex_lock*/)
 {
   auto it = active_device_ids.find(ID);
@@ -35,7 +39,7 @@ MetalDevice *MetalDevice::get_device_by_ID(int ID,
   return nullptr;
 }
 
-bool MetalDevice::is_device_cancelled(int ID)
+bool MetalDevice::is_device_cancelled(const int ID)
 {
   thread_scoped_lock lock(existing_devices_mutex);
   return get_device_by_ID(ID, lock) == nullptr;
@@ -95,7 +99,7 @@ MetalDevice::MetalDevice(const DeviceInfo &info, Stats &stats, Profiler &profile
     max_threads_per_threadgroup = 512;
 
     use_metalrt = info.use_hardware_raytracing;
-    if (auto metalrt = getenv("CYCLES_METALRT")) {
+    if (auto *metalrt = getenv("CYCLES_METALRT")) {
       use_metalrt = (atoi(metalrt) != 0);
     }
 
@@ -117,7 +121,7 @@ MetalDevice::MetalDevice(const DeviceInfo &info, Stats &stats, Profiler &profile
         break;
     }
 
-    if (auto envstr = getenv("CYCLES_METAL_SPECIALIZATION_LEVEL")) {
+    if (auto *envstr = getenv("CYCLES_METAL_SPECIALIZATION_LEVEL")) {
       kernel_specialization_level = (MetalPipelineType)atoi(envstr);
     }
     metal_printf("kernel_specialization_level = %s\n",
@@ -352,6 +356,10 @@ string MetalDevice::preprocess_source(MetalPipelineType pso_type,
   NSOperatingSystemVersion macos_ver = [processInfo operatingSystemVersion];
   global_defines += "#define __KERNEL_METAL_MACOS__ " + to_string(macos_ver.majorVersion) + "\n";
 
+#  if TARGET_CPU_ARM64
+  global_defines += "#define __KERNEL_METAL_TARGET_CPU_ARM64__\n";
+#  endif
+
   /* Replace specific KernelData "dot" dereferences with a Metal function_constant identifier of
    * the same character length. Build a string of all active constant values which is then hashed
    * in order to identify the PSO.
@@ -391,11 +399,6 @@ string MetalDevice::preprocess_source(MetalPipelineType pso_type,
     global_defines += "#define __KERNEL_USE_DATA_CONSTANTS__\n";
   }
 
-#  if 0
-  metal_printf("================\n%s================\n",
-               global_defines.c_str());
-#  endif
-
   if (source) {
     *source = global_defines + *source;
   }
@@ -421,17 +424,18 @@ void MetalDevice::make_source(MetalPipelineType pso_type, const uint kernel_feat
 bool MetalDevice::load_kernels(const uint _kernel_features)
 {
   @autoreleasepool {
-    kernel_features = _kernel_features;
+    kernel_features |= _kernel_features;
 
     /* check if GPU is supported */
-    if (!support_device(kernel_features))
+    if (!support_device(kernel_features)) {
       return false;
+    }
 
     /* Keep track of whether motion blur is enabled, so to enable/disable motion in BVH builds
      * This is necessary since objects may be reported to have motion if the Vector pass is
      * active, but may still need to be rendered without motion blur if that isn't active as well.
      */
-    motion_blur = kernel_features & KERNEL_FEATURE_OBJECT_MOTION;
+    motion_blur |= kernel_features & KERNEL_FEATURE_OBJECT_MOTION;
 
     /* Only request generic kernels if they aren't cached in memory. */
     refresh_source_and_kernels_md5(PSO_GENERIC);
@@ -480,11 +484,6 @@ void MetalDevice::refresh_source_and_kernels_md5(MetalPipelineType pso_type)
 
 #  undef KERNEL_STRUCT_MEMBER
 #  undef KERNEL_STRUCT_MEMBER_DONT_SPECIALIZE
-
-#  if 0
-    metal_printf("================\n%s================\n",
-                constant_values.c_str());
-#  endif
   }
 
   MD5Hash md5;
@@ -496,7 +495,7 @@ void MetalDevice::refresh_source_and_kernels_md5(MetalPipelineType pso_type)
   kernels_md5[pso_type] = md5.get_hex();
 }
 
-void MetalDevice::compile_and_load(int device_id, MetalPipelineType pso_type)
+void MetalDevice::compile_and_load(const int device_id, MetalPipelineType pso_type)
 {
   @autoreleasepool {
     /* Thread-safe front-end compilation. Typically the MSL->AIR compilation can take a few
@@ -556,7 +555,7 @@ void MetalDevice::compile_and_load(int device_id, MetalPipelineType pso_type)
 
     double starttime = time_dt();
 
-    NSError *error = NULL;
+    NSError *error = nullptr;
     id<MTLLibrary> mtlLibrary = [mtlDevice newLibraryWithSource:@(source.c_str())
                                                         options:options
                                                           error:&error];
@@ -664,7 +663,7 @@ void MetalDevice::erase_allocation(device_memory &mem)
   }
 }
 
-bool MetalDevice::max_working_set_exceeded(size_t safety_margin) const
+bool MetalDevice::max_working_set_exceeded(const size_t safety_margin) const
 {
   /* We're allowed to allocate beyond the safe working set size, but then if all resources are made
    * resident we will get command buffer failures at render time. */
@@ -704,13 +703,12 @@ MetalDevice::MetalMem *MetalDevice::generic_alloc(device_memory &mem)
     mem.device_size = metal_buffer.allocatedSize;
     stats.mem_alloc(mem.device_size);
 
-    metal_buffer.label = [[NSString alloc] initWithFormat:@"%s", mem.name];
+    metal_buffer.label = [NSString stringWithFormat:@"%s", mem.name];
 
     std::lock_guard<std::recursive_mutex> lock(metal_mem_map_mutex);
 
     assert(metal_mem_map.count(&mem) == 0); /* assert against double-alloc */
-    MetalMem *mmem = new MetalMem;
-    metal_mem_map[&mem] = std::unique_ptr<MetalMem>(mmem);
+    unique_ptr<MetalMem> mmem = make_unique<MetalMem>();
 
     mmem->mem = &mem;
     mmem->mtlBuffer = metal_buffer;
@@ -725,7 +723,7 @@ MetalDevice::MetalMem *MetalDevice::generic_alloc(device_memory &mem)
 
     /* encode device_pointer as (MetalMem*) in order to handle resource relocation and device
      * pointer recalculation */
-    mem.device_pointer = device_ptr(mmem);
+    mem.device_pointer = device_ptr(mmem.get());
 
     if (metal_buffer.storageMode == MTLResourceStorageModeShared) {
       /* Replace host pointer with our host allocation. */
@@ -733,7 +731,7 @@ MetalDevice::MetalMem *MetalDevice::generic_alloc(device_memory &mem)
       if (mem.host_pointer && mem.host_pointer != mmem->hostPtr) {
         memcpy(mmem->hostPtr, mem.host_pointer, size);
 
-        mem.host_free();
+        util_aligned_free(mem.host_pointer, mem.memory_size());
         mem.host_pointer = mmem->hostPtr;
       }
       mem.shared_pointer = mmem->hostPtr;
@@ -744,12 +742,15 @@ MetalDevice::MetalMem *MetalDevice::generic_alloc(device_memory &mem)
       mmem->use_UMA = false;
     }
 
+    MetalMem *mmem_ptr = mmem.get();
+    metal_mem_map[&mem] = std::move(mmem);
+
     if (max_working_set_exceeded()) {
       set_error("System is out of GPU memory");
       return nullptr;
     }
 
-    return mmem;
+    return mmem_ptr;
   }
 }
 
@@ -771,46 +772,55 @@ void MetalDevice::generic_copy_to(device_memory &mem)
 
 void MetalDevice::generic_free(device_memory &mem)
 {
-  if (mem.device_pointer) {
-    std::lock_guard<std::recursive_mutex> lock(metal_mem_map_mutex);
-    MetalMem &mmem = *metal_mem_map.at(&mem);
-    size_t size = mmem.size;
-
-    /* If mmem.use_uma is true, reference counting is used
-     * to safely free memory. */
-
-    bool free_mtlBuffer = false;
-
-    if (mmem.use_UMA) {
-      assert(mem.shared_pointer);
-      if (mem.shared_pointer) {
-        assert(mem.shared_counter > 0);
-        if (--mem.shared_counter == 0) {
-          free_mtlBuffer = true;
-        }
-      }
-    }
-    else {
-      free_mtlBuffer = true;
-    }
-
-    if (free_mtlBuffer) {
-      if (mem.host_pointer && mem.host_pointer == mem.shared_pointer) {
-        /* Safely move the device-side data back to the host before it is freed. */
-        mem.host_pointer = mem.host_alloc(size);
-        memcpy(mem.host_pointer, mem.shared_pointer, size);
-        mmem.use_UMA = false;
-      }
-
-      mem.shared_pointer = 0;
-
-      /* Free device memory. */
-      delayed_free_list.push_back(mmem.mtlBuffer);
-      mmem.mtlBuffer = nil;
-    }
-
-    erase_allocation(mem);
+  if (!mem.device_pointer) {
+    return;
   }
+
+  /* Host pointer should already have been freed at this point. If not we might
+   * end up freeing shared memory and can't recover original host memory. */
+  assert(mem.host_pointer == nullptr);
+
+  std::lock_guard<std::recursive_mutex> lock(metal_mem_map_mutex);
+  MetalMem &mmem = *metal_mem_map.at(&mem);
+  size_t size = mmem.size;
+
+  /* If mmem.use_uma is true, reference counting is used
+   * to safely free memory. */
+
+  bool free_mtlBuffer = false;
+
+  if (mmem.use_UMA) {
+    assert(mem.shared_pointer);
+    if (mem.shared_pointer) {
+      assert(mem.shared_counter > 0);
+      if (--mem.shared_counter == 0) {
+        free_mtlBuffer = true;
+      }
+    }
+  }
+  else {
+    free_mtlBuffer = true;
+  }
+
+  if (free_mtlBuffer) {
+    if (mem.host_pointer && mem.host_pointer == mem.shared_pointer) {
+      /* Safely move the device-side data back to the host before it is freed.
+       * We should actually never reach this code as it is inefficient, but
+       * better than to crash if there is a bug. */
+      assert(!"Metal device should not copy memory back to host");
+      mem.host_pointer = mem.host_alloc(size);
+      memcpy(mem.host_pointer, mem.shared_pointer, size);
+      mmem.use_UMA = false;
+    }
+
+    mem.shared_pointer = nullptr;
+
+    /* Free device memory. */
+    delayed_free_list.push_back(mmem.mtlBuffer);
+    mmem.mtlBuffer = nil;
+  }
+
+  erase_allocation(mem);
 }
 
 void MetalDevice::mem_alloc(device_memory &mem)
@@ -828,23 +838,39 @@ void MetalDevice::mem_alloc(device_memory &mem)
 
 void MetalDevice::mem_copy_to(device_memory &mem)
 {
-  if (mem.type == MEM_GLOBAL) {
-    global_free(mem);
-    global_alloc(mem);
-  }
-  else if (mem.type == MEM_TEXTURE) {
-    tex_free((device_texture &)mem);
-    tex_alloc((device_texture &)mem);
-  }
-  else {
-    if (!mem.device_pointer) {
-      generic_alloc(mem);
+  if (!mem.device_pointer) {
+    if (mem.type == MEM_GLOBAL) {
+      global_alloc(mem);
     }
-    generic_copy_to(mem);
+    else if (mem.type == MEM_TEXTURE) {
+      tex_alloc((device_texture &)mem);
+    }
+    else {
+      generic_alloc(mem);
+      generic_copy_to(mem);
+    }
+  }
+  else if (mem.is_resident(this)) {
+    if (mem.type == MEM_GLOBAL) {
+      generic_copy_to(mem);
+    }
+    else if (mem.type == MEM_TEXTURE) {
+      tex_copy_to((device_texture &)mem);
+    }
+    else {
+      generic_copy_to(mem);
+    }
   }
 }
 
-void MetalDevice::mem_copy_from(device_memory &mem, size_t y, size_t w, size_t h, size_t elem)
+void MetalDevice::mem_move_to_host(device_memory & /*mem*/)
+{
+  /* Metal implements own mechanism for moving host memory. */
+  assert(!"Metal does not support mem_move_to_host");
+}
+
+void MetalDevice::mem_copy_from(
+    device_memory &mem, const size_t y, size_t w, const size_t h, size_t elem)
 {
   @autoreleasepool {
     if (mem.host_pointer) {
@@ -1003,7 +1029,7 @@ void MetalDevice::optimize_for_scene(Scene *scene)
   }
 }
 
-void MetalDevice::const_copy_to(const char *name, void *host, size_t size)
+void MetalDevice::const_copy_to(const char *name, void *host, const size_t size)
 {
   if (strcmp(name, "data") == 0) {
     assert(size == sizeof(KernelData));
@@ -1017,7 +1043,7 @@ void MetalDevice::const_copy_to(const char *name, void *host, size_t size)
   }
 
   auto update_launch_pointers =
-      [&](size_t offset, void *data, size_t data_size, size_t pointers_size) {
+      [&](size_t offset, void *data, const size_t data_size, const size_t pointers_size) {
         memcpy((uint8_t *)&launch_params + offset, data, data_size);
 
         MetalMem **mmem = (MetalMem **)data;
@@ -1114,8 +1140,6 @@ void MetalDevice::tex_alloc(device_texture &mem)
     }
 
     /* General variables for both architectures */
-    string bind_name = mem.name;
-    size_t dsize = datatype_size(mem.data_type);
     size_t size = mem.memory_size();
 
     /* sampler_index maps into the GPU's constant 'metal_samplers' array */
@@ -1177,7 +1201,7 @@ void MetalDevice::tex_alloc(device_texture &mem)
     assert(format != MTLPixelFormatInvalid);
 
     id<MTLTexture> mtlTexture = nil;
-    size_t src_pitch = mem.data_width * dsize * mem.data_elements;
+    size_t src_pitch = mem.data_width * datatype_size(mem.data_type) * mem.data_elements;
 
     if (mem.data_depth > 1) {
       /* 3D texture using array */
@@ -1253,10 +1277,10 @@ void MetalDevice::tex_alloc(device_texture &mem)
     stats.mem_alloc(size);
 
     std::lock_guard<std::recursive_mutex> lock(metal_mem_map_mutex);
-    MetalMem *mmem = new MetalMem;
-    metal_mem_map[&mem] = std::unique_ptr<MetalMem>(mmem);
+    unique_ptr<MetalMem> mmem = make_unique<MetalMem>();
     mmem->mem = &mem;
     mmem->mtlTexture = mtlTexture;
+    metal_mem_map[&mem] = std::move(mmem);
 
     /* Resize once */
     const uint slot = mem.slot;
@@ -1308,6 +1332,45 @@ void MetalDevice::tex_alloc(device_texture &mem)
   }
 }
 
+void MetalDevice::tex_copy_to(device_texture &mem)
+{
+  if (mem.is_resident(this)) {
+    const size_t src_pitch = mem.data_width * datatype_size(mem.data_type) * mem.data_elements;
+
+    if (mem.data_depth > 0) {
+      id<MTLTexture> mtlTexture;
+      {
+        std::lock_guard<std::recursive_mutex> lock(metal_mem_map_mutex);
+        mtlTexture = metal_mem_map.at(&mem)->mtlTexture;
+      }
+      const size_t imageBytes = src_pitch * mem.data_height;
+      for (size_t d = 0; d < mem.data_depth; d++) {
+        const size_t offset = d * imageBytes;
+        [mtlTexture replaceRegion:MTLRegionMake3D(0, 0, d, mem.data_width, mem.data_height, 1)
+                      mipmapLevel:0
+                            slice:0
+                        withBytes:(uint8_t *)mem.host_pointer + offset
+                      bytesPerRow:src_pitch
+                    bytesPerImage:0];
+      }
+    }
+    else if (mem.data_height > 0) {
+      id<MTLTexture> mtlTexture;
+      {
+        std::lock_guard<std::recursive_mutex> lock(metal_mem_map_mutex);
+        mtlTexture = metal_mem_map.at(&mem)->mtlTexture;
+      }
+      [mtlTexture replaceRegion:MTLRegionMake2D(0, 0, mem.data_width, mem.data_height)
+                    mipmapLevel:0
+                      withBytes:mem.host_pointer
+                    bytesPerRow:src_pitch];
+    }
+    else {
+      generic_copy_to(mem);
+    }
+  }
+}
+
 void MetalDevice::tex_free(device_texture &mem)
 {
   if (mem.data_depth == 0 && mem.data_height == 0) {
@@ -1320,8 +1383,9 @@ void MetalDevice::tex_free(device_texture &mem)
     MetalMem &mmem = *metal_mem_map.at(&mem);
 
     assert(texture_slot_map[mem.slot] == mmem.mtlTexture);
-    if (texture_slot_map[mem.slot] == mmem.mtlTexture)
+    if (texture_slot_map[mem.slot] == mmem.mtlTexture) {
       texture_slot_map[mem.slot] = nil;
+    }
 
     if (mmem.mtlTexture) {
       /* Free bindless texture. */

@@ -47,7 +47,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 }
 
 static void node_init(bNodeTree * /*tree*/, bNode *node)
@@ -144,7 +144,11 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
   geo_node_type_base(
-      &ntype, GEO_NODE_CURVE_PRIMITIVE_BEZIER_SEGMENT, "Bézier Segment", NODE_CLASS_GEOMETRY);
+      &ntype, "GeometryNodeCurvePrimitiveBezierSegment", GEO_NODE_CURVE_PRIMITIVE_BEZIER_SEGMENT);
+  ntype.ui_name = "Bézier Segment";
+  ntype.ui_description = "Generate a 2D Bézier spline from the given control points and handles";
+  ntype.enum_name_legacy = "CURVE_PRIMITIVE_BEZIER_SEGMENT";
+  ntype.nclass = NODE_CLASS_GEOMETRY;
   ntype.initfunc = node_init;
   blender::bke::node_type_storage(&ntype,
                                   "NodeGeometryCurvePrimitiveBezierSegment",
@@ -153,7 +157,7 @@ static void node_register()
   ntype.declare = node_declare;
   ntype.draw_buttons = node_layout;
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

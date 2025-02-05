@@ -5,6 +5,7 @@
 import bpy
 from bpy.types import Panel
 from rna_prop_ui import PropertyPanel
+from .space_properties import PropertiesAnimationMixin
 
 from bpy.types import Curve, SurfaceCurve, TextCurve
 
@@ -119,12 +120,6 @@ class DATA_PT_shape_curve(CurveButtonsPanel, Panel):
 class DATA_PT_curve_texture_space(CurveButtonsPanel, Panel):
     bl_label = "Texture Space"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {
-        'BLENDER_RENDER',
-        'BLENDER_EEVEE',
-        'BLENDER_EEVEE_NEXT',
-        'BLENDER_WORKBENCH',
-    }
 
     def draw(self, context):
         layout = self.layout
@@ -201,6 +196,25 @@ class DATA_PT_geometry_curve_bevel(CurveButtonsPanelCurve, Panel):
             col.template_curveprofile(curve, "bevel_profile")
 
 
+class DATA_PT_curve_animation(CurveButtonsPanel, PropertiesAnimationMixin, PropertyPanel, Panel):
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        # MeshButtonsPanel.poll ensures this is not None.
+        curve = context.curve
+
+        col = layout.column(align=True)
+        col.label(text=curve.bl_rna.name)  # "Surface Curve" or "Curve".
+        self.draw_action_and_slot_selector(context, col, curve)
+
+        if shape_keys := curve.shape_keys:
+            col = layout.column(align=True)
+            col.label(text="Shape Keys")
+            self.draw_action_and_slot_selector(context, col, shape_keys)
+
+
 class DATA_PT_geometry_curve_start_end(CurveButtonsPanelCurve, Panel):
     bl_label = "Start & End Mapping"
     bl_parent_id = "DATA_PT_geometry_curve"
@@ -209,7 +223,7 @@ class DATA_PT_geometry_curve_start_end(CurveButtonsPanelCurve, Panel):
     @classmethod
     def poll(cls, context):
         # Text objects don't support these properties
-        return (type(context.curve) == Curve)
+        return (type(context.curve) is Curve)
 
     def draw(self, context):
         layout = self.layout
@@ -498,12 +512,6 @@ class DATA_PT_text_boxes(CurveButtonsPanelText, Panel):
 
 
 class DATA_PT_custom_props_curve(CurveButtonsPanel, PropertyPanel, Panel):
-    COMPAT_ENGINES = {
-        'BLENDER_RENDER',
-        'BLENDER_EEVEE',
-        'BLENDER_EEVEE_NEXT',
-        'BLENDER_WORKBENCH',
-    }
     _context_path = "object.data"
     _property_type = bpy.types.Curve
 
@@ -523,6 +531,7 @@ classes = (
     DATA_PT_paragraph_alignment,
     DATA_PT_paragraph_spacing,
     DATA_PT_text_boxes,
+    DATA_PT_curve_animation,
     DATA_PT_custom_props_curve,
 )
 

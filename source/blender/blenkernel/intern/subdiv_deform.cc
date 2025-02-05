@@ -13,9 +13,7 @@
 #include "DNA_mesh_types.h"
 
 #include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
 
-#include "BKE_customdata.hh"
 #include "BKE_subdiv.hh"
 #include "BKE_subdiv_eval.hh"
 #include "BKE_subdiv_foreach.hh"
@@ -33,8 +31,7 @@ struct SubdivDeformContext {
   const Mesh *coarse_mesh;
   Subdiv *subdiv;
 
-  float (*vertex_cos)[3];
-  int num_verts;
+  MutableSpan<float3> vert_positions;
 
   /* Accumulated values.
    *
@@ -84,10 +81,10 @@ static void subdiv_accumulate_vertex_displacement(SubdivDeformContext *ctx,
     /* NOTE: The storage for vertex coordinates is coming from an external world, not necessarily
      * initialized to zeroes. */
     if (ctx->accumulated_counters[vertex_index] == 0) {
-      copy_v3_v3(ctx->vertex_cos[vertex_index], D);
+      copy_v3_v3(ctx->vert_positions[vertex_index], D);
     }
     else {
-      add_v3_v3(ctx->vertex_cos[vertex_index], D);
+      add_v3_v3(ctx->vert_positions[vertex_index], D);
     }
   }
   ++ctx->accumulated_counters[vertex_index];
@@ -137,8 +134,6 @@ static void subdiv_mesh_vertex_corner(const ForeachContext *foreach_context,
                                       const int /*subdiv_vertex_index*/)
 {
   SubdivDeformContext *ctx = static_cast<SubdivDeformContext *>(foreach_context->user_data);
-  BLI_assert(coarse_vertex_index != ORIGINDEX_NONE);
-  BLI_assert(coarse_vertex_index < ctx->num_verts);
   float inv_num_accumulated = 1.0f;
   if (ctx->accumulated_counters != nullptr) {
     inv_num_accumulated = 1.0f / ctx->accumulated_counters[coarse_vertex_index];
@@ -146,7 +141,7 @@ static void subdiv_mesh_vertex_corner(const ForeachContext *foreach_context,
   /* Displacement is accumulated in subdiv vertex position.
    * Needs to be backed up before copying data from original vertex. */
   float D[3] = {0.0f, 0.0f, 0.0f};
-  float *vertex_co = ctx->vertex_cos[coarse_vertex_index];
+  float *vertex_co = ctx->vert_positions[coarse_vertex_index];
   if (ctx->have_displacement) {
     copy_v3_v3(D, vertex_co);
     mul_v3_fl(D, inv_num_accumulated);
@@ -184,13 +179,14 @@ static void setup_foreach_callbacks(const SubdivDeformContext *subdiv_context,
 
 void deform_coarse_vertices(Subdiv *subdiv,
                             const Mesh *coarse_mesh,
-                            float (*vertex_cos)[3],
-                            int num_verts)
+                            MutableSpan<float3> vert_positions)
 {
   stats_begin(&subdiv->stats, SUBDIV_STATS_SUBDIV_TO_MESH);
   /* Make sure evaluator is up to date with possible new topology, and that
    * is refined for the new positions of coarse vertices. */
-  if (!eval_begin_from_mesh(subdiv, coarse_mesh, vertex_cos, SUBDIV_EVALUATOR_TYPE_CPU, nullptr)) {
+  if (!eval_begin_from_mesh(
+          subdiv, coarse_mesh, vert_positions, SUBDIV_EVALUATOR_TYPE_CPU, nullptr))
+  {
     /* This could happen in two situations:
      * - OpenSubdiv is disabled.
      * - Something totally bad happened, and OpenSubdiv rejected our
@@ -206,8 +202,7 @@ void deform_coarse_vertices(Subdiv *subdiv,
   SubdivDeformContext subdiv_context = {nullptr};
   subdiv_context.coarse_mesh = coarse_mesh;
   subdiv_context.subdiv = subdiv;
-  subdiv_context.vertex_cos = vertex_cos;
-  subdiv_context.num_verts = num_verts;
+  subdiv_context.vert_positions = vert_positions;
   subdiv_context.have_displacement = (subdiv->displacement_evaluator != nullptr);
 
   ForeachContext foreach_context;

@@ -6,7 +6,6 @@
  * \ingroup bke
  */
 
-#include <iostream>
 #include <string>
 
 #include "DNA_ID.h"
@@ -25,7 +24,6 @@
 
 #include "BLI_ghash.h"
 #include "BLI_string.h"
-#include "BLI_string_ref.hh"
 #ifndef NDEBUG
 #  include "BLI_threads.h"
 #endif
@@ -356,6 +354,10 @@ PreviewImage *BKE_previewimg_cached_thumbnail_read(const char *name,
 void BKE_previewimg_cached_release(const char *name)
 {
   BLI_assert(BLI_thread_is_main());
+  if (!gCachedPreviews) {
+    /* Static cache was already freed including all contained previews. Can happen on shutdown. */
+    return;
+  }
 
   PreviewImage *prv = (PreviewImage *)BLI_ghash_popkey(gCachedPreviews, name, MEM_freeN);
 
@@ -407,7 +409,7 @@ void BKE_previewimg_ensure(PreviewImage *prv, const int size)
       icon_w = icon_h = ICON_RENDER_DEFAULT_HEIGHT;
     }
 
-    IMB_scaleImBuf(thumb, icon_w, icon_h);
+    IMB_scale(thumb, icon_w, icon_h, IMBScaleFilter::Box, false);
     prv->w[ICON_SIZE_ICON] = icon_w;
     prv->h[ICON_SIZE_ICON] = icon_h;
     prv->rect[ICON_SIZE_ICON] = (uint *)MEM_dupallocN(thumb->byte_buffer.data);
@@ -434,7 +436,7 @@ std::optional<int> BKE_previewimg_deferred_thumb_source_get(const PreviewImage *
   return prv->runtime->deferred_loading_data->source;
 }
 
-ImBuf *BKE_previewimg_to_imbuf(PreviewImage *prv, const int size)
+ImBuf *BKE_previewimg_to_imbuf(const PreviewImage *prv, const int size)
 {
   const uint w = prv->w[size];
   const uint h = prv->h[size];
@@ -460,6 +462,11 @@ void BKE_previewimg_finish(PreviewImage *prv, const int size)
 bool BKE_previewimg_is_finished(const PreviewImage *prv, const int size)
 {
   return (prv->flag[size] & PRV_RENDERING) == 0;
+}
+
+bool BKE_previewimg_is_invalid(const PreviewImage *prv)
+{
+  return (prv->runtime->tag & PRV_TAG_DEFFERED_INVALID) != 0;
 }
 
 void BKE_previewimg_blend_write(BlendWriter *writer, const PreviewImage *prv)

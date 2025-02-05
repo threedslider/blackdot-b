@@ -10,7 +10,6 @@
 
 #include "DNA_mesh_types.h"
 #include "DNA_meshdata_types.h"
-#include "DNA_scene_types.h"
 
 #include "BLI_color.hh"
 
@@ -24,8 +23,6 @@
 #include "BKE_object_deform.h"
 #include "BKE_paint.hh"
 #include "BKE_report.hh"
-
-#include "BLI_string.h"
 
 #include "BLT_translation.hh"
 
@@ -67,6 +64,7 @@ StringRefNull rna_property_name_for_type(const eCustomDataType type)
     case CD_PROP_INT8:
     case CD_PROP_INT32:
       return "value_int";
+    case CD_PROP_INT16_2D:
     case CD_PROP_INT32_2D:
       return "value_int_vector_2d";
     default:
@@ -131,11 +129,12 @@ GPointer rna_property_for_attribute_type_retrieve_value(PointerRNA &ptr,
     case CD_PROP_COLOR:
       RNA_float_get_array(&ptr, prop_name.c_str(), static_cast<float *>(buffer));
       break;
-    case CD_PROP_BYTE_COLOR:
+    case CD_PROP_BYTE_COLOR: {
       ColorGeometry4f value;
       RNA_float_get_array(&ptr, prop_name.c_str(), value);
       *static_cast<ColorGeometry4b *>(buffer) = value.encode();
       break;
+    }
     case CD_PROP_BOOL:
       *static_cast<bool *>(buffer) = RNA_boolean_get(&ptr, prop_name.c_str());
       break;
@@ -145,6 +144,12 @@ GPointer rna_property_for_attribute_type_retrieve_value(PointerRNA &ptr,
     case CD_PROP_INT32:
       *static_cast<int32_t *>(buffer) = RNA_int_get(&ptr, prop_name.c_str());
       break;
+    case CD_PROP_INT16_2D: {
+      int2 value;
+      RNA_int_get_array(&ptr, prop_name.c_str(), value);
+      *static_cast<short2 *>(buffer) = short2(value);
+      break;
+    }
     case CD_PROP_INT32_2D:
       RNA_int_get_array(&ptr, prop_name.c_str(), static_cast<int *>(buffer));
       break;
@@ -183,6 +188,9 @@ void rna_property_for_attribute_type_set_value(PointerRNA &ptr,
       break;
     case CD_PROP_INT32:
       RNA_property_int_set(&ptr, &prop, *value.get<int32_t>());
+      break;
+    case CD_PROP_INT16_2D:
+      RNA_property_int_set_array(&ptr, &prop, int2(*value.get<short2>()));
       break;
     case CD_PROP_INT32_2D:
       RNA_property_int_set_array(&ptr, &prop, *value.get<int2>());
@@ -288,6 +296,21 @@ static int geometry_attribute_add_invoke(bContext *C, wmOperator *op, const wmEv
   prop = RNA_struct_find_property(op->ptr, "name");
   if (!RNA_property_is_set(op->ptr, prop)) {
     RNA_property_string_set(op->ptr, prop, DATA_("Attribute"));
+  }
+  /* Set a valid default domain, in case Point domain is not supported. */
+  prop = RNA_struct_find_property(op->ptr, "domain");
+  if (!RNA_property_is_set(op->ptr, prop)) {
+    EnumPropertyItem *items;
+    int totitems;
+    bool free;
+    RNA_property_enum_items(
+        C, op->ptr, prop, const_cast<const EnumPropertyItem **>(&items), &totitems, &free);
+    if (totitems > 0) {
+      RNA_property_enum_set(op->ptr, prop, items[0].value);
+    }
+    if (free) {
+      MEM_freeN(items);
+    }
   }
   return WM_operator_props_popup_confirm_ex(
       C, op, event, IFACE_("Add Attribute"), CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Add"));
@@ -512,10 +535,10 @@ static void geometry_color_attribute_add_ui(bContext * /*C*/, wmOperator *op)
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
 
-  uiItemR(layout, op->ptr, "name", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(layout, op->ptr, "domain", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
-  uiItemR(layout, op->ptr, "data_type", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
-  uiItemR(layout, op->ptr, "color", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, op->ptr, "name", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(layout, op->ptr, "domain", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  uiItemR(layout, op->ptr, "data_type", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  uiItemR(layout, op->ptr, "color", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 void GEOMETRY_OT_color_attribute_add(wmOperatorType *ot)
@@ -745,14 +768,14 @@ static void geometry_attribute_convert_ui(bContext * /*C*/, wmOperator *op)
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
 
-  uiItemR(layout, op->ptr, "mode", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, op->ptr, "mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   const ConvertAttributeMode mode = static_cast<ConvertAttributeMode>(
       RNA_enum_get(op->ptr, "mode"));
 
   if (mode == ConvertAttributeMode::Generic) {
-    uiItemR(layout, op->ptr, "domain", UI_ITEM_NONE, nullptr, ICON_NONE);
-    uiItemR(layout, op->ptr, "data_type", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(layout, op->ptr, "domain", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiItemR(layout, op->ptr, "data_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
 }
 
@@ -798,6 +821,8 @@ static int geometry_color_attribute_convert_exec(bContext *C, wmOperator *op)
                                 eCustomDataType(RNA_enum_get(op->ptr, "data_type")),
                                 bke::AttrDomain(RNA_enum_get(op->ptr, "domain")),
                                 op->reports);
+  DEG_id_tag_update(&mesh->id, ID_RECALC_GEOMETRY);
+  WM_main_add_notifier(NC_GEOM | ND_DATA, &mesh->id);
   return OPERATOR_FINISHED;
 }
 
@@ -829,8 +854,8 @@ static void geometry_color_attribute_convert_ui(bContext * /*C*/, wmOperator *op
   uiLayoutSetPropSep(layout, true);
   uiLayoutSetPropDecorate(layout, false);
 
-  uiItemR(layout, op->ptr, "domain", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
-  uiItemR(layout, op->ptr, "data_type", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, op->ptr, "domain", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  uiItemR(layout, op->ptr, "data_type", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 }
 
 void GEOMETRY_OT_color_attribute_convert(wmOperatorType *ot)
@@ -923,7 +948,8 @@ bool ED_geometry_attribute_convert(Mesh *mesh,
   const GVArray varray = *attributes.lookup_or_default(name_copy, dst_domain, dst_type);
 
   const CPPType &cpp_type = varray.type();
-  void *new_data = MEM_malloc_arrayN(varray.size(), cpp_type.size(), __func__);
+  void *new_data = MEM_mallocN_aligned(
+      varray.size() * cpp_type.size(), cpp_type.alignment(), __func__);
   varray.materialize_to_uninitialized(new_data);
   attributes.remove(name_copy);
   if (!attributes.add(name_copy, dst_domain, dst_type, bke::AttributeInitMoveArray(new_data))) {

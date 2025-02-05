@@ -23,11 +23,18 @@
 
 #include "BLI_string_ref.hh"
 
-struct bScreen;
+struct AssetWeakReference;
+struct Main;
+
+namespace blender::asset_system {
+class AssetLibrary;
+}
 
 namespace blender::ed::asset {
 
 void catalogs_save_from_main_path(asset_system::AssetLibrary *library, const Main *bmain);
+void catalogs_save_from_asset_reference(asset_system::AssetLibrary &library,
+                                        const AssetWeakReference &reference);
 
 /**
  * Saving catalog edits when the file is saved is a global option shared for each asset library,

@@ -8,8 +8,6 @@
  * Edge-Net for filling in open edge-loops.
  */
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_math_vector.h"
 #include "BLI_vector.hh"
 
@@ -51,7 +49,7 @@ void bmo_edgenet_fill_exec(BMesh *bm, BMOperator *op)
     if (use_smooth) {
       BM_elem_flag_enable(f, BM_ELEM_SMOOTH);
     }
-    /* normals are zero'd */
+    /* Normals are zeroed. */
     BM_face_normal_update(f);
   }
 

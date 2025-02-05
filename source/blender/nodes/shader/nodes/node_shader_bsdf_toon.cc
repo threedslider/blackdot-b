@@ -15,7 +15,7 @@ static void node_declare(NodeDeclarationBuilder &b)
   b.add_input<decl::Float>("Size").default_value(0.5f).min(0.0f).max(1.0f).subtype(PROP_FACTOR);
   b.add_input<decl::Float>("Smooth").default_value(0.0f).min(0.0f).max(1.0f).subtype(PROP_FACTOR);
   b.add_input<decl::Vector>("Normal").hide_value();
-  b.add_input<decl::Float>("Weight").unavailable();
+  b.add_input<decl::Float>("Weight").available(false);
   b.add_output<decl::Shader>("BSDF");
 }
 
@@ -48,12 +48,16 @@ void register_node_type_sh_bsdf_toon()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(&ntype, SH_NODE_BSDF_TOON, "Toon BSDF", NODE_CLASS_SHADER);
+  sh_node_type_base(&ntype, "ShaderNodeBsdfToon", SH_NODE_BSDF_TOON);
+  ntype.ui_name = "Toon BSDF";
+  ntype.ui_description = "Diffuse and Glossy shaders with cartoon light effects";
+  ntype.enum_name_legacy = "BSDF_TOON";
+  ntype.nclass = NODE_CLASS_SHADER;
   ntype.declare = file_ns::node_declare;
   ntype.add_ui_poll = object_cycles_shader_nodes_poll;
   ntype.draw_buttons = file_ns::node_shader_buts_toon;
   blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Middle);
   ntype.gpu_fn = file_ns::node_shader_gpu_bsdf_toon;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

@@ -10,11 +10,9 @@
 
 #include <cstring>
 
-#include "MEM_guardedalloc.h"
-
 #include "BLI_fileops.h"
 #include "BLI_listbase.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
@@ -27,11 +25,32 @@
 
 #include "BLO_read_write.hh"
 
-#include "DNA_asset_types.h"
 #include "DNA_defaults.h"
 #include "DNA_userdef_types.h"
 
 #define U BLI_STATIC_ASSERT(false, "Global 'U' not allowed, only use arguments passed in!")
+
+/* -------------------------------------------------------------------- */
+/** \name Preferences File
+ * \{ */
+
+namespace blender::bke::preferences {
+
+bool exists()
+{
+  const std::optional<std::string> cfgdir = BKE_appdir_folder_id(BLENDER_USER_CONFIG, nullptr);
+  if (!cfgdir.has_value()) {
+    return false;
+  }
+
+  char userpref[FILE_MAX];
+  BLI_path_join(userpref, sizeof(userpref), cfgdir->c_str(), BLENDER_USERPREF_FILE);
+  return BLI_exists(userpref);
+}
+
+}  // namespace blender::bke::preferences
+
+/** \} */
 
 /* -------------------------------------------------------------------- */
 /** \name Asset Libraries
@@ -97,7 +116,7 @@ bUserAssetLibrary *BKE_preferences_asset_library_containing_path(const UserDef *
                                                                  const char *path)
 {
   LISTBASE_FOREACH (bUserAssetLibrary *, asset_lib_pref, &userdef->asset_libraries) {
-    if (BLI_path_contains(asset_lib_pref->dirpath, path)) {
+    if (asset_lib_pref->dirpath[0] && BLI_path_contains(asset_lib_pref->dirpath, path)) {
       return asset_lib_pref;
     }
   }

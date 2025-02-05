@@ -6,9 +6,8 @@
  * \ingroup spoutliner
  */
 
+#include <algorithm>
 #include <cstring>
-#include <iostream>
-#include <ostream>
 
 #include <fmt/format.h>
 
@@ -20,20 +19,20 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
-#include "BLI_blenlib.h"
-#include "BLI_dynstr.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "BLT_translation.hh"
 
 #include "BLF_api.hh"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_animsys.h"
 #include "BKE_appdir.hh"
 #include "BKE_armature.hh"
 #include "BKE_blender_copybuffer.hh"
+#include "BKE_blendfile.hh"
 #include "BKE_context.hh"
 #include "BKE_idtype.hh"
 #include "BKE_layer.hh"
@@ -340,8 +339,8 @@ static void do_item_rename(ARegion *region,
   {
     BKE_report(reports, RPT_INFO, "Not an editable name");
   }
-  else if (ELEM(tselem->type, TSE_SEQUENCE, TSE_SEQ_STRIP, TSE_SEQUENCE_DUP)) {
-    BKE_report(reports, RPT_INFO, "Sequence names are not editable from the Outliner");
+  else if (ELEM(tselem->type, TSE_STRIP, TSE_STRIP_DATA, TSE_STRIP_DUP)) {
+    BKE_report(reports, RPT_INFO, "Strip names are not editable from the Outliner");
   }
   else if (TSE_IS_REAL_ID(tselem) && !ID_IS_EDITABLE(tselem->id)) {
     BKE_report(reports, RPT_INFO, "External library data is not editable");
@@ -448,8 +447,9 @@ void OUTLINER_OT_item_rename(wmOperatorType *ot)
 
   ot->poll = ED_operator_region_outliner_active;
 
-  /* Flags. */
-  ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
+  /* Flags. No undo, since this operator only activate the name editing text field in the Outliner,
+   * but does not actually change anything. */
+  ot->flag = OPTYPE_REGISTER;
 
   prop = RNA_def_boolean(ot->srna,
                          "use_active",
@@ -491,7 +491,7 @@ static void id_delete_tag(bContext *C, ReportList *reports, TreeElement *te, Tre
     BKE_reportf(reports, RPT_WARNING, "Cannot delete indirectly linked library '%s'", id->name);
     return;
   }
-  if (id->tag & LIB_TAG_INDIRECT) {
+  if (id->tag & ID_TAG_INDIRECT) {
     BKE_reportf(reports, RPT_WARNING, "Cannot delete indirectly linked id '%s'", id->name);
     return;
   }
@@ -503,17 +503,17 @@ static void id_delete_tag(bContext *C, ReportList *reports, TreeElement *te, Tre
     return;
   }
   if (te->idcode == ID_WS) {
-    BKE_workspace_id_tag_all_visible(bmain, LIB_TAG_PRE_EXISTING);
-    if (id->tag & LIB_TAG_PRE_EXISTING) {
+    BKE_workspace_id_tag_all_visible(bmain, ID_TAG_PRE_EXISTING);
+    if (id->tag & ID_TAG_PRE_EXISTING) {
       BKE_reportf(
           reports, RPT_WARNING, "Cannot delete currently visible workspace id '%s'", id->name);
-      BKE_main_id_tag_idcode(bmain, ID_WS, LIB_TAG_PRE_EXISTING, false);
+      BKE_main_id_tag_idcode(bmain, ID_WS, ID_TAG_PRE_EXISTING, false);
       return;
     }
-    BKE_main_id_tag_idcode(bmain, ID_WS, LIB_TAG_PRE_EXISTING, false);
+    BKE_main_id_tag_idcode(bmain, ID_WS, ID_TAG_PRE_EXISTING, false);
   }
 
-  id->tag |= LIB_TAG_DOIT;
+  id->tag |= ID_TAG_DOIT;
 
   WM_event_add_notifier(C, NC_WINDOW, nullptr);
 }
@@ -574,19 +574,19 @@ static int outliner_id_delete_invoke(bContext *C, wmOperator *op, const wmEvent 
   UI_view2d_region_to_view(&region->v2d, event->mval[0], event->mval[1], &fmval[0], &fmval[1]);
 
   int id_tagged_num = 0;
-  BKE_main_id_tag_all(bmain, LIB_TAG_DOIT, false);
+  BKE_main_id_tag_all(bmain, ID_TAG_DOIT, false);
   LISTBASE_FOREACH (TreeElement *, te, &space_outliner->tree) {
     if ((id_tagged_num += outliner_id_delete_tag(C, op->reports, te, fmval)) != 0) {
       break;
     }
   }
   if (id_tagged_num == 0) {
-    BKE_main_id_tag_all(bmain, LIB_TAG_DOIT, false);
+    BKE_main_id_tag_all(bmain, ID_TAG_DOIT, false);
     return OPERATOR_CANCELLED;
   }
 
   BKE_id_multi_tagged_delete(bmain);
-  BKE_main_id_tag_all(bmain, LIB_TAG_DOIT, false);
+  BKE_main_id_tag_all(bmain, ID_TAG_DOIT, false);
   return OPERATOR_FINISHED;
 }
 
@@ -750,7 +750,7 @@ void OUTLINER_OT_id_remap(wmOperatorType *ot)
   prop = RNA_def_enum(
       ot->srna, "old_id", rna_enum_dummy_NULL_items, 0, "Old ID", "Old ID to replace");
   RNA_def_property_enum_funcs_runtime(prop, nullptr, nullptr, outliner_id_itemf);
-  RNA_def_property_flag(prop, (PropertyFlag)(PROP_ENUM_NO_TRANSLATE | PROP_HIDDEN));
+  RNA_def_property_flag(prop, PROP_ENUM_NO_TRANSLATE | PROP_HIDDEN);
 
   ot->prop = RNA_def_enum(ot->srna,
                           "new_id",
@@ -790,24 +790,30 @@ void id_remap_fn(bContext *C,
 /** \name ID Copy Operator
  * \{ */
 
-static int outliner_id_copy_tag(SpaceOutliner *space_outliner, ListBase *tree)
+static int outliner_id_copy_tag(SpaceOutliner *space_outliner,
+                                ListBase *tree,
+                                blender::bke::blendfile::PartialWriteContext &copybuffer)
 {
+  using namespace blender::bke::blendfile;
+
   int num_ids = 0;
 
   LISTBASE_FOREACH (TreeElement *, te, tree) {
     TreeStoreElem *tselem = TREESTORE(te);
 
-    /* if item is selected and is an ID, tag it as needing to be copied. */
+    /* Add selected item and all of its dependencies to the copy buffer. */
     if (tselem->flag & TSE_SELECTED && ELEM(tselem->type, TSE_SOME_ID, TSE_LAYER_COLLECTION)) {
-      ID *id = tselem->id;
-      if (!(id->tag & LIB_TAG_DOIT)) {
-        BKE_copybuffer_copy_tag_ID(tselem->id);
-        num_ids++;
-      }
+      copybuffer.id_add(tselem->id,
+                        PartialWriteContext::IDAddOptions{
+                            (PartialWriteContext::IDAddOperations::SET_FAKE_USER |
+                             PartialWriteContext::IDAddOperations::SET_CLIPBOARD_MARK |
+                             PartialWriteContext::IDAddOperations::ADD_DEPENDENCIES)},
+                        nullptr);
+      num_ids++;
     }
 
     /* go over sub-tree */
-    num_ids += outliner_id_copy_tag(space_outliner, &te->subtree);
+    num_ids += outliner_id_copy_tag(space_outliner, &te->subtree, copybuffer);
   }
 
   return num_ids;
@@ -815,20 +821,21 @@ static int outliner_id_copy_tag(SpaceOutliner *space_outliner, ListBase *tree)
 
 static int outliner_id_copy_exec(bContext *C, wmOperator *op)
 {
+  using namespace blender::bke::blendfile;
+
   Main *bmain = CTX_data_main(C);
   SpaceOutliner *space_outliner = CTX_wm_space_outliner(C);
-  char filepath[FILE_MAX];
+  PartialWriteContext copybuffer{BKE_main_blendfile_path(bmain)};
 
-  BKE_copybuffer_copy_begin(bmain);
-
-  const int num_ids = outliner_id_copy_tag(space_outliner, &space_outliner->tree);
+  const int num_ids = outliner_id_copy_tag(space_outliner, &space_outliner->tree, copybuffer);
   if (num_ids == 0) {
     BKE_report(op->reports, RPT_INFO, "No selected data-blocks to copy");
     return OPERATOR_CANCELLED;
   }
 
+  char filepath[FILE_MAX];
   outliner_copybuffer_filepath_get(filepath, sizeof(filepath));
-  BKE_copybuffer_copy_end(bmain, filepath, op->reports);
+  copybuffer.write(filepath, *op->reports);
 
   BKE_reportf(op->reports, RPT_INFO, "Copied %d selected data-block(s)", num_ids);
 
@@ -1083,9 +1090,7 @@ static int outliner_count_levels(ListBase *lb, const int curlevel)
 
   LISTBASE_FOREACH (TreeElement *, te, lb) {
     int lev = outliner_count_levels(&te->subtree, curlevel + 1);
-    if (lev > level) {
-      level = lev;
-    }
+    level = std::max(lev, level);
   }
   return level;
 }
@@ -2035,12 +2040,14 @@ static void do_outliner_keyingset_editop(SpaceOutliner *space_outliner,
 
     /* check if RNA-property described by this selected element is an animatable prop */
     const TreeElementRNACommon *te_rna = tree_element_cast<TreeElementRNACommon>(te);
-    PointerRNA ptr = te_rna->get_pointer_rna();
-    if (te_rna && te_rna->get_property_rna() &&
-        RNA_property_anim_editable(&ptr, te_rna->get_property_rna()))
-    {
-      /* get id + path + index info from the selected element */
-      tree_element_to_path(te, tselem, &id, &path, &array_index, &flag, &groupmode);
+    if (te_rna) {
+      PointerRNA ptr = te_rna->get_pointer_rna();
+      if (PropertyRNA *prop = te_rna->get_property_rna()) {
+        if (RNA_property_anim_editable(&ptr, prop)) {
+          /* get id + path + index info from the selected element */
+          tree_element_to_path(te, tselem, &id, &path, &array_index, &flag, &groupmode);
+        }
+      }
     }
 
     /* only if ID and path were set, should we perform any actions */
@@ -2216,7 +2223,7 @@ static int unused_message_popup_width_compute(bContext *C)
   data.do_recursive = true;
   BKE_lib_query_unused_ids_amounts(bmain, data);
 
-  std::string unused_message = "";
+  std::string unused_message;
   const uiStyle *style = UI_style_get_dpi();
   unused_message_gen(unused_message, data.num_local);
   float max_messages_width = BLF_width(
@@ -2284,7 +2291,7 @@ static int outliner_orphans_purge_exec(bContext *C, wmOperator *op)
   data.do_recursive = RNA_boolean_get(op->ptr, "do_recursive");
 
   /* Tag all IDs to delete. */
-  BKE_lib_query_unused_ids_tag(bmain, LIB_TAG_DOIT, data);
+  BKE_lib_query_unused_ids_tag(bmain, ID_TAG_DOIT, data);
 
   if (data.num_total[INDEX_ID_NULL] == 0) {
     BKE_report(op->reports, RPT_INFO, "No orphaned data-blocks to purge");
@@ -2337,23 +2344,23 @@ static void outliner_orphans_purge_ui(bContext * /*C*/, wmOperator *op)
   }
   LibQueryUnusedIDsData &data = *static_cast<LibQueryUnusedIDsData *>(op->customdata);
 
-  std::string unused_message = "";
+  std::string unused_message;
   unused_message_gen(unused_message, data.num_local);
   uiLayout *column = uiLayoutColumn(layout, true);
-  uiItemR(column, ptr, "do_local_ids", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(column, ptr, "do_local_ids", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   uiLayout *row = uiLayoutRow(column, true);
   uiItemS_ex(row, 2.67f);
-  uiItemL(row, unused_message.c_str(), ICON_NONE);
+  uiItemL(row, unused_message, ICON_NONE);
 
   unused_message = "";
   unused_message_gen(unused_message, data.num_linked);
   column = uiLayoutColumn(layout, true);
-  uiItemR(column, ptr, "do_linked_ids", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(column, ptr, "do_linked_ids", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   row = uiLayoutRow(column, true);
   uiItemS_ex(row, 2.67f);
-  uiItemL(row, unused_message.c_str(), ICON_NONE);
+  uiItemL(row, unused_message, ICON_NONE);
 
-  uiItemR(layout, ptr, "do_recursive", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "do_recursive", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 void OUTLINER_OT_orphans_purge(wmOperatorType *ot)

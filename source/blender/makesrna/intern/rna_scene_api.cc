@@ -6,35 +6,27 @@
  * \ingroup RNA
  */
 
-#include <cstdio>
 #include <cstdlib>
 
-#include "BLI_kdopbvh.h"
-#include "BLI_math_matrix.h"
-#include "BLI_math_vector.h"
-#include "BLI_path_util.h"
-#include "BLI_utildefines.h"
+#include "BLI_kdopbvh.hh"
+#include "BLI_path_utils.hh"
 
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
-#include "DNA_anim_types.h"
-#include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
 #include "rna_internal.hh" /* own include */
 
 #ifdef WITH_ALEMBIC
-#  include "ABC_alembic.h"
 #endif
 
 #ifdef RNA_RUNTIME
 
 #  include "BKE_editmesh.hh"
 #  include "BKE_global.hh"
-#  include "BKE_image.h"
+#  include "BKE_image.hh"
 #  include "BKE_scene.hh"
-#  include "BKE_writemovie.hh"
 
 #  include "DEG_depsgraph_query.hh"
 
@@ -42,8 +34,10 @@
 #  include "ED_transform_snap_object_context.hh"
 #  include "ED_uvedit.hh"
 
+#  include "MOV_write.hh"
+
 #  ifdef WITH_PYTHON
-#    include "BPY_extern.h"
+#    include "BPY_extern.hh"
 #  endif
 
 static void rna_Scene_frame_set(Scene *scene, Main *bmain, int frame, float subframe)
@@ -114,7 +108,7 @@ static void rna_SceneRender_get_frame_path(
   }
 
   if (BKE_imtype_is_movie(rd->im_format.imtype)) {
-    BKE_movie_filepath_get(filepath, rd, preview != 0, suffix);
+    MOV_filepath_from_settings(filepath, rd, preview != 0, suffix);
   }
   else {
     BKE_image_path_from_imformat(filepath,
@@ -262,7 +256,8 @@ void RNA_api_scene(StructRNA *srna)
   PropertyRNA *parm;
 
   func = RNA_def_function(srna, "frame_set", "rna_Scene_frame_set");
-  RNA_def_function_ui_description(func, "Set scene frame updating all objects immediately");
+  RNA_def_function_ui_description(
+      func, "Set scene frame updating all objects and view layers immediately");
   parm = RNA_def_int(
       func, "frame", 0, MINAFRAME, MAXFRAME, "", "Frame number to set", MINAFRAME, MAXFRAME);
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);

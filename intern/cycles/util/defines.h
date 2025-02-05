@@ -7,8 +7,7 @@
 /* #define __forceinline triggers a bug in some clang-format versions, disable
  * format for entire file to keep results consistent. */
 
-#ifndef __UTIL_DEFINES_H__
-#define __UTIL_DEFINES_H__
+#pragma once
 
 /* Bitness */
 
@@ -68,7 +67,6 @@
 
 #  define ccl_restrict __restrict
 #  define ccl_optional_struct_init
-#  define ccl_loop_no_unroll
 #  define ccl_attr_maybe_unused [[maybe_unused]]
 #  define __KERNEL_WITH_SSE_ALIGN__
 
@@ -102,5 +100,3 @@
 
 #define CONCAT_HELPER(a, ...) a##__VA_ARGS__
 #define CONCAT(a, ...) CONCAT_HELPER(a, __VA_ARGS__)
-
-#endif /* __UTIL_DEFINES_H__ */

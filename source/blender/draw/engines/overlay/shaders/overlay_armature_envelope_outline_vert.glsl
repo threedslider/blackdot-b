@@ -2,8 +2,9 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma BLENDER_REQUIRE(common_view_clipping_lib.glsl)
-#pragma BLENDER_REQUIRE(common_view_lib.glsl)
+#include "common_view_clipping_lib.glsl"
+#include "draw_view_lib.glsl"
+#include "select_lib.glsl"
 
 /* project to screen space */
 vec2 proj(vec4 pos)
@@ -91,19 +92,21 @@ vec3 get_outline_point(vec2 pos,
 
 void main()
 {
-  float dst_head = distance(headSphere.xyz, drw_view.viewinv[3].xyz);
-  float dst_tail = distance(tailSphere.xyz, drw_view.viewinv[3].xyz);
-  // float dst_head = -dot(headSphere.xyz, drw_view.viewmat[2].xyz);
-  // float dst_tail = -dot(tailSphere.xyz, drw_view.viewmat[2].xyz);
+  select_id_set(in_select_buf[gl_InstanceID]);
+
+  float dst_head = distance(data_buf[gl_InstanceID].head_sphere.xyz, drw_view.viewinv[3].xyz);
+  float dst_tail = distance(data_buf[gl_InstanceID].tail_sphere.xyz, drw_view.viewinv[3].xyz);
+  // float dst_head = -dot(data_buf[gl_InstanceID].head_sphere.xyz, drw_view.viewmat[2].xyz);
+  // float dst_tail = -dot(data_buf[gl_InstanceID].tail_sphere.xyz, drw_view.viewmat[2].xyz);
 
   vec4 sph_near, sph_far;
   if ((dst_head > dst_tail) && (drw_view.winmat[3][3] == 0.0)) {
-    sph_near = tailSphere;
-    sph_far = headSphere;
+    sph_near = data_buf[gl_InstanceID].tail_sphere;
+    sph_far = data_buf[gl_InstanceID].head_sphere;
   }
   else {
-    sph_near = headSphere;
-    sph_far = tailSphere;
+    sph_near = data_buf[gl_InstanceID].head_sphere;
+    sph_far = data_buf[gl_InstanceID].tail_sphere;
   }
 
   vec3 bone_vec = (sph_far.xyz - sph_near.xyz) + 1e-8;
@@ -126,9 +129,9 @@ void main()
 
   view_clipping_distances(wpos1);
 
-  vec4 p0 = point_world_to_ndc(wpos0);
-  vec4 p1 = point_world_to_ndc(wpos1);
-  vec4 p2 = point_world_to_ndc(wpos2);
+  vec4 p0 = drw_point_world_to_homogenous(wpos0);
+  vec4 p1 = drw_point_world_to_homogenous(wpos1);
+  vec4 p2 = drw_point_world_to_homogenous(wpos2);
 
   gl_Position = p1;
 
@@ -144,5 +147,5 @@ void main()
 
   edgeStart = edgePos = proj(gl_Position);
 
-  finalColor = vec4(outlineColorSize.rgb, 1.0);
+  finalColor = vec4(data_buf[gl_InstanceID].bone_color_and_wire_width.rgb, 1.0);
 }

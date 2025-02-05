@@ -2,12 +2,13 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include <iostream>
+#include <fmt/core.h>
 
 #include "IO_subdiv_disabler.hh"
 #include "usd.hh"
 #include "usd_hierarchy_iterator.hh"
 #include "usd_hook.hh"
+#include "usd_instancing_utils.hh"
 #include "usd_light_convert.hh"
 #include "usd_private.hh"
 
@@ -16,6 +17,7 @@
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformCommonAPI.h>
@@ -34,8 +36,8 @@
 #include "BKE_blender_version.h"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
-#include "BKE_image.h"
-#include "BKE_image_save.h"
+#include "BKE_image.hh"
+#include "BKE_image_save.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_report.hh"
 #include "BKE_scene.hh"
@@ -44,7 +46,7 @@
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 #include "BLI_string.h"
 #include "BLI_timeit.hh"
 
@@ -167,6 +169,10 @@ static void ensure_root_prim(pxr::UsdStageRefPtr stage, const USDExportParams &p
     return;
   }
 
+  if (params.convert_scene_units) {
+    xf_api.SetScale(pxr::GfVec3f(float(1.0 / get_meters_per_unit(params))));
+  }
+
   if (params.convert_orientation) {
     float mrot[3][3];
     mat3_from_axis_conversion(IO_AXIS_Y, IO_AXIS_Z, params.forward_axis, params.up_axis, mrot);
@@ -181,9 +187,9 @@ static void ensure_root_prim(pxr::UsdStageRefPtr stage, const USDExportParams &p
     xf_api.SetRotate(pxr::GfVec3f(eul[0], eul[1], eul[2]));
   }
 
-  for (auto path : pxr::SdfPath(params.root_prim_path).GetPrefixes()) {
+  for (const auto &path : pxr::SdfPath(params.root_prim_path).GetPrefixes()) {
     auto xform = pxr::UsdGeomXform::Define(stage, path);
-    /* Tag generated prims to allow filtering on import */
+    /* Tag generated primitives to allow filtering on import. */
     xform.GetPrim().SetCustomDataByKey(pxr::TfToken("Blender:generated"), pxr::VtValue(true));
   }
 }
@@ -192,9 +198,9 @@ static void report_job_duration(const ExportJobData *data)
 {
   timeit::Nanoseconds duration = timeit::Clock::now() - data->start_time;
   const char *export_filepath = data->export_filepath();
-  std::cout << "USD export of '" << export_filepath << "' took ";
+  fmt::print("USD export of '{}' took ", export_filepath);
   timeit::print_duration(duration);
-  std::cout << '\n';
+  fmt::print("\n");
 }
 
 static void process_usdz_textures(const ExportJobData *data, const char *path)
@@ -204,9 +210,9 @@ static void process_usdz_textures(const ExportJobData *data, const char *path)
     return;
   }
 
-  int image_size = ((enum_value == USD_TEXTURE_SIZE_CUSTOM ?
-                         data->params.usdz_downscale_custom_size :
-                         enum_value));
+  const int image_size = (enum_value == USD_TEXTURE_SIZE_CUSTOM) ?
+                             data->params.usdz_downscale_custom_size :
+                             enum_value;
 
   char texture_path[FILE_MAX];
   STRNCPY(texture_path, path);
@@ -292,8 +298,8 @@ static bool perform_usdz_conversion(const ExportJobData *data)
   BLI_path_split_file_part(data->usdz_filepath, usdz_file, FILE_MAX);
 
   char original_working_dir_buff[FILE_MAX];
-  char *original_working_dir = BLI_current_working_dir(original_working_dir_buff,
-                                                       sizeof(original_working_dir_buff));
+  const char *original_working_dir = BLI_current_working_dir(original_working_dir_buff,
+                                                             sizeof(original_working_dir_buff));
   /* Buffer is expected to be returned by #BLI_current_working_dir, although in theory other
    * returns are possible on some platforms, this is not handled by this code. */
   BLI_assert(original_working_dir == original_working_dir_buff);
@@ -351,7 +357,7 @@ std::string get_image_cache_file(const std::string &file_name, bool mkdir)
   return file_path;
 }
 
-std::string cache_image_color(float color[4])
+std::string cache_image_color(const float color[4])
 {
   char name[128];
   SNPRINTF(name,
@@ -426,13 +432,18 @@ pxr::UsdStageRefPtr export_to_stage(const USDExportParams &params,
 
   pxr::VtValue upAxis = pxr::VtValue(pxr::UsdGeomTokens->z);
   if (params.convert_orientation) {
-    if (params.up_axis == IO_AXIS_X)
+    if (params.up_axis == IO_AXIS_X) {
       upAxis = pxr::VtValue(pxr::UsdGeomTokens->x);
-    else if (params.up_axis == IO_AXIS_Y)
+    }
+    else if (params.up_axis == IO_AXIS_Y) {
       upAxis = pxr::VtValue(pxr::UsdGeomTokens->y);
+    }
   }
 
   usd_stage->SetMetadata(pxr::UsdGeomTokens->upAxis, upAxis);
+
+  const double meters_per_unit = get_meters_per_unit(params);
+  pxr::UsdGeomSetStageMetersPerUnit(usd_stage, meters_per_unit);
 
   ensure_root_prim(usd_stage, params);
 
@@ -491,6 +502,10 @@ pxr::UsdStageRefPtr export_to_stage(const USDExportParams &params,
       usd_stage->SetDefaultPrim(prim);
       break;
     }
+  }
+
+  if (params.use_instancing) {
+    process_scene_graph_instances(params, usd_stage);
   }
 
   call_export_hooks(usd_stage, depsgraph, params.worker_status->reports);
@@ -640,7 +655,7 @@ static void set_job_filepath(blender::io::usd::ExportJobData *job, const char *f
   job->usdz_filepath[0] = '\0';
 }
 
-bool USD_export(bContext *C,
+bool USD_export(const bContext *C,
                 const char *filepath,
                 const USDExportParams *params,
                 bool as_background_job,
@@ -732,6 +747,39 @@ int USD_get_version()
    * So the major version is implicit/invisible in the public version number.
    */
   return PXR_VERSION;
+}
+
+double get_meters_per_unit(const USDExportParams &params)
+{
+  double result;
+  switch (params.convert_scene_units) {
+    case USD_SCENE_UNITS_CENTIMETERS:
+      result = 0.01;
+      break;
+    case USD_SCENE_UNITS_MILLIMETERS:
+      result = 0.001;
+      break;
+    case USD_SCENE_UNITS_KILOMETERS:
+      result = 1000.0;
+      break;
+    case USD_SCENE_UNITS_INCHES:
+      result = 0.0254;
+      break;
+    case USD_SCENE_UNITS_FEET:
+      result = 0.3048;
+      break;
+    case USD_SCENE_UNITS_YARDS:
+      result = 0.9144;
+      break;
+    case USD_SCENE_UNITS_CUSTOM:
+      result = double(params.custom_meters_per_unit);
+      break;
+    default:
+      result = 1.0;
+      break;
+  }
+
+  return result;
 }
 
 }  // namespace blender::io::usd

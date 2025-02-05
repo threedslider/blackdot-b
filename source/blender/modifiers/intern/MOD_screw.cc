@@ -7,6 +7,7 @@
  */
 
 /* Screw modifier: revolves the edges about an axis */
+#include <algorithm>
 #include <climits>
 
 #include "BLI_utildefines.h"
@@ -46,7 +47,7 @@
 
 #include "GEO_mesh_merge_by_distance.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 using namespace blender;
 
@@ -376,9 +377,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   }
   else {
     close = false;
-    if (step_tot < 2) {
-      step_tot = 2;
-    }
+    step_tot = std::max<uint>(step_tot, 2);
 
     maxVerts = totvert * step_tot;          /* -1 because we're joining back up */
     maxEdges = (totvert * (step_tot - 1)) + /* these are the edges between new verts */
@@ -881,7 +880,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
       /* Polygon */
       if (has_mpoly_orig) {
         CustomData_copy_data(
-            &mesh->face_data, &result->face_data, int(face_index_orig), int(face_index), 1);
+            &mesh->face_data, &result->face_data, int(face_index_orig), face_index, 1);
         origindex[face_index] = int(face_index_orig);
       }
       else {
@@ -1021,6 +1020,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
 #endif
 
   sharp_faces.finish();
+  dst_material_index.finish();
 
   if (edge_face_map) {
     MEM_freeN(edge_face_map);
@@ -1039,8 +1039,6 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
                                          ob_axis != nullptr ? mtx_tx[3] : nullptr,
                                          ltmd->merge_dist);
   }
-
-  dst_material_index.finish();
 
   return result;
 }
@@ -1074,22 +1072,22 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   uiLayoutSetPropSep(layout, true);
 
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "angle", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "angle", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   row = uiLayoutRow(col, false);
   uiLayoutSetActive(row,
                     RNA_pointer_is_null(&screw_obj_ptr) ||
                         !RNA_boolean_get(ptr, "use_object_screw_offset"));
-  uiItemR(row, ptr, "screw_offset", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "iterations", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(row, ptr, "screw_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "iterations", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   uiItemS(layout);
   col = uiLayoutColumn(layout, false);
   row = uiLayoutRow(col, false);
-  uiItemR(row, ptr, "axis", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(row, ptr, "axis", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   uiItemR(col, ptr, "object", UI_ITEM_NONE, IFACE_("Axis Object"), ICON_NONE);
   sub = uiLayoutColumn(col, false);
   uiLayoutSetActive(sub, !RNA_pointer_is_null(&screw_obj_ptr));
-  uiItemR(sub, ptr, "use_object_screw_offset", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(sub, ptr, "use_object_screw_offset", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   uiItemS(layout);
 
@@ -1124,9 +1122,9 @@ static void normals_panel_draw(const bContext * /*C*/, Panel *panel)
   uiLayoutSetPropSep(layout, true);
 
   col = uiLayoutColumn(layout, false);
-  uiItemR(col, ptr, "use_smooth_shade", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "use_normal_calculate", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(col, ptr, "use_normal_flip", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(col, ptr, "use_smooth_shade", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "use_normal_calculate", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(col, ptr, "use_normal_flip", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
 static void panel_register(ARegionType *region_type)

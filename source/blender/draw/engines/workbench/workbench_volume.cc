@@ -2,10 +2,14 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "draw_cache.hh"
+#include "draw_common_c.hh"
+
 #include "workbench_private.hh"
 
 #include "BKE_volume.hh"
 #include "BKE_volume_render.hh"
+#include "BLI_math_geom.h"
 #include "BLI_rand.h"
 #include "DNA_fluid_types.h"
 #include "DNA_modifier_types.h"
@@ -195,8 +199,7 @@ void VolumePass::draw(Manager &manager, View &view, SceneResources &resources)
 void VolumePass::draw_slice_ps(
     Manager &manager, PassMain::Sub &ps, ObjectRef &ob_ref, int slice_axis_enum, float slice_depth)
 {
-  float4x4 view_mat_inv;
-  DRW_view_viewmat_get(nullptr, view_mat_inv.ptr(), true);
+  float4x4 view_mat_inv = blender::draw::View::default_get().viewinv();
 
   const int axis = (slice_axis_enum == SLICE_AXIS_AUTO) ?
                        axis_dominant_v3_single(view_mat_inv[2]) :

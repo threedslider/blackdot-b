@@ -6,8 +6,6 @@
  * \ingroup openexr
  */
 
-#include "openexr_api.h"
-
 #include "IMB_openexr.hh"
 
 void *IMB_exr_get_handle()
@@ -42,6 +40,7 @@ bool IMB_exr_begin_write(void * /*handle*/,
                          int /*width*/,
                          int /*height*/,
                          int /*compress*/,
+                         int /*quality*/,
                          const StampData * /*stamp*/)
 {
   return false;

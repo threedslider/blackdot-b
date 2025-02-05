@@ -24,7 +24,7 @@ struct GPUShader;
 
 enum eGPUBuiltinShader {
   /** Glyph drawing shader used by the BLF module. */
-  GPU_SHADER_TEXT,
+  GPU_SHADER_TEXT = 0,
   /** Draws keyframe markers. All markers shapes are supported through a single shader. */
   GPU_SHADER_KEYFRAME_SHAPE,
   /** Draw solid mesh with a single distant light using a clamped simple dot product. */
@@ -58,6 +58,10 @@ enum eGPUBuiltinShader {
   GPU_SHADER_2D_WIDGET_BASE,
   GPU_SHADER_2D_WIDGET_BASE_INST,
   GPU_SHADER_2D_WIDGET_SHADOW,
+  /** Draw a node socket given it's bounding rectangle. All socket shapes are supported through
+   * a single shader. */
+  GPU_SHADER_2D_NODE_SOCKET,
+  GPU_SHADER_2D_NODE_SOCKET_INST,
   /** Draw a node link given an input quadratic Bezier curve. */
   GPU_SHADER_2D_NODELINK,
   GPU_SHADER_2D_NODELINK_INST,
@@ -77,6 +81,8 @@ enum eGPUBuiltinShader {
 
   /** Draw strip widgets in sequencer timeline. */
   GPU_SHADER_SEQUENCER_STRIPS,
+  /** Draw strip thumbnails in sequencer timeline. */
+  GPU_SHADER_SEQUENCER_THUMBS,
 
   /** Compute shaders to generate 2d index buffers (mainly for curve drawing). */
   GPU_SHADER_INDEXBUF_POINTS,

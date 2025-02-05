@@ -21,15 +21,17 @@ if(CMAKE_GENERATOR MATCHES ".*Unix Makefiles")
   add_definitions(-DUSE_MAKEFILE_WORKAROUND)
 endif()
 
-# files rna_access.cc rna_define.cc makesrna.cc intentionally excluded.
+# Files `rna_access.cc`, `rna_define.cc`, `makesrna.cc` intentionally excluded.
 set(DEFSRC
   rna_ID.cc
   rna_action.cc
   rna_animation.cc
   rna_animviz.cc
+  rna_annotations.cc
   rna_armature.cc
   rna_asset.cc
   rna_attribute.cc
+  rna_blendfile_import.cc
   rna_boid.cc
   rna_brush.cc
   rna_cachefile.cc
@@ -46,8 +48,6 @@ set(DEFSRC
   rna_dynamicpaint.cc
   rna_fcurve.cc
   rna_fluid.cc
-  rna_gpencil_legacy.cc
-  rna_gpencil_legacy_modifier.cc
   rna_grease_pencil.cc
   rna_image.cc
   rna_key.cc
@@ -110,7 +110,6 @@ endif()
 
 if(WITH_EXPERIMENTAL_FEATURES)
   add_definitions(-DWITH_SIMULATION_DATABLOCK)
-  add_definitions(-DWITH_ANIM_BAKLAVA)
 endif()
 
 set(APISRC
@@ -119,7 +118,9 @@ set(APISRC
   rna_armature_api.cc
   rna_camera_api.cc
   rna_curve_api.cc
+  rna_curves_api.cc
   rna_fcurve_api.cc
+  rna_grease_pencil_api.cc
   rna_image_api.cc
   rna_lattice_api.cc
   rna_main_api.cc
@@ -141,7 +142,11 @@ set(APISRC
   rna_workspace_api.cc
 )
 
-string(REGEX REPLACE "rna_([a-zA-Z0-9_-]*).cc" "${CMAKE_CURRENT_BINARY_DIR}/rna_\\1_gen.cc" GENSRC "${DEFSRC}")
+string(
+  REGEX REPLACE
+  "rna_([a-zA-Z0-9_-]*).cc" "${CMAKE_CURRENT_BINARY_DIR}/rna_\\1_gen.cc"
+  GENSRC "${DEFSRC}"
+)
 list(APPEND GENSRC
   "${CMAKE_CURRENT_BINARY_DIR}/rna_prototypes_gen.hh"
   "${CMAKE_CURRENT_BINARY_DIR}/../RNA_prototypes.hh"
@@ -212,6 +217,8 @@ set(SRC_RNA_INC
   ../RNA_enum_types.hh
   ../RNA_path.hh
   ../RNA_types.hh
+
+  rna_action_tools.hh
 )
 
 set(SRC
@@ -238,9 +245,11 @@ set(INC
   ../../bmesh
   ../../depsgraph
   ../../draw
+  ../../functions
   ../../gpu
   ../../ikplugin
   ../../imbuf
+  ../../imbuf/movie
   ../../io/usd
   ../../modifiers
   ../../nodes
@@ -307,15 +316,6 @@ if(WITH_AUDASPACE)
 endif()
 
 if(WITH_CODEC_FFMPEG)
-  list(APPEND INC
-    ../../../../intern/ffmpeg
-  )
-  list(APPEND INC_SYS
-    ${FFMPEG_INCLUDE_DIRS}
-  )
-  list(APPEND LIB
-    ${FFMPEG_LIBRARIES}
-  )
   add_definitions(-DWITH_FFMPEG)
 endif()
 
@@ -332,12 +332,6 @@ if(WITH_MOD_OCEANSIM)
 endif()
 
 if(WITH_SDL)
-  if(WITH_SDL_DYNLOAD)
-    add_definitions(-DWITH_SDL_DYNLOAD)
-    list(APPEND INC
-      ../../../../extern/sdlew/include
-    )
-  endif()
   add_definitions(-DWITH_SDL)
 endif()
 
@@ -438,7 +432,7 @@ if(WITH_GMP)
   add_definitions(-DWITH_GMP)
 endif()
 
-# Build makesrna executable
+# Build `makesrna` executable.
 add_cc_flags_custom_test(makesrna)
 
 add_executable(makesrna ${SRC} ${SRC_RNA_INC} ${SRC_DNA_INC})
@@ -451,6 +445,7 @@ target_link_libraries(makesrna PRIVATE bf_dna)
 target_link_libraries(makesrna PRIVATE bf::intern::atomic)
 target_link_libraries(makesrna PRIVATE bf::intern::guardedalloc)
 target_link_libraries(makesrna PRIVATE bf_dna_blenlib)
+target_link_libraries(makesrna PRIVATE bf::dependencies::optional::tbb)
 
 if(WIN32 AND NOT UNIX)
   if(DEFINED PTHREADS_LIBRARIES)
@@ -463,7 +458,9 @@ endif()
 # `valgrind --leak-check=full --track-origins=yes`
 add_custom_command(
   OUTPUT ${GENSRC}
-  COMMAND "$<TARGET_FILE:makesrna>" ${CMAKE_CURRENT_BINARY_DIR}/ ${CMAKE_CURRENT_BINARY_DIR}/../
+  COMMAND
+    ${CMAKE_COMMAND} -E env ${PLATFORM_ENV_BUILD}
+    "$<TARGET_FILE:makesrna>" ${CMAKE_CURRENT_BINARY_DIR}/ ${CMAKE_CURRENT_BINARY_DIR}/../
   DEPENDS makesrna
 )
 
@@ -476,6 +473,7 @@ set(SRC
 
   ${SRC_RNA_INC}
   rna_access_internal.hh
+  rna_curves_utils.hh
   rna_internal.hh
   rna_internal_types.hh
   rna_mesh_utils.hh
@@ -484,6 +482,7 @@ set(SRC
 set(LIB
   PRIVATE bf::animrig
   PRIVATE bf::dna
+  PRIVATE bf::dependencies::optional::tbb
   PRIVATE extern_fmtlib
   bf_editor_space_api
 

@@ -5,11 +5,11 @@
 /** \file
  * \ingroup bke
  *
- * UV Islands for PBVH Pixel extraction. When primitives share an edge they belong to the same UV
- * Island.
+ * UV Islands for pbvh::Tree Pixel extraction. When primitives share an edge they belong to the
+ * same UV Island.
  *
- * \note Similar to `uvedit_islands.cc`, but optimized for PBVH painting without using BMesh for
- * performance reasons. Non-manifold meshes only (i.e. edges must have less than 3 faces).
+ * \note Similar to `uvedit_islands.cc`, but optimized for pbvh::Tree painting without using BMesh
+ * for performance reasons. Non-manifold meshes only (i.e. edges must have less than 3 faces).
  *
  * Polygons (face with more than 3 edges) are supported as they are split up to primitives.
  *
@@ -21,21 +21,17 @@
 
 #pragma once
 
-#include <fstream>
 #include <optional>
 
 #include "BLI_array.hh"
 #include "BLI_map.hh"
-#include "BLI_math_matrix_types.hh"
 #include "BLI_math_vector_types.hh"
-#include "BLI_rect.h"
+#include "BLI_offset_indices.hh"
 #include "BLI_vector.hh"
 #include "BLI_vector_list.hh"
-#include "BLI_virtual_array.hh"
 
 namespace blender::bke::pbvh::uv_islands {
 
-struct MeshEdge;
 struct UVBorder;
 struct UVEdge;
 struct UVIslands;
@@ -43,11 +39,6 @@ struct UVIslandsMask;
 struct UVPrimitive;
 struct MeshData;
 struct UVVertex;
-
-struct MeshEdge {
-  int vert1;
-  int vert2;
-};
 
 class VertToEdgeMap {
   Array<Vector<int>> edges_of_vert_;
@@ -116,6 +107,7 @@ class TriangleToEdgeMap {
  */
 struct MeshData {
  public:
+  OffsetIndices<int> faces;
   Span<int3> corner_tris;
   Span<int> corner_verts;
   Span<float2> uv_map;
@@ -123,7 +115,7 @@ struct MeshData {
 
   VertToEdgeMap vert_to_edge_map;
 
-  Vector<MeshEdge> edges;
+  Vector<int2> edges;
   EdgeToPrimitiveMap edge_to_primitive_map;
 
   TriangleToEdgeMap primitive_to_edge_map;
@@ -136,8 +128,8 @@ struct MeshData {
   /** Total number of found uv islands. */
   int64_t uv_island_len;
 
- public:
-  explicit MeshData(Span<int3> corner_tris,
+  explicit MeshData(OffsetIndices<int> faces,
+                    Span<int3> corner_tris,
                     Span<int> corner_verts,
                     Span<float2> uv_map,
                     Span<float3> vert_positions);
@@ -167,12 +159,12 @@ struct UVEdge {
   UVVertex *get_other_uv_vertex(const int vertex_index);
   bool has_shared_edge(Span<float2> uv_map, const int loop_1, const int loop_2) const;
   bool has_shared_edge(const UVEdge &other) const;
-  bool has_same_vertices(const MeshEdge &edge) const;
+  bool has_same_vertices(const int2 &edge) const;
   bool is_border_edge() const;
 
  private:
   bool has_shared_edge(const UVVertex &v1, const UVVertex &v2) const;
-  bool has_same_vertices(const int v1, const int v2) const;
+  bool has_same_vertices(const int vert1, const int vert2) const;
   bool has_same_uv_vertices(const UVEdge &other) const;
 };
 

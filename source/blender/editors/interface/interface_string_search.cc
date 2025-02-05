@@ -2,17 +2,16 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include <sstream>
-
 #include "BKE_appdir.hh"
 
 #include "DNA_userdef_types.h"
 
 #include "UI_string_search.hh"
 
+#include "BLI_fileops.h"
 #include "BLI_fileops.hh"
 #include "BLI_map.hh"
-#include "BLI_path_util.h"
+#include "BLI_path_utils.hh"
 
 namespace blender::ui::string_search {
 
@@ -75,6 +74,11 @@ void write_recent_searches_file()
   }
 
   const RecentCacheStorage &storage = get_recent_cache_storage();
+  /* Avoid creating an empty file. */
+  if (storage.cache.logical_time_by_str.is_empty() && !BLI_exists((*path).c_str())) {
+    return;
+  }
+
   Vector<std::pair<int, std::string>> values;
   for (const auto item : storage.cache.logical_time_by_str.items()) {
     values.append({item.value, item.key});

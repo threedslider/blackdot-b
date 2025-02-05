@@ -10,10 +10,13 @@
 
 #include "DNA_mask_types.h"
 
+struct ARegion;
 struct Depsgraph;
 struct KeyframeEditData;
 struct MaskLayer;
 struct MaskLayerShape;
+struct Scene;
+struct ScrArea;
 struct bContext;
 struct wmKeyConfig;
 
@@ -168,7 +171,7 @@ bool ED_masklayer_frames_delete(MaskLayer *mask_layer);
 /**
  * Duplicate selected frames from given mask-layer.
  */
-void ED_masklayer_frames_duplicate(MaskLayer *mask_layer);
+bool ED_masklayer_frames_duplicate(MaskLayer *mask_layer);
 
 /**
  * Snap selected frames to ...

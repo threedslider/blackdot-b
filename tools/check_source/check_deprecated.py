@@ -8,13 +8,8 @@ noted by the date which must be included with the *DEPRECATED* comment.
 
 Once this date is past, the code should be removed.
 """
-
-from typing import (
-    Callable,
-    Generator,
-    List,
-    Tuple,
-    Optional,
+__all__ = (
+    "main",
 )
 
 
@@ -22,9 +17,14 @@ import os
 import datetime
 from os.path import splitext
 
+from collections.abc import (
+    Callable,
+    Iterator,
+)
+
 SKIP_DIRS = (
     "extern",
-    # Not this directory.
+    "lib",
     "tests",
 )
 
@@ -64,7 +64,7 @@ def is_source_any(filename: str) -> bool:
     return is_c_any(filename) or is_py(filename)
 
 
-def source_list(path: str, filename_check: Optional[Callable[[str], bool]] = None) -> Generator[str, None, None]:
+def source_list(path: str, filename_check: Callable[[str], bool] | None = None) -> Iterator[str]:
     for dirpath, dirnames, filenames in os.walk(path):
         # skip '.git'
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -74,7 +74,7 @@ def source_list(path: str, filename_check: Optional[Callable[[str], bool]] = Non
                 yield os.path.join(dirpath, filename)
 
 
-def deprecations() -> List[Tuple[datetime.datetime, Tuple[str, int], str]]:
+def deprecations() -> list[tuple[datetime.datetime, tuple[str, int], str]]:
     """
     Searches out source code for lines like
 

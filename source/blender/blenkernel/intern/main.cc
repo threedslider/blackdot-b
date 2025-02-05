@@ -15,10 +15,11 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_ghash.h"
 #include "BLI_map.hh"
 #include "BLI_mempool.h"
+#include "BLI_path_utils.hh"
+#include "BLI_string.h"
 #include "BLI_threads.h"
 #include "BLI_vector.hh"
 
@@ -491,7 +492,7 @@ static int main_relations_create_idlink_cb(LibraryIDLinkCallbackData *cb_data)
   MainIDRelations *bmain_relations = static_cast<MainIDRelations *>(cb_data->user_data);
   ID *self_id = cb_data->self_id;
   ID **id_pointer = cb_data->id_pointer;
-  const int cb_flag = cb_data->cb_flag;
+  const LibraryForeachIDCallbackFlag cb_flag = cb_data->cb_flag;
 
   if (*id_pointer) {
     MainIDRelationsEntry **entry_p;
@@ -558,8 +559,10 @@ void BKE_main_relations_create(Main *bmain, const short flag)
 
   ID *id;
   FOREACH_MAIN_ID_BEGIN (bmain, id) {
-    const int idwalk_flag = IDWALK_READONLY |
-                            ((flag & MAINIDRELATIONS_INCLUDE_UI) != 0 ? IDWALK_INCLUDE_UI : 0);
+    const LibraryForeachIDFlag idwalk_flag = IDWALK_READONLY |
+                                             ((flag & MAINIDRELATIONS_INCLUDE_UI) != 0 ?
+                                                  IDWALK_INCLUDE_UI :
+                                                  IDWALK_NOP);
 
     /* Ensure all IDs do have an entry, even if they are not connected to any other. */
     MainIDRelationsEntry **entry_p;
@@ -755,6 +758,28 @@ void BKE_main_library_weak_reference_remove_item(
   library_weak_reference_mapping->map.remove(key);
 
   MEM_SAFE_FREE(old_id->library_weak_reference);
+}
+
+BlendThumbnail *BKE_main_thumbnail_from_buffer(Main *bmain, const uint8_t *rect, const int size[2])
+{
+  BlendThumbnail *data = nullptr;
+
+  if (bmain) {
+    MEM_SAFE_FREE(bmain->blen_thumb);
+  }
+
+  if (rect) {
+    const size_t data_size = BLEN_THUMB_MEMSIZE(size[0], size[1]);
+    data = static_cast<BlendThumbnail *>(MEM_mallocN(data_size, __func__));
+    data->width = size[0];
+    data->height = size[1];
+    memcpy(data->rect, rect, data_size - sizeof(*data));
+  }
+
+  if (bmain) {
+    bmain->blen_thumb = data;
+  }
+  return data;
 }
 
 BlendThumbnail *BKE_main_thumbnail_from_imbuf(Main *bmain, ImBuf *img)

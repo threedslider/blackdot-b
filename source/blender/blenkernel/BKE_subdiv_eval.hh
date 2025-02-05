@@ -8,7 +8,8 @@
 
 #pragma once
 
-#include "BLI_sys_types.h"
+#include "BLI_math_vector_types.hh"
+#include "BLI_span.hh"
 
 struct Mesh;
 struct OpenSubdiv_EvaluatorCache;
@@ -33,10 +34,10 @@ bool eval_begin(Subdiv *subdiv,
  * mesh. */
 bool eval_begin_from_mesh(Subdiv *subdiv,
                           const Mesh *mesh,
-                          const float (*coarse_vertex_cos)[3],
+                          Span<float3> coarse_vert_positions,
                           eSubdivEvaluatorType evaluator_type,
                           OpenSubdiv_EvaluatorCache *evaluator_cache);
-bool eval_refine_from_mesh(Subdiv *subdiv, const Mesh *mesh, const float (*coarse_vertex_cos)[3]);
+bool eval_refine_from_mesh(Subdiv *subdiv, const Mesh *mesh, Span<float3> coarse_vert_positions);
 
 /* Makes sure displacement evaluator is initialized.
  *

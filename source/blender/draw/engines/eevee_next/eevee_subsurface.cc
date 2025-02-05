@@ -6,12 +6,10 @@
  * \ingroup eevee
  */
 
-#include "BLI_vector.hh"
+#include <algorithm>
 
 #include "eevee_instance.hh"
 #include "eevee_subsurface.hh"
-
-#include <iostream>
 
 namespace blender::eevee {
 
@@ -120,7 +118,7 @@ void SubsurfaceModule::precompute_samples_location()
     data_.samples[i].y = sinf(theta) * r;
     data_.samples[i].z = 1.0f / burley_pdf(d, r);
   }
-  /* Avoid float imprecision.*/
+  /* Avoid float imprecision. */
   data_.min_radius = max_ff(data_.min_radius, 1e-4f);
 
   inst_.uniform_data.push_update();
@@ -167,9 +165,7 @@ float SubsurfaceModule::burley_sample(float d, float x_rand)
     }
 
     r = r - f / f_;
-    if (r < 0.0) {
-      r = 0.0;
-    }
+    r = std::max<double>(r, 0.0);
   }
 
   return r * d;

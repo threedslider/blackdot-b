@@ -59,7 +59,6 @@ void mesh_flip_faces(Mesh &mesh, const IndexMask &selection)
 
   flip_custom_data_type<float4>(faces, mesh.corner_data, selection, CD_TANGENT);
   flip_custom_data_type<float4>(faces, mesh.corner_data, selection, CD_MLOOPTANGENT);
-  flip_custom_data_type<short2>(faces, mesh.corner_data, selection, CD_CUSTOMLOOPNORMAL);
   flip_custom_data_type<GridPaintMask>(faces, mesh.corner_data, selection, CD_GRID_PAINT_MASK);
   flip_custom_data_type<OrigSpaceLoop>(faces, mesh.corner_data, selection, CD_ORIGSPACE_MLOOP);
   flip_custom_data_type<MDisps>(faces, mesh.corner_data, selection, CD_MDISPS);
@@ -74,23 +73,22 @@ void mesh_flip_faces(Mesh &mesh, const IndexMask &selection)
   }
 
   MutableAttributeAccessor attributes = mesh.attributes_for_write();
-  attributes.for_all([&](const AttributeIDRef &attribute_id, const AttributeMetaData &meta_data) {
-    if (meta_data.data_type == CD_PROP_STRING) {
-      return true;
+  attributes.foreach_attribute([&](const AttributeIter &iter) {
+    if (iter.data_type == CD_PROP_STRING) {
+      return;
     }
-    if (meta_data.domain != AttrDomain::Corner) {
-      return true;
+    if (iter.domain != AttrDomain::Corner) {
+      return;
     }
-    if (ELEM(attribute_id.name(), ".corner_vert", ".corner_edge")) {
-      return true;
+    if (ELEM(iter.name, ".corner_vert", ".corner_edge")) {
+      return;
     }
-    GSpanAttributeWriter attribute = attributes.lookup_for_write_span(attribute_id);
-    attribute_math::convert_to_static_type(meta_data.data_type, [&](auto dummy) {
+    GSpanAttributeWriter attribute = attributes.lookup_for_write_span(iter.name);
+    attribute_math::convert_to_static_type(iter.data_type, [&](auto dummy) {
       using T = decltype(dummy);
       flip_corner_data(faces, selection, attribute.span.typed<T>());
     });
     attribute.finish();
-    return true;
   });
 
   mesh.tag_face_winding_changed();

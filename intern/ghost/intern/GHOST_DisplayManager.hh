@@ -82,7 +82,7 @@ class GHOST_DisplayManager {
                                                   const GHOST_DisplaySetting &setting);
 
  protected:
-  typedef std::vector<GHOST_DisplaySetting> GHOST_DisplaySettings;
+  using GHOST_DisplaySettings = std::vector<GHOST_DisplaySetting>;
 
   /**
    * Finds the best display settings match.
@@ -106,7 +106,5 @@ class GHOST_DisplayManager {
   /** The list with display settings for the main display. */
   std::vector<GHOST_DisplaySettings> m_settings;
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("GHOST:GHOST_DisplayManager")
-#endif
 };

@@ -4,8 +4,6 @@
 
 #pragma once
 
-#include "BLI_vector.hh"
-
 struct ARegion;
 struct bContext;
 struct uiBlock;
@@ -42,6 +40,6 @@ class SpreadsheetDrawer {
 
 void draw_spreadsheet_in_region(const bContext *C,
                                 ARegion *region,
-                                const SpreadsheetDrawer &spreadsheet_drawer);
+                                const SpreadsheetDrawer &drawer);
 
 }  // namespace blender::ed::spreadsheet

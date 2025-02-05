@@ -4,12 +4,9 @@
 
 #pragma once
 
-#include "BLI_span.hh"
 #include "DNA_node_types.h"
 
 #include "BKE_curves.hh"
-#include "BKE_curves_utils.hh"
-#include "BKE_geometry_set.hh"
 
 namespace blender::geometry {
 
@@ -22,6 +19,6 @@ bke::CurvesGeometry trim_curves(const bke::CurvesGeometry &src_curves,
                                 const VArray<float> &starts,
                                 const VArray<float> &ends,
                                 GeometryNodeCurveSampleMode mode,
-                                const bke::AnonymousAttributePropagationInfo &propagation_info);
+                                const bke::AttributeFilter &attribute_filter);
 
 }  // namespace blender::geometry

@@ -11,6 +11,9 @@ While it can be called directly, you may prefer to run this from Blender's root 
    make format
 
 """
+__all__ = (
+    "main",
+)
 
 import argparse
 import multiprocessing
@@ -18,11 +21,8 @@ import os
 import sys
 import subprocess
 
-from typing import (
-    List,
-    Optional,
+from collections.abc import (
     Sequence,
-    Tuple,
 )
 
 VERSION_MIN = (17, 0, 6)
@@ -47,35 +47,33 @@ extensions_only_retab = (
     ".sh",
 )
 
-ignore_files = {
-    "intern/cycles/render/sobol.cpp",  # Too heavy for clang-format
+# Add files which are too large/heavy to format.
+ignore_files: set[str] = set([
+    # Currently empty, looks like.
+    # "intern/cycles/render/sobol.cpp",
+])
+
+# Directories not to format (recursively).
+#
+# Notes:
+# - These directories must also have a `.clang-format` that disables formatting,
+#   so developers who use format-on-save functionality enabled don't have these files formatted on save.
+# - The reason to exclude here is to prevent unnecessary work were the files would run through clang-format
+#   only to do nothing because the `.clang-format` file prevents it.
+ignore_directories = {
+    "intern/itasc"
 }
 
 
-def compute_paths(paths: List[str], use_default_paths: bool) -> List[str]:
+def compute_paths(paths: list[str], use_default_paths: bool) -> list[str]:
+    # The resulting paths:
+    # - Use forward slashes on all systems.
+    # - Are relative to the GIT repository without any `.` or `./` prefix.
+
     # Optionally pass in files to operate on.
     if use_default_paths:
         paths = [
-            "intern/atomic",
-            "intern/audaspace",
-            "intern/clog",
-            "intern/cycles",
-            "intern/dualcon",
-            "intern/eigen",
-            "intern/ffmpeg",
-            "intern/ghost",
-            "intern/glew-mx",
-            "intern/guardedalloc",
-            "intern/iksolver",
-            "intern/libmv",
-            "intern/locale",
-            "intern/memutil",
-            "intern/mikktspace",
-            "intern/opencolorio",
-            "intern/opensubdiv",
-            "intern/openvdb",
-            "intern/rigidbody",
-            "intern/utfconv",
+            "intern",
             "source",
             "tests/gtests",
         ]
@@ -92,7 +90,7 @@ def compute_paths(paths: List[str], use_default_paths: bool) -> List[str]:
     return paths
 
 
-def source_files_from_git(paths: Sequence[str], changed_only: bool) -> List[str]:
+def source_files_from_git(paths: Sequence[str], changed_only: bool) -> list[str]:
     if changed_only:
         cmd = ("git", "diff", "HEAD", "--name-only", "-z", "--", *paths)
     else:
@@ -106,28 +104,26 @@ def convert_tabs_to_spaces(files: Sequence[str]) -> None:
         print("TabExpand", f)
         with open(f, 'r', encoding="utf-8") as fh:
             data = fh.read()
-            if False:
-                # Simple 4 space
-                data = data.expandtabs(4)
-            else:
-                # Complex 2 space
-                # because some comments have tabs for alignment.
-                def handle(l: str) -> str:
-                    ls = l.lstrip("\t")
-                    d = len(l) - len(ls)
-                    if d != 0:
-                        return ("  " * d) + ls.expandtabs(4)
-                    else:
-                        return l.expandtabs(4)
+            # Simple 4 space (but we're using 2 spaces).
+            # `data = data.expandtabs(4)`
 
-                lines = data.splitlines(keepends=True)
-                lines = [handle(l) for l in lines]
-                data = "".join(lines)
+            # Complex 2 space
+            # because some comments have tabs for alignment.
+            def handle(line: str) -> str:
+                line_strip = line.lstrip("\t")
+                d = len(line) - len(line_strip)
+                if d != 0:
+                    return ("  " * d) + line_strip.expandtabs(4)
+                return line.expandtabs(4)
+
+            lines = data.splitlines(keepends=True)
+            lines = [handle(line) for line in lines]
+            data = "".join(lines)
         with open(f, 'w', encoding="utf-8") as fh:
             fh.write(data)
 
 
-def clang_format_ensure_version() -> Optional[Tuple[int, int, int]]:
+def clang_format_ensure_version() -> tuple[int, int, int] | None:
     global CLANG_FORMAT_CMD
     clang_format_cmd = None
     version_output = ""
@@ -143,18 +139,18 @@ def clang_format_ensure_version() -> Optional[Tuple[int, int, int]]:
             continue
         CLANG_FORMAT_CMD = clang_format_cmd
         break
-    version: Optional[str] = next(iter(v for v in version_output.split() if v[0].isdigit()), None)
+    version: str | None = next(iter(v for v in version_output.split() if v[0].isdigit()), None)
     if version is None:
         return None
 
     version = version.split("-")[0]
     # Ensure exactly 3 numbers.
-    version_num: Tuple[int, int, int] = (tuple(int(n) for n in version.split(".")) + (0, 0, 0))[:3]  # type: ignore
+    version_num: tuple[int, int, int] = (tuple(int(n) for n in version.split(".")) + (0, 0, 0))[:3]  # type: ignore
     print("Using {:s} ({:d}.{:d}.{:d})...".format(CLANG_FORMAT_CMD, version_num[0], version_num[1], version_num[2]))
     return version_num
 
 
-def clang_format_file(files: List[str]) -> bytes:
+def clang_format_file(files: list[str]) -> bytes:
     cmd = [
         CLANG_FORMAT_CMD,
         # Update the files in-place.
@@ -169,7 +165,7 @@ def clang_print_output(output: bytes) -> None:
     print(output.decode('utf8', errors='ignore').strip())
 
 
-def clang_format(files: List[str]) -> None:
+def clang_format(files: list[str]) -> None:
     pool = multiprocessing.Pool()
 
     # Process in chunks to reduce overhead of starting processes.
@@ -222,39 +218,52 @@ def argparse_create() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main() -> int:
     version = clang_format_ensure_version()
     if version is None:
         print("Unable to detect 'clang-format -version'")
-        sys.exit(1)
+        return 1
     if version < VERSION_MIN:
         print("Version of clang-format is too old:", version, "<", VERSION_MIN)
-        sys.exit(1)
+        return 1
 
     args = argparse_create().parse_args()
 
     use_default_paths = not (bool(args.paths) or bool(args.changed_only))
-
     paths = compute_paths(args.paths, use_default_paths)
+    # Check if user-defined paths exclude all clang-format sources.
+    if args.paths and not paths:
+        print("Skip clang-format: no target to format")
+        return 0
+
     print("Operating on:" + (" ({:d} changed paths)".format(len(paths)) if args.changed_only else ""))
     for p in paths:
         print(" ", p)
+
+    # Notes:
+    # - Paths from GIT always use forward slashes (even on WIN32),
+    #   so there is no need to convert slashes.
+    # - Ensure a trailing slash so a `str.startswith` check can be used.
+    ignore_directories_tuple = tuple(p.rstrip("/") + "/" for p in ignore_directories)
 
     files = [
         f for f in source_files_from_git(paths, args.changed_only)
         if f.endswith(extensions)
         if f not in ignore_files
-    ]
+        if not f.startswith(ignore_directories_tuple)
 
-    # Always operate on all CMAKE files (when expanding tabs and no paths given).
-    files_retab = [
-        f for f in source_files_from_git((".",) if use_default_paths else paths, args.changed_only)
-        if f.endswith(extensions_only_retab)
-        if f not in ignore_files
     ]
 
     if args.expand_tabs:
+        # Always operate on all CMAKE files (when expanding tabs and no paths given).
+        files_retab = [
+            f for f in source_files_from_git((".",) if use_default_paths else paths, args.changed_only)
+            if f.endswith(extensions_only_retab)
+            if f not in ignore_files
+            if not f.startswith(ignore_directories_tuple)
+        ]
         convert_tabs_to_spaces(files + files_retab)
+
     clang_format(files)
 
     if version > VERSION_MAX_RECOMMENDED:
@@ -271,6 +280,8 @@ def main() -> None:
         )
         print()
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

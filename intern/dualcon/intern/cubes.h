@@ -5,6 +5,8 @@
 #ifndef __CUBES_H__
 #define __CUBES_H__
 
+#include "MEM_guardedalloc.h"
+
 #include "marching_cubes_table.h"
 
 /* simple wrapper for auto-generated marching cubes data */
@@ -24,9 +26,7 @@ class Cubes {
     }
   }
 
-#ifdef WITH_CXX_GUARDEDALLOC
   MEM_CXX_CLASS_ALLOC_FUNCS("DUALCON:Cubes")
-#endif
 };
 
 #endif /* __CUBES_H__ */

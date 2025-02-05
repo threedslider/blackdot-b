@@ -22,7 +22,6 @@
 #include "BLI_string.h"
 #include "BLI_utildefines.h"
 
-#include "BKE_global.hh"
 #include "BKE_idprop.hh"
 #include "BKE_lib_id.hh"
 
@@ -32,7 +31,7 @@
 
 #include "BLO_read_write.hh"
 
-#include "BLI_strict_flags.h" /* Keep last. */
+#include "BLI_strict_flags.h" /* IWYU pragma: keep. Keep last. */
 
 /* IDPropertyTemplate is a union in DNA_ID.h */
 
@@ -66,13 +65,13 @@ static size_t idp_size_table[] = {
 
 #define GETPROP(prop, i) &(IDP_IDPArray(prop)[i])
 
-IDProperty *IDP_NewIDPArray(const char *name)
+IDProperty *IDP_NewIDPArray(const blender::StringRef name)
 {
   IDProperty *prop = static_cast<IDProperty *>(
       MEM_callocN(sizeof(IDProperty), "IDProperty prop array"));
   prop->type = IDP_IDPARRAY;
   prop->len = 0;
-  STRNCPY(prop->name, name);
+  name.copy_utf8_truncated(prop->name);
 
   return prop;
 }
@@ -356,7 +355,7 @@ static IDProperty *IDP_CopyArray(const IDProperty *prop, const int flag)
 
 IDProperty *IDP_NewStringMaxSize(const char *st,
                                  const size_t st_maxncpy,
-                                 const char *name,
+                                 const blender::StringRef name,
                                  const eIDPropertyFlag flags)
 {
   IDProperty *prop = static_cast<IDProperty *>(
@@ -384,13 +383,15 @@ IDProperty *IDP_NewStringMaxSize(const char *st,
   }
 
   prop->type = IDP_STRING;
-  STRNCPY(prop->name, name);
+  name.copy_utf8_truncated(prop->name);
   prop->flag = short(flags);
 
   return prop;
 }
 
-IDProperty *IDP_NewString(const char *st, const char *name, const eIDPropertyFlag flags)
+IDProperty *IDP_NewString(const char *st,
+                          const blender::StringRef name,
+                          const eIDPropertyFlag flags)
 {
   return IDP_NewStringMaxSize(st, 0, name, flags);
 }
@@ -410,10 +411,11 @@ static IDProperty *IDP_CopyString(const IDProperty *prop, const int flag)
   return newp;
 }
 
-/* FIXME: This function is broken for bytes (in case there are null chars in it), needs a
- * dedicated function which takes directly the size of the byte buffer. */
 void IDP_AssignStringMaxSize(IDProperty *prop, const char *st, const size_t st_maxncpy)
 {
+  /* FIXME: This function is broken for bytes (in case there are null chars in it),
+   * needs a dedicated function which takes directly the size of the byte buffer. */
+
   BLI_assert(prop->type == IDP_STRING);
   const bool is_byte = prop->subtype == IDP_STRING_SUB_BYTE;
   const int stlen = int((st_maxncpy > 0) ? BLI_strnlen(st, st_maxncpy - 1) : strlen(st)) +
@@ -427,9 +429,10 @@ void IDP_AssignStringMaxSize(IDProperty *prop, const char *st, const size_t st_m
   }
 }
 
-/* FIXME: Should never be called for `byte` subtype, needs an assert. */
 void IDP_AssignString(IDProperty *prop, const char *st)
 {
+  /* FIXME: Should never be called for `byte` subtype, needs an assert. */
+
   IDP_AssignStringMaxSize(prop, st, 0);
 }
 
@@ -536,6 +539,8 @@ static IDProperty *IDP_CopyID(const IDProperty *prop, const int flag)
 void IDP_AssignID(IDProperty *prop, ID *id, const int flag)
 {
   BLI_assert(prop->type == IDP_ID);
+  /* Do not assign embedded IDs to IDProperties. */
+  BLI_assert(!id || (id->flag & ID_FLAG_EMBEDDED_DATA) == 0);
 
   if ((flag & LIB_ID_CREATE_NO_USER_REFCOUNT) == 0 && IDP_Id(prop) != nullptr) {
     id_us_min(IDP_Id(prop));
@@ -756,13 +761,15 @@ void IDP_FreeFromGroup(IDProperty *group, IDProperty *prop)
   IDP_FreeProperty(prop);
 }
 
-IDProperty *IDP_GetPropertyFromGroup(const IDProperty *prop, const char *name)
+IDProperty *IDP_GetPropertyFromGroup(const IDProperty *prop, const blender::StringRef name)
 {
   BLI_assert(prop->type == IDP_GROUP);
-
-  return (IDProperty *)BLI_findstring(&prop->data.group, name, offsetof(IDProperty, name));
+  return BLI_listbase_find<IDProperty>(prop->data.group,
+                                       [&](const IDProperty &elem) { return elem.name == name; });
 }
-IDProperty *IDP_GetPropertyTypeFromGroup(const IDProperty *prop, const char *name, const char type)
+IDProperty *IDP_GetPropertyTypeFromGroup(const IDProperty *prop,
+                                         const blender::StringRef name,
+                                         const char type)
 {
   IDProperty *idprop = IDP_GetPropertyFromGroup(prop, name);
   return (idprop && idprop->type == type) ? idprop : nullptr;
@@ -984,7 +991,7 @@ bool IDP_EqualsProperties(const IDProperty *prop1, const IDProperty *prop2)
 
 IDProperty *IDP_New(const char type,
                     const IDPropertyTemplate *val,
-                    const char *name,
+                    const blender::StringRef name,
                     const eIDPropertyFlag flags)
 {
   IDProperty *prop = nullptr;
@@ -1080,7 +1087,7 @@ IDProperty *IDP_New(const char type,
   }
 
   prop->type = type;
-  STRNCPY(prop->name, name);
+  name.copy_utf8_truncated(prop->name);
   prop->flag = short(flags);
 
   return prop;
@@ -1342,15 +1349,39 @@ static void IDP_WriteArray(const IDProperty *prop, BlendWriter *writer)
 {
   /* Remember to set #IDProperty.totallen to len in the linking code! */
   if (prop->data.pointer) {
-    BLO_write_raw(writer, MEM_allocN_len(prop->data.pointer), prop->data.pointer);
+    /* Only write the actual data (`prop->len`), not the whole allocated buffer (`prop->totallen`).
+     */
+    switch (eIDPropertyType(prop->subtype)) {
+      case IDP_GROUP: {
+        BLO_write_pointer_array(writer, uint32_t(prop->len), prop->data.pointer);
 
-    if (prop->subtype == IDP_GROUP) {
-      IDProperty **array = static_cast<IDProperty **>(prop->data.pointer);
-      int a;
-
-      for (a = 0; a < prop->len; a++) {
-        IDP_BlendWrite(writer, array[a]);
+        IDProperty **array = static_cast<IDProperty **>(prop->data.pointer);
+        for (int i = 0; i < prop->len; i++) {
+          IDP_BlendWrite(writer, array[i]);
+        }
+        break;
       }
+      case IDP_DOUBLE:
+        BLO_write_double_array(
+            writer, uint32_t(prop->len), static_cast<double *>(prop->data.pointer));
+        break;
+      case IDP_INT:
+        BLO_write_int32_array(writer, uint32_t(prop->len), static_cast<int *>(prop->data.pointer));
+        break;
+      case IDP_FLOAT:
+        BLO_write_float_array(
+            writer, uint32_t(prop->len), static_cast<float *>(prop->data.pointer));
+        break;
+      case IDP_BOOLEAN:
+        BLO_write_int8_array(
+            writer, uint32_t(prop->len), static_cast<int8_t *>(prop->data.pointer));
+        break;
+      case IDP_STRING:
+      case IDP_ARRAY:
+      case IDP_ID:
+      case IDP_IDPARRAY:
+        BLI_assert_unreachable();
+        break;
     }
   }
 }
@@ -1372,7 +1403,9 @@ static void IDP_WriteIDPArray(const IDProperty *prop, BlendWriter *writer)
 static void IDP_WriteString(const IDProperty *prop, BlendWriter *writer)
 {
   /* Remember to set #IDProperty.totallen to len in the linking code! */
-  BLO_write_raw(writer, size_t(prop->len), prop->data.pointer);
+  /* Do not use #BLO_write_string here, since 'bytes' sub-type of IDProperties may not be
+   * null-terminated. */
+  BLO_write_char_array(writer, uint(prop->len), static_cast<char *>(prop->data.pointer));
 }
 
 static void IDP_WriteGroup(const IDProperty *prop, BlendWriter *writer)
@@ -1435,7 +1468,11 @@ static void read_ui_data(IDProperty *prop, BlendDataReader *reader)
       IDPropertyUIDataInt *ui_data_int = (IDPropertyUIDataInt *)prop->ui_data;
       if (prop->type == IDP_ARRAY) {
         BLO_read_int32_array(
-            reader, ui_data_int->default_array_len, (int **)&ui_data_int->default_array);
+            reader, ui_data_int->default_array_len, (&ui_data_int->default_array));
+      }
+      else {
+        ui_data_int->default_array = nullptr;
+        ui_data_int->default_array_len = 0;
       }
       BLO_read_struct_array(reader,
                             IDPropertyUIDataEnumItem,
@@ -1454,7 +1491,11 @@ static void read_ui_data(IDProperty *prop, BlendDataReader *reader)
       IDPropertyUIDataBool *ui_data_bool = (IDPropertyUIDataBool *)prop->ui_data;
       if (prop->type == IDP_ARRAY) {
         BLO_read_int8_array(
-            reader, ui_data_bool->default_array_len, (int8_t **)&ui_data_bool->default_array);
+            reader, ui_data_bool->default_array_len, (&ui_data_bool->default_array));
+      }
+      else {
+        ui_data_bool->default_array = nullptr;
+        ui_data_bool->default_array_len = 0;
       }
       break;
     }
@@ -1463,13 +1504,18 @@ static void read_ui_data(IDProperty *prop, BlendDataReader *reader)
       IDPropertyUIDataFloat *ui_data_float = (IDPropertyUIDataFloat *)prop->ui_data;
       if (prop->type == IDP_ARRAY) {
         BLO_read_double_array(
-            reader, ui_data_float->default_array_len, (double **)&ui_data_float->default_array);
+            reader, ui_data_float->default_array_len, (&ui_data_float->default_array));
+      }
+      else {
+        ui_data_float->default_array = nullptr;
+        ui_data_float->default_array_len = 0;
       }
       break;
     }
     case IDP_UI_DATA_TYPE_UNSUPPORTED: {
-      BLO_read_data_address(reader, &prop->ui_data);
       BLI_assert_unreachable();
+      /* Do not attempt to read unknown data. */
+      prop->ui_data = nullptr;
       break;
     }
   }
@@ -1504,23 +1550,33 @@ static void IDP_DirectLinkArray(IDProperty *prop, BlendDataReader *reader)
   /* since we didn't save the extra buffer, set totallen to len */
   prop->totallen = prop->len;
 
-  if (prop->subtype == IDP_GROUP) {
-    BLO_read_pointer_array(reader, &prop->data.pointer);
-    IDProperty **array = static_cast<IDProperty **>(prop->data.pointer);
-
-    for (int i = 0; i < prop->len; i++) {
-      IDP_DirectLinkProperty(array[i], reader);
+  switch (eIDPropertyType(prop->subtype)) {
+    case IDP_GROUP: {
+      BLO_read_pointer_array(reader, prop->len, &prop->data.pointer);
+      IDProperty **array = static_cast<IDProperty **>(prop->data.pointer);
+      for (int i = 0; i < prop->len; i++) {
+        IDP_DirectLinkProperty(array[i], reader);
+      }
+      break;
     }
-  }
-  else if (prop->subtype == IDP_DOUBLE) {
-    BLO_read_double_array(reader, prop->len, (double **)&prop->data.pointer);
-  }
-  else if (ELEM(prop->subtype, IDP_INT, IDP_FLOAT)) {
-    /* also used for floats */
-    BLO_read_int32_array(reader, prop->len, (int **)&prop->data.pointer);
-  }
-  else if (prop->subtype == IDP_BOOLEAN) {
-    BLO_read_int8_array(reader, prop->len, (int8_t **)&prop->data.pointer);
+    case IDP_DOUBLE:
+      BLO_read_double_array(reader, prop->len, (double **)&prop->data.pointer);
+      break;
+    case IDP_INT:
+      BLO_read_int32_array(reader, prop->len, (int **)&prop->data.pointer);
+      break;
+    case IDP_FLOAT:
+      BLO_read_float_array(reader, prop->len, (float **)&prop->data.pointer);
+      break;
+    case IDP_BOOLEAN:
+      BLO_read_int8_array(reader, prop->len, (int8_t **)&prop->data.pointer);
+      break;
+    case IDP_STRING:
+    case IDP_ARRAY:
+    case IDP_ID:
+    case IDP_IDPARRAY:
+      BLI_assert_unreachable();
+      break;
   }
 }
 

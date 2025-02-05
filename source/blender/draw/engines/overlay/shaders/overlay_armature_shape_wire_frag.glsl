@@ -2,8 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#pragma BLENDER_REQUIRE(common_view_lib.glsl)
-#pragma BLENDER_REQUIRE(select_lib.glsl)
+#include "select_lib.glsl"
 
 /**
  * We want to know how much a pixel is covered by a line.
@@ -31,18 +30,14 @@ float edge_step(float dist)
 
 void main()
 {
-  float wire_width = geometry_out.wire_width;
-  if (do_smooth_wire) {
-    wire_width -= 0.5;
-  }
+  float half_size = (do_smooth_wire ? wire_width - 0.5 : wire_width) / 2.0;
 
-  float half_size = wire_width / 2.0;
-
-  float dist = abs(geometry_noperspective_out.edgeCoord) - half_size;
+  float dist = abs(edgeCoord) - half_size;
   const float mix_w = clamp(edge_step(dist), 0.0, 1.0);
 
-  fragColor = mix(vec4(geometry_out.finalColor.rgb, alpha), vec4(0), mix_w);
+  fragColor = mix(vec4(finalColor.rgb, alpha), vec4(0), mix_w);
   fragColor.a *= 1.0 - mix_w;
-  select_id_output(select_id);
   lineOutput = vec4(0);
+
+  select_id_output(select_id);
 }

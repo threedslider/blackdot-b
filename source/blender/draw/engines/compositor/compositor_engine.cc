@@ -12,8 +12,6 @@
 
 #include "DNA_ID.h"
 #include "DNA_ID_enums.h"
-#include "DNA_camera_types.h"
-#include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_vec_types.h"
 #include "DNA_view3d_types.h"
@@ -22,6 +20,7 @@
 
 #include "ED_view3d.hh"
 
+#include "DRW_gpu_wrapper.hh"
 #include "DRW_render.hh"
 
 #include "COM_context.hh"
@@ -31,30 +30,34 @@
 #include "COM_texture_pool.hh"
 
 #include "GPU_context.hh"
+#include "GPU_state.hh"
 #include "GPU_texture.hh"
+
+#include "draw_view_data.hh"
 
 #include "compositor_engine.h" /* Own include. */
 
-namespace blender::draw::compositor {
+namespace blender::draw::compositor_engine {
 
-class TexturePool : public realtime_compositor::TexturePool {
+class TexturePool : public compositor::TexturePool {
  public:
   GPUTexture *allocate_texture(int2 size, eGPUTextureFormat format) override
   {
     DrawEngineType *owner = (DrawEngineType *)this;
-    return DRW_texture_pool_query_2d(size.x, size.y, format, owner);
+    return DRW_texture_pool_query(
+        DST.vmempool->texture_pool, size.x, size.y, format, GPU_TEXTURE_USAGE_GENERAL, owner);
   }
 };
 
-class Context : public realtime_compositor::Context {
+class Context : public compositor::Context {
  private:
   /* A pointer to the info message of the compositor engine. This is a char array of size
    * GPU_INFO_SIZE. The message is cleared prior to updating or evaluating the compositor. */
   char *info_message_;
 
  public:
-  Context(realtime_compositor::TexturePool &texture_pool, char *info_message)
-      : realtime_compositor::Context(texture_pool), info_message_(info_message)
+  Context(compositor::TexturePool &texture_pool, char *info_message)
+      : compositor::Context(texture_pool), info_message_(info_message)
   {
   }
 
@@ -68,17 +71,27 @@ class Context : public realtime_compositor::Context {
     return *DRW_context_state_get()->scene->nodetree;
   }
 
-  bool use_file_output() const override
+  bool use_gpu() const override
   {
-    return false;
+    return true;
   }
 
-  /* The viewport compositor doesn't really support the composite output, it only displays the
-   * viewer output in the viewport. Settings this to false will make the compositor use the
-   * composite output as fallback viewer if no other viewer exists. */
-  bool use_composite_output() const override
+  eCompositorDenoiseQaulity get_denoise_quality() const override
   {
-    return false;
+    return static_cast<eCompositorDenoiseQaulity>(
+        this->get_render_data().compositor_denoise_preview_quality);
+  }
+
+  compositor::OutputTypes needed_outputs() const override
+  {
+    return compositor::OutputTypes::Composite | compositor::OutputTypes::Viewer;
+  }
+
+  /* The viewport compositor does not support viewer outputs, so treat viewers as composite
+   * outputs. */
+  bool treat_viewer_as_composite_output() const override
+  {
+    return true;
   }
 
   const RenderData &get_render_data() const override
@@ -110,8 +123,8 @@ class Context : public realtime_compositor::Context {
                                  DRW_context_state_get()->region,
                                  DRW_context_state_get()->v3d,
                                  DRW_context_state_get()->rv3d,
-                                 &camera_border,
-                                 false);
+                                 false,
+                                 &camera_border);
 
     rcti camera_region;
     BLI_rcti_rctf_copy_floor(&camera_region, &camera_border);
@@ -122,38 +135,54 @@ class Context : public realtime_compositor::Context {
     return visible_camera_region;
   }
 
-  GPUTexture *get_output_texture() override
+  compositor::Result get_output_result() override
   {
-    return DRW_viewport_texture_list_get()->color;
+    compositor::Result result = this->create_result(compositor::ResultType::Color,
+                                                    compositor::ResultPrecision::Half);
+    result.wrap_external(DRW_viewport_texture_list_get()->color);
+    return result;
   }
 
-  GPUTexture *get_viewer_output_texture(realtime_compositor::Domain /* domain */,
-                                        bool /*is_data*/) override
+  compositor::Result get_viewer_output_result(compositor::Domain /*domain*/,
+                                              bool /*is_data*/,
+                                              compositor::ResultPrecision /*precision*/) override
   {
-    return DRW_viewport_texture_list_get()->color;
+    compositor::Result result = this->create_result(compositor::ResultType::Color,
+                                                    compositor::ResultPrecision::Half);
+    result.wrap_external(DRW_viewport_texture_list_get()->color);
+    return result;
   }
 
-  GPUTexture *get_input_texture(const Scene *scene, int view_layer, const char *pass_name) override
+  compositor::Result get_pass(const Scene *scene, int view_layer, const char *pass_name) override
   {
     if (DEG_get_original_id(const_cast<ID *>(&scene->id)) !=
         DEG_get_original_id(&DRW_context_state_get()->scene->id))
     {
-      return nullptr;
+      return compositor::Result(*this);
     }
 
     if (view_layer != 0) {
-      return nullptr;
+      return compositor::Result(*this);
     }
 
+    /* The combined pass is a special case where we return the viewport color texture, because it
+     * includes Grease Pencil objects since GP is drawn using their own engine. */
     if (STREQ(pass_name, RE_PASSNAME_COMBINED)) {
-      return get_output_texture();
+      GPUTexture *combined_texture = DRW_viewport_texture_list_get()->color;
+      compositor::Result pass = compositor::Result(*this, GPU_texture_format(combined_texture));
+      pass.wrap_external(combined_texture);
+      return pass;
     }
-    else if (STREQ(pass_name, RE_PASSNAME_Z)) {
-      return DRW_viewport_texture_list_get()->depth;
+
+    /* Return the pass that was written by the engine if such pass was found. */
+    GPUTexture *pass_texture = DRW_viewport_pass_texture_get(pass_name).gpu_texture();
+    if (pass_texture) {
+      compositor::Result pass = compositor::Result(*this, GPU_texture_format(pass_texture));
+      pass.wrap_external(pass_texture);
+      return pass;
     }
-    else {
-      return nullptr;
-    }
+
+    return compositor::Result(*this);
   }
 
   StringRef get_view_name() const override
@@ -163,22 +192,22 @@ class Context : public realtime_compositor::Context {
     return view->name;
   }
 
-  realtime_compositor::ResultPrecision get_precision() const override
+  compositor::ResultPrecision get_precision() const override
   {
     switch (get_scene().r.compositor_precision) {
       case SCE_COMPOSITOR_PRECISION_AUTO:
-        return realtime_compositor::ResultPrecision::Half;
+        return compositor::ResultPrecision::Half;
       case SCE_COMPOSITOR_PRECISION_FULL:
-        return realtime_compositor::ResultPrecision::Full;
+        return compositor::ResultPrecision::Full;
     }
 
     BLI_assert_unreachable();
-    return realtime_compositor::ResultPrecision::Half;
+    return compositor::ResultPrecision::Half;
   }
 
   void set_info_message(StringRef message) const override
   {
-    message.copy(info_message_, GPU_INFO_SIZE);
+    message.copy_utf8_truncated(info_message_, GPU_INFO_SIZE);
   }
 
   IDRecalcFlag query_id_recalc_flag(ID *id) const override
@@ -195,7 +224,7 @@ class Engine {
  private:
   TexturePool texture_pool_;
   Context context_;
-  realtime_compositor::Evaluator evaluator_;
+  compositor::Evaluator evaluator_;
   /* Stores the compositing region size at the time the last compositor evaluation happened. See
    * the update_compositing_region_size method for more information. */
   int2 last_compositing_region_size_;
@@ -239,9 +268,9 @@ class Engine {
   }
 };
 
-}  // namespace blender::draw::compositor
+}  // namespace blender::draw::compositor_engine
 
-using namespace blender::draw::compositor;
+using namespace blender::draw::compositor_engine;
 
 struct COMPOSITOR_Data {
   DrawEngineType *engine_type;

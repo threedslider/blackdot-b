@@ -2,17 +2,18 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#include "BKE_grease_pencil.hh"
 #include "BLI_color.hh"
+#include "BLI_math_geom.h"
 #include "BLI_math_matrix.hh"
+#include "BLI_math_vector.hh"
 
 #include "BKE_attribute.hh"
 #include "BKE_camera.h"
 #include "BKE_curves.hh"
-#include "BKE_image.h"
-#include "BKE_material.h"
+#include "BKE_grease_pencil.hh"
+#include "BKE_image.hh"
+#include "BKE_material.hh"
 
-#include "BLI_math_vector.hh"
 #include "DNA_gpencil_legacy_types.h"
 #include "DNA_material_types.h"
 #include "DNA_object_types.h"
@@ -22,8 +23,6 @@
 #include "ED_grease_pencil.hh"
 #include "ED_view3d.hh"
 
-#include "GPU_primitive.hh"
-#include "GPU_shader_builtin.hh"
 #include "IMB_imbuf.hh"
 #include "IMB_imbuf_types.hh"
 
@@ -31,9 +30,12 @@
 #include "GPU_framebuffer.hh"
 #include "GPU_immediate.hh"
 #include "GPU_matrix.hh"
+#include "GPU_primitive.hh"
+#include "GPU_shader_builtin.hh"
 #include "GPU_shader_shared.hh"
 #include "GPU_state.hh"
 #include "GPU_texture.hh"
+#include "GPU_uniform_buffer.hh"
 #include "GPU_vertex_format.hh"
 
 namespace blender::ed::greasepencil::image_render {
@@ -43,7 +45,10 @@ constexpr const bool enable_debug_gpu_capture = true;
 
 RegionViewData region_init(ARegion &region, const int2 &win_size)
 {
-  const RegionViewData data = {int2{region.winx, region.winy}, region.winrct};
+  RegionView3D &rv3d = *static_cast<RegionView3D *>(region.regiondata);
+
+  const RegionViewData data = {
+      int2{region.winx, region.winy}, region.winrct, ED_view3d_mats_rv3d_backup(&rv3d)};
 
   /* Resize region. */
   region.winrct.xmin = 0;
@@ -58,9 +63,14 @@ RegionViewData region_init(ARegion &region, const int2 &win_size)
 
 void region_reset(ARegion &region, const RegionViewData &data)
 {
-  region.winx = data.region_winsize.x;
-  region.winy = data.region_winsize.y;
-  region.winrct = data.region_winrct;
+  RegionView3D &rv3d = *static_cast<RegionView3D *>(region.regiondata);
+
+  region.winx = data.winsize.x;
+  region.winy = data.winsize.y;
+  region.winrct = data.winrct;
+
+  ED_view3d_mats_rv3d_restore(&rv3d, data.rv3d_store);
+  MEM_freeN(data.rv3d_store);
 }
 
 GPUOffScreen *image_render_begin(const int2 &win_size)
@@ -108,7 +118,7 @@ Image *image_render_end(Main &bmain, GPUOffScreen *buffer)
   }
 
   Image *ima = BKE_image_add_from_imbuf(&bmain, ibuf, "Grease Pencil Fill");
-  ima->id.tag |= LIB_TAG_DOIT;
+  ima->id.tag |= ID_TAG_DOIT;
 
   BKE_image_release_ibuf(ima, ibuf, nullptr);
 
@@ -302,11 +312,14 @@ static void draw_grease_pencil_stroke(const float4x4 &transform,
   }
 
   GPUVertFormat *format = immVertexFormat();
-  const uint attr_pos = GPU_vertformat_attr_add(format, "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
-  const uint attr_color = GPU_vertformat_attr_add(
-      format, "color", GPU_COMP_F32, 4, GPU_FETCH_FLOAT);
+  /* Format is matching shader manual load. Keep in sync with #GreasePencilStrokeData.
+   * Only the name of the first attribute is important. */
+  const uint attr_pos = GPU_vertformat_attr_add(
+      format, "gp_vert_data", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
   const uint attr_thickness = GPU_vertformat_attr_add(
       format, "thickness", GPU_COMP_F32, 1, GPU_FETCH_FLOAT);
+  const uint attr_color = GPU_vertformat_attr_add(
+      format, "color", GPU_COMP_F32, 4, GPU_FETCH_FLOAT);
 
   immBindBuiltinProgram(GPU_SHADER_GPENCIL_STROKE);
   GPUUniformBuf *ubo = create_shader_ubo(rv3d, win_size, object, cap_start, cap_end, fill_stroke);
@@ -315,7 +328,8 @@ static void draw_grease_pencil_stroke(const float4x4 &transform,
   /* If cyclic the curve needs one more vertex. */
   const int cyclic_add = (cyclic && indices.size() > 2) ? 1 : 0;
 
-  immBeginAtMost(GPU_PRIM_LINE_STRIP_ADJ, indices.size() + cyclic_add + 2);
+  blender::gpu::Batch *batch = immBeginBatchAtMost(GPU_PRIM_LINE_STRIP_ADJ,
+                                                   indices.size() + cyclic_add + 2);
 
   auto draw_point = [&](const int point_i) {
     constexpr const float radius_to_pixel_factor =
@@ -349,6 +363,33 @@ static void draw_grease_pencil_stroke(const float4x4 &transform,
   }
 
   immEnd();
+
+  /* Expanded `drawcall`. */
+  GPUPrimType expand_prim_type = GPUPrimType::GPU_PRIM_TRIS;
+  /* Hard-coded in shader. */
+  const uint expand_prim_len = 12;
+  /* Do not count adjacency info for start and end primitives. */
+  const uint final_vert_len = ((batch->vertex_count_get() - 2) * expand_prim_len) * 3;
+
+  if (final_vert_len > 0) {
+    GPU_batch_bind_as_resources(batch, batch->shader);
+
+    /* TODO(fclem): get rid of this dummy VBO. */
+    GPUVertFormat format = {0};
+    GPU_vertformat_attr_add(&format, "dummy", GPU_COMP_F32, 1, GPU_FETCH_FLOAT);
+    blender::gpu::VertBuf *vbo = GPU_vertbuf_create_with_format(format);
+    GPU_vertbuf_data_alloc(*vbo, 1);
+
+    gpu::Batch *gpu_batch = GPU_batch_create_ex(
+        expand_prim_type, vbo, nullptr, GPU_BATCH_OWNS_VBO);
+
+    GPU_batch_set_shader(gpu_batch, batch->shader);
+    GPU_batch_draw_advanced(gpu_batch, 0, final_vert_len, 0, 1);
+
+    GPU_batch_discard(gpu_batch);
+  }
+  GPU_batch_discard(batch);
+
   immUnbindProgram();
 
   GPU_uniformbuf_free(ubo);
@@ -551,7 +592,7 @@ void draw_grease_pencil_strokes(const RegionView3D &rv3d,
                                                            mat->gp_style->mode) :
                                                        GP_MATERIAL_MODE_LINE;
 
-    if (mat == 0 || (mat->gp_style->flag & GP_MATERIAL_HIDE)) {
+    if (mat == nullptr || (mat->gp_style->flag & GP_MATERIAL_HIDE)) {
       return;
     }
 

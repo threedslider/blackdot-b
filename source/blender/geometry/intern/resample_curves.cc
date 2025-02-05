@@ -5,6 +5,7 @@
 #include "BLI_array_utils.hh"
 #include "BLI_math_color.hh"
 #include "BLI_math_quaternion.hh"
+#include "BLI_math_vector.hh"
 
 #include "BLI_length_parameterize.hh"
 #include "BLI_task.hh"
@@ -15,6 +16,7 @@
 #include "BKE_attribute_math.hh"
 #include "BKE_curves.hh"
 #include "BKE_curves_utils.hh"
+#include "BKE_deform.hh"
 #include "BKE_geometry_fields.hh"
 
 #include "GEO_resample_curves.hh"
@@ -56,21 +58,16 @@ static fn::Field<int> get_count_input_from_length(const fn::Field<float> &length
  * Return true if the attribute should be copied/interpolated to the result curves.
  * Don't output attributes that correspond to curve types that have no curves in the result.
  */
-static bool interpolate_attribute_to_curves(const bke::AttributeIDRef &attribute_id,
+static bool interpolate_attribute_to_curves(const StringRef attribute_id,
                                             const std::array<int, CURVE_TYPES_NUM> &type_counts)
 {
-  if (attribute_id.is_anonymous()) {
+  if (bke::attribute_name_is_anonymous(attribute_id)) {
     return true;
   }
-  if (ELEM(attribute_id.name(),
-           "handle_type_left",
-           "handle_type_right",
-           "handle_left",
-           "handle_right"))
-  {
+  if (ELEM(attribute_id, "handle_type_left", "handle_type_right", "handle_left", "handle_right")) {
     return type_counts[CURVE_TYPE_BEZIER] != 0;
   }
-  if (ELEM(attribute_id.name(), "nurbs_weight")) {
+  if (ELEM(attribute_id, "nurbs_weight")) {
     return type_counts[CURVE_TYPE_NURBS] != 0;
   }
   return true;
@@ -79,7 +76,7 @@ static bool interpolate_attribute_to_curves(const bke::AttributeIDRef &attribute
 /**
  * Return true if the attribute should be copied to poly curves.
  */
-static bool interpolate_attribute_to_poly_curve(const bke::AttributeIDRef &attribute_id)
+static bool interpolate_attribute_to_poly_curve(const StringRef attribute_id)
 {
   static const Set<StringRef> no_interpolation{{
       "handle_type_left",
@@ -88,13 +85,13 @@ static bool interpolate_attribute_to_poly_curve(const bke::AttributeIDRef &attri
       "handle_left",
       "nurbs_weight",
   }};
-  return !no_interpolation.contains(attribute_id.name());
+  return !no_interpolation.contains(attribute_id);
 }
 
 /**
  * Retrieve spans from source and result attributes.
  */
-static void retrieve_attribute_spans(const Span<bke::AttributeIDRef> ids,
+static void retrieve_attribute_spans(const Span<StringRef> ids,
                                      const CurvesGeometry &src_curves,
                                      CurvesGeometry &dst_curves,
                                      Vector<GVArraySpan> &src,
@@ -141,27 +138,25 @@ static void gather_point_attributes_to_interpolate(
     AttributesForResample &result,
     const ResampleCurvesOutputAttributeIDs &output_ids)
 {
-  VectorSet<bke::AttributeIDRef> ids;
-  VectorSet<bke::AttributeIDRef> ids_no_interpolation;
-  src_curves.attributes().for_all(
-      [&](const bke::AttributeIDRef &id, const bke::AttributeMetaData meta_data) {
-        if (meta_data.domain != bke::AttrDomain::Point) {
-          return true;
-        }
-        if (meta_data.data_type == CD_PROP_STRING) {
-          return true;
-        }
-        if (!interpolate_attribute_to_curves(id, dst_curves.curve_type_counts())) {
-          return true;
-        }
-        if (interpolate_attribute_to_poly_curve(id)) {
-          ids.add_new(id);
-        }
-        else {
-          ids_no_interpolation.add_new(id);
-        }
-        return true;
-      });
+  VectorSet<StringRef> ids;
+  VectorSet<StringRef> ids_no_interpolation;
+  src_curves.attributes().foreach_attribute([&](const bke::AttributeIter &iter) {
+    if (iter.domain != bke::AttrDomain::Point) {
+      return;
+    }
+    if (iter.data_type == CD_PROP_STRING) {
+      return;
+    }
+    if (!interpolate_attribute_to_curves(iter.name, dst_curves.curve_type_counts())) {
+      return;
+    }
+    if (interpolate_attribute_to_poly_curve(iter.name)) {
+      ids.add_new(iter.name);
+    }
+    else {
+      ids_no_interpolation.add_new(iter.name);
+    }
+  });
 
   /* Position is handled differently since it has non-generic interpolation for Bezier
    * curves and because the evaluated positions are cached for each evaluated point. */
@@ -183,14 +178,14 @@ static void gather_point_attributes_to_interpolate(
   if (output_ids.tangent_id) {
     result.src_evaluated_tangents = src_curves.evaluated_tangents();
     bke::GSpanAttributeWriter dst_attribute = dst_attributes.lookup_or_add_for_write_only_span(
-        output_ids.tangent_id, bke::AttrDomain::Point, CD_PROP_FLOAT3);
+        *output_ids.tangent_id, bke::AttrDomain::Point, CD_PROP_FLOAT3);
     result.dst_tangents = dst_attribute.span.typed<float3>();
     result.dst_attributes.append(std::move(dst_attribute));
   }
   if (output_ids.normal_id) {
     result.src_evaluated_normals = src_curves.evaluated_normals();
     bke::GSpanAttributeWriter dst_attribute = dst_attributes.lookup_or_add_for_write_only_span(
-        output_ids.normal_id, bke::AttrDomain::Point, CD_PROP_FLOAT3);
+        *output_ids.normal_id, bke::AttrDomain::Point, CD_PROP_FLOAT3);
     result.dst_normals = dst_attribute.span.typed<float3>();
     result.dst_attributes.append(std::move(dst_attribute));
   }
@@ -250,6 +245,28 @@ static void normalize_curve_point_data(const IndexMaskSegment curve_selection,
   }
 }
 
+/**
+ * Buffer for temporary evaluated curve data, used for memory reuse between multiple attributes of
+ * different types.
+ */
+struct EvalDataBuffer {
+  using AllocatorType = GuardedAlignedAllocator<>;
+  /* Use a default alignment that works for all attribute types, and don't use the inline buffer
+   * because it doesn't necessarily have the correct alignment. */
+  Vector<std::byte, 0, AllocatorType> heap_allocated;
+  alignas(AllocatorType::min_alignment) std::array<std::byte, 1024> inline_buffer;
+
+  template<typename T> MutableSpan<T> resize(const int64_t size)
+  {
+    const int64_t size_in_bytes = sizeof(T) * size;
+    if (size_in_bytes <= this->inline_buffer.size()) {
+      return MutableSpan<std::byte>(this->inline_buffer).slice(0, size_in_bytes).cast<T>();
+    }
+    this->heap_allocated.resize(size_in_bytes);
+    return this->heap_allocated.as_mutable_span().cast<T>();
+  }
+};
+
 static void resample_to_uniform(const CurvesGeometry &src_curves,
                                 const IndexMask &selection,
                                 const ResampleCurvesOutputAttributeIDs &output_ids,
@@ -289,7 +306,7 @@ static void resample_to_uniform(const CurvesGeometry &src_curves,
    * smaller sections of data that ideally fit into CPU cache better than simply one attribute at a
    * time or one curve at a time. */
   selection.foreach_segment(GrainSize(512), [&](const IndexMaskSegment selection_segment) {
-    Vector<std::byte> evaluated_buffer;
+    EvalDataBuffer evaluated_buffer;
 
     /* Gather uniform samples based on the accumulated lengths of the original curve. */
     for (const int i_curve : selection_segment) {
@@ -329,8 +346,8 @@ static void resample_to_uniform(const CurvesGeometry &src_curves,
                                              dst.slice(dst_points));
           }
           else {
-            evaluated_buffer.reinitialize(sizeof(T) * evaluated_points_by_curve[i_curve].size());
-            MutableSpan<T> evaluated = evaluated_buffer.as_mutable_span().cast<T>();
+            MutableSpan evaluated = evaluated_buffer.resize<T>(
+                evaluated_points_by_curve[i_curve].size());
             src_curves.interpolate_to_evaluated(i_curve, src.slice(src_points), evaluated);
 
             length_parameterize::interpolate(evaluated.as_span(),
@@ -395,6 +412,8 @@ static CurvesGeometry resample_to_uniform(const CurvesGeometry &src_curves,
   const OffsetIndices src_points_by_curve = src_curves.points_by_curve();
 
   CurvesGeometry dst_curves = bke::curves::copy_only_curve_domain(src_curves);
+  /* Copy vertex groups from source curves to allow copying vertex group attributes. */
+  BKE_defgroup_copy_list(&dst_curves.vertex_group_names, &src_curves.vertex_group_names);
   MutableSpan<int> dst_offsets = dst_curves.offsets_for_write();
 
   fn::FieldEvaluator evaluator{field_context, src_curves.curves_num()};
@@ -407,7 +426,9 @@ static CurvesGeometry resample_to_uniform(const CurvesGeometry &src_curves,
 
   /* Fill the counts for the curves that aren't selected and accumulate the counts into offsets. */
   offset_indices::copy_group_sizes(src_points_by_curve, unselected, dst_offsets);
-  offset_indices::accumulate_counts_to_offsets(dst_offsets);
+  if (!offset_indices::accumulate_counts_to_offsets_with_overflow_check(dst_offsets)) {
+    return {};
+  }
   dst_curves.resize(dst_offsets.last(), dst_curves.curves_num());
 
   resample_to_uniform(src_curves, selection, output_ids, dst_curves);
@@ -426,6 +447,8 @@ CurvesGeometry resample_to_count(const CurvesGeometry &src_curves,
   const OffsetIndices src_points_by_curve = src_curves.points_by_curve();
 
   CurvesGeometry dst_curves = bke::curves::copy_only_curve_domain(src_curves);
+  /* Copy vertex groups from source curves to allow copying vertex group attributes. */
+  BKE_defgroup_copy_list(&dst_curves.vertex_group_names, &src_curves.vertex_group_names);
   MutableSpan<int> dst_offsets = dst_curves.offsets_for_write();
 
   array_utils::copy(counts, selection, dst_offsets);
@@ -472,6 +495,8 @@ CurvesGeometry resample_to_length(const CurvesGeometry &src_curves,
   const VArray<bool> curves_cyclic = src_curves.cyclic();
 
   CurvesGeometry dst_curves = bke::curves::copy_only_curve_domain(src_curves);
+  /* Copy vertex groups from source curves to allow copying vertex group attributes. */
+  BKE_defgroup_copy_list(&dst_curves.vertex_group_names, &src_curves.vertex_group_names);
   MutableSpan<int> dst_offsets = dst_curves.offsets_for_write();
 
   src_curves.ensure_evaluated_lengths();
@@ -522,6 +547,8 @@ CurvesGeometry resample_to_evaluated(const CurvesGeometry &src_curves,
   const IndexMask unselected = selection.complement(src_curves.curves_range(), memory);
 
   CurvesGeometry dst_curves = bke::curves::copy_only_curve_domain(src_curves);
+  /* Copy vertex groups from source curves to allow copying vertex group attributes. */
+  BKE_defgroup_copy_list(&dst_curves.vertex_group_names, &src_curves.vertex_group_names);
   dst_curves.fill_curve_types(selection, CURVE_TYPE_POLY);
   MutableSpan<int> dst_offsets = dst_curves.offsets_for_write();
   offset_indices::copy_group_sizes(src_evaluated_points_by_curve, selection, dst_offsets);

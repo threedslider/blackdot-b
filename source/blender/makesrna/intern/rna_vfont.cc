@@ -12,14 +12,14 @@
 
 #include "rna_internal.hh"
 
-#include "DNA_vfont_types.h"
-
 #include "WM_types.hh"
 
 #ifdef RNA_RUNTIME
 
-#  include "BKE_vfont.hh"
 #  include "DNA_object_types.h"
+#  include "DNA_vfont_types.h"
+
+#  include "BKE_vfont.hh"
 
 #  include "DEG_depsgraph.hh"
 
@@ -38,7 +38,7 @@ static int rna_VectorFont_filepath_editable(const PointerRNA *ptr, const char **
 static void rna_VectorFont_reload_update(Main * /*bmain*/, Scene * /*scene*/, PointerRNA *ptr)
 {
   VFont *vf = (VFont *)ptr->owner_id;
-  BKE_vfont_free_data(vf);
+  BKE_vfont_data_free(vf);
 
   /* update */
   WM_main_add_notifier(NC_GEOM | ND_DATA, nullptr);

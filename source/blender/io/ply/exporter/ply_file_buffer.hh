@@ -8,8 +8,6 @@
 
 #pragma once
 
-#include <type_traits>
-
 #include "BLI_string_ref.hh"
 #include "BLI_utility_mixins.hh"
 #include "BLI_vector.hh"
@@ -81,7 +79,7 @@ class FileBuffer : private NonMovable {
     }
   }
 
-  template<typename... T> void write_fstring(const char *fmt, T &&...args)
+  template<typename... T> void write_fstring(fmt::format_string<T...> fmt, T &&...args)
   {
     /* Format into a local buffer. */
     fmt::memory_buffer buf;

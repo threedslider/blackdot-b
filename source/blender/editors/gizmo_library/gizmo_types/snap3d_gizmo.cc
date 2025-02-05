@@ -12,12 +12,10 @@
  * \brief Snap gizmo which exposes the location, normal and index in the props.
  */
 
-#include "MEM_guardedalloc.h"
-
-#include "BLI_math_color.h"
 #include "BLI_math_vector.h"
 
 #include "BKE_context.hh"
+#include "BKE_screen.hh"
 
 #include "ED_gizmo_library.hh"
 #include "ED_screen.hh"
@@ -209,7 +207,9 @@ static bool snap_cursor_poll(ARegion *region, void *data)
     return false;
   }
 
-  if (!WM_gizmomap_group_find_ptr(region->gizmo_map, snap_gizmo->gizmo.parent_gzgroup->type)) {
+  if (!WM_gizmomap_group_find_ptr(region->runtime->gizmo_map,
+                                  snap_gizmo->gizmo.parent_gzgroup->type))
+  {
     /* Wrong viewport. */
     snap_cursor_free(snap_gizmo);
     return false;
@@ -314,7 +314,7 @@ static void GIZMO_GT_snap_3d(wmGizmoType *gzt)
   {
     /* Get Snap Element Items enum. */
     bool free;
-    PointerRNA toolsettings_ptr = RNA_pointer_create(nullptr, &RNA_ToolSettings, nullptr);
+    PointerRNA toolsettings_ptr = RNA_pointer_create_discrete(nullptr, &RNA_ToolSettings, nullptr);
     PropertyRNA *prop = RNA_struct_find_property(&toolsettings_ptr, "snap_elements");
     RNA_property_enum_items(
         nullptr, &toolsettings_ptr, prop, &rna_enum_snap_element_items, nullptr, &free);

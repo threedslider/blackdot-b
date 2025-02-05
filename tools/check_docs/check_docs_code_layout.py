@@ -14,15 +14,12 @@ You may pass the markdown text as an argument, e.g.
 
 check_docs_code_layout.py --markdown=markdown.txt
 """
+__all__ = (
+    "main",
+)
 
 import os
 import argparse
-
-from typing import (
-    List,
-    Optional,
-)
-
 
 # -----------------------------------------------------------------------------
 # Constants
@@ -30,7 +27,9 @@ from typing import (
 CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 SOURCE_DIR = os.path.normpath(os.path.join(CURRENT_DIR, "..", ".."))
 
-MARKDOWN_URL = "https://projects.blender.org/blender/blender-developer-docs/raw/branch/main/docs/features/code_layout.md"
+MARKDOWN_URL = (
+    "https://projects.blender.org/blender/blender-developer-docs/raw/branch/main/docs/features/code_layout.md"
+)
 
 
 # -----------------------------------------------------------------------------
@@ -40,7 +39,7 @@ def text_with_title_underline(text: str, underline: str = "=") -> str:
     return "\n{:s}\n{:s}\n".format(text, len(text) * underline)
 
 
-def html_extract_markdown_from_url(url: str) -> Optional[str]:
+def html_extract_markdown_from_url(url: str) -> str | None:
     """
     Download
     """
@@ -58,7 +57,7 @@ def html_extract_markdown_from_url(url: str) -> Optional[str]:
 # -----------------------------------------------------------------------------
 # markdown Text Parsing
 
-def markdown_to_paths(markdown: str) -> List[str]:
+def markdown_to_paths(markdown: str) -> list[str]:
     file_paths = []
     markdown = markdown.replace("<p>", "")
     markdown = markdown.replace("</p>", "")
@@ -81,14 +80,14 @@ def markdown_to_paths(markdown: str) -> List[str]:
 # -----------------------------------------------------------------------------
 # Reporting
 
-def report_known_markdown_paths(file_paths: List[str]) -> None:
+def report_known_markdown_paths(file_paths: list[str]) -> None:
     heading = "Paths Found in markdown Table"
     print(text_with_title_underline(heading))
     for p in file_paths:
         print("-", p)
 
 
-def report_missing_source(file_paths: List[str]) -> int:
+def report_missing_source(file_paths: list[str]) -> int:
     heading = "Missing in Source Dir"
 
     test = [p for p in file_paths if not os.path.exists(os.path.join(SOURCE_DIR, p))]
@@ -106,7 +105,7 @@ def report_missing_source(file_paths: List[str]) -> int:
     return len(test)
 
 
-def report_incomplete(file_paths: List[str]) -> int:
+def report_incomplete(file_paths: list[str]) -> int:
     heading = "Missing Documentation"
 
     test = []
@@ -135,7 +134,7 @@ def report_incomplete(file_paths: List[str]) -> int:
     return len(test)
 
 
-def report_alphabetical_order(file_paths: List[str]) -> int:
+def report_alphabetical_order(file_paths: list[str]) -> int:
     heading = "Non-Alphabetically Ordered"
     test = []
 

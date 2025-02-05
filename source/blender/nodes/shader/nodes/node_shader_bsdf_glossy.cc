@@ -25,7 +25,7 @@ static void node_declare(NodeDeclarationBuilder &b)
       .subtype(PROP_FACTOR);
   b.add_input<decl::Vector>("Normal").hide_value();
   b.add_input<decl::Vector>("Tangent").hide_value();
-  b.add_input<decl::Float>("Weight").unavailable();
+  b.add_input<decl::Float>("Weight").available(false);
   b.add_output<decl::Shader>("BSDF");
 }
 
@@ -95,7 +95,12 @@ void register_node_type_sh_bsdf_glossy()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(&ntype, SH_NODE_BSDF_GLOSSY, "Glossy BSDF", NODE_CLASS_SHADER);
+  sh_node_type_base(&ntype, "ShaderNodeBsdfAnisotropic", SH_NODE_BSDF_GLOSSY);
+  ntype.ui_name = "Glossy BSDF";
+  ntype.ui_description =
+      "Reflection with microfacet distribution, used for materials such as metal or mirrors";
+  ntype.enum_name_legacy = "BSDF_GLOSSY";
+  ntype.nclass = NODE_CLASS_SHADER;
   ntype.declare = file_ns::node_declare;
   ntype.add_ui_poll = object_shader_nodes_poll;
   ntype.draw_buttons = file_ns::node_shader_buts_glossy;
@@ -104,9 +109,9 @@ void register_node_type_sh_bsdf_glossy()
   ntype.gpu_fn = file_ns::node_shader_gpu_bsdf_glossy;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   /* Needed to preserve API compatibility with older versions which had separate
    * Glossy and Anisotropic nodes. */
-  blender::bke::nodeRegisterAlias(&ntype, "ShaderNodeBsdfGlossy");
+  blender::bke::node_register_alias(&ntype, "ShaderNodeBsdfGlossy");
 }

@@ -21,7 +21,7 @@ enum class PatternMode {
 static void node_declare(NodeDeclarationBuilder &b)
 {
   b.add_input<decl::Geometry>("Geometry");
-  b.add_input<decl::String>("Name").is_attribute_name();
+  b.add_input<decl::String>("Name").is_attribute_name().hide_label();
   b.add_output<decl::Geometry>("Geometry").propagate_all();
 }
 
@@ -68,7 +68,8 @@ static void node_geo_exec(GeoNodeExecParams params)
     for (const GeometryComponent::Type type : {GeometryComponent::Type::Mesh,
                                                GeometryComponent::Type::PointCloud,
                                                GeometryComponent::Type::Curve,
-                                               GeometryComponent::Type::Instance})
+                                               GeometryComponent::Type::Instance,
+                                               GeometryComponent::Type::GreasePencil})
     {
       if (!geometry_set.has(type)) {
         continue;
@@ -85,20 +86,17 @@ static void node_geo_exec(GeoNodeExecParams params)
           break;
         }
         case PatternMode::Wildcard: {
-          read_only_component.attributes()->for_all(
-              [&](const blender::bke::AttributeIDRef &id,
-                  const blender::bke::AttributeMetaData /*meta_data*/) {
-                if (id.is_anonymous()) {
-                  return true;
-                }
-                const StringRef attribute_name = id.name();
-                if (attribute_name.startswith(wildcard_prefix) &&
-                    attribute_name.endswith(wildcard_suffix))
-                {
-                  attributes_to_remove.append(attribute_name);
-                }
-                return true;
-              });
+          read_only_component.attributes()->foreach_attribute([&](const bke::AttributeIter &iter) {
+            const StringRef attribute_name = iter.name;
+            if (bke::attribute_name_is_anonymous(attribute_name)) {
+              return;
+            }
+            if (attribute_name.startswith(wildcard_prefix) &&
+                attribute_name.endswith(wildcard_suffix))
+            {
+              attributes_to_remove.append(attribute_name);
+            }
+          });
 
           break;
         }
@@ -131,12 +129,14 @@ static void node_geo_exec(GeoNodeExecParams params)
     for (const StringRef attribute_name : failed_attributes) {
       quoted_attribute_names.append(fmt::format("\"{}\"", attribute_name));
     }
-    const std::string message = fmt::format(TIP_("Cannot remove built-in attributes: {}"),
-                                            fmt::join(quoted_attribute_names, ", "));
+    const std::string message = fmt::format(
+        fmt::runtime(TIP_("Cannot remove built-in attributes: {}")),
+        fmt::join(quoted_attribute_names, ", "));
     params.error_message_add(NodeWarningType::Warning, message);
   }
   else if (removed_attributes.is_empty() && pattern_mode == PatternMode::Exact) {
-    const std::string message = fmt::format(TIP_("Attribute does not exist: \"{}\""), pattern);
+    const std::string message = fmt::format(fmt::runtime(TIP_("Attribute does not exist: \"{}\"")),
+                                            pattern);
     params.error_message_add(NodeWarningType::Warning, message);
   }
 
@@ -171,13 +171,18 @@ static void node_register()
 {
   static blender::bke::bNodeType ntype;
 
-  geo_node_type_base(
-      &ntype, GEO_NODE_REMOVE_ATTRIBUTE, "Remove Named Attribute", NODE_CLASS_ATTRIBUTE);
+  geo_node_type_base(&ntype, "GeometryNodeRemoveAttribute", GEO_NODE_REMOVE_ATTRIBUTE);
+  ntype.ui_name = "Remove Named Attribute";
+  ntype.ui_description =
+      "Delete an attribute with a specified name from a geometry. Typically used to optimize "
+      "performance";
+  ntype.enum_name_legacy = "REMOVE_ATTRIBUTE";
+  ntype.nclass = NODE_CLASS_ATTRIBUTE;
   ntype.declare = node_declare;
   ntype.draw_buttons = node_layout;
   bke::node_type_size(&ntype, 170, 100, 700);
   ntype.geometry_node_execute = node_geo_exec;
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 
   node_rna(ntype.rna_ext.srna);
 }

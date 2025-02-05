@@ -18,8 +18,9 @@
 #include "DNA_object_types.h"   /* for OB_DATA_SUPPORT_ID */
 #include "DNA_screen_types.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_math_color.h"
+#include "BLI_rect.h"
+#include "BLI_string.h"
 
 #include "BLF_api.hh"
 #include "BLT_lang.hh"
@@ -33,7 +34,7 @@
 #include "BKE_lib_id.hh"
 #include "BKE_lib_override.hh"
 #include "BKE_lib_remap.hh"
-#include "BKE_material.h"
+#include "BKE_material.hh"
 #include "BKE_node.hh"
 #include "BKE_report.hh"
 #include "BKE_screen.hh"
@@ -90,7 +91,7 @@ static void ui_region_redraw_immediately(bContext *C, ARegion *region)
   WM_draw_region_viewport_bind(region);
   ED_region_do_draw(C, region);
   WM_draw_region_viewport_unbind(region);
-  region->do_draw = 0;
+  region->runtime->do_draw = 0;
 }
 
 /** \} */
@@ -385,7 +386,7 @@ static void UI_OT_reset_default_button(wmOperatorType *ot)
   /* flags */
   /* Don't set #OPTYPE_UNDO because #operator_button_property_finish_with_undo
    * is responsible for the undo push. */
-  ot->flag = 0;
+  ot->flag = OPTYPE_REGISTER;
 
   /* properties */
   RNA_def_boolean(
@@ -1027,7 +1028,7 @@ static void ui_context_selected_bones_via_pose(bContext *C, blender::Vector<Poin
   if (!lb.is_empty()) {
     for (PointerRNA &ptr : lb) {
       bPoseChannel *pchan = static_cast<bPoseChannel *>(ptr.data);
-      ptr = RNA_pointer_create(ptr.owner_id, &RNA_Bone, pchan->bone);
+      ptr = RNA_pointer_create_discrete(ptr.owner_id, &RNA_Bone, pchan->bone);
     }
   }
 
@@ -1048,7 +1049,7 @@ static void ui_context_fcurve_modifiers_via_fcurve(bContext *C,
     const FCurve *fcu = static_cast<const FCurve *>(ptr.data);
     LISTBASE_FOREACH (FModifier *, mod, &fcu->modifiers) {
       if (STREQ(mod->name, source->name) && mod->type == source->type) {
-        r_lb->append(RNA_pointer_create(ptr.owner_id, &RNA_FModifier, mod));
+        r_lb->append(RNA_pointer_create_discrete(ptr.owner_id, &RNA_FModifier, mod));
         /* Since names are unique it is safe to break here. */
         break;
       }
@@ -1092,7 +1093,7 @@ bool UI_context_copy_to_selected_list(bContext *C,
       }
       else {
         bPoseChannel *pchan = static_cast<bPoseChannel *>(owner_ptr.data);
-        owner_ptr = RNA_pointer_create(owner_ptr.owner_id, &RNA_Bone, pchan->bone);
+        owner_ptr = RNA_pointer_create_discrete(owner_ptr.owner_id, &RNA_Bone, pchan->bone);
         idpath = RNA_path_from_struct_to_idproperty(&owner_ptr,
                                                     static_cast<const IDProperty *>(ptr->data));
         if (idpath) {
@@ -1171,15 +1172,15 @@ bool UI_context_copy_to_selected_list(bContext *C,
 
     *r_lb = list_of_things;
   }
-  else if (RNA_struct_is_a(ptr->type, &RNA_Sequence)) {
-    /* Special case when we do this for 'Sequence.lock'.
-     * (if the sequence is locked, it won't be in "selected_editable_sequences"). */
+  else if (RNA_struct_is_a(ptr->type, &RNA_Strip)) {
+    /* Special case when we do this for 'Strip.lock'.
+     * (if the strip is locked, it won't be in "selected_editable_strips"). */
     const char *prop_id = RNA_property_identifier(prop);
     if (STREQ(prop_id, "lock")) {
-      *r_lb = CTX_data_collection_get(C, "selected_sequences");
+      *r_lb = CTX_data_collection_get(C, "selected_strips");
     }
     else {
-      *r_lb = CTX_data_collection_get(C, "selected_editable_sequences");
+      *r_lb = CTX_data_collection_get(C, "selected_editable_strips");
     }
 
     if (is_rna) {
@@ -1222,14 +1223,13 @@ bool UI_context_copy_to_selected_list(bContext *C,
     if (RNA_struct_is_a(ptr->type, &RNA_NodeSocket)) {
       bNodeTree *ntree = (bNodeTree *)ptr->owner_id;
       bNodeSocket *sock = static_cast<bNodeSocket *>(ptr->data);
-      if (blender::bke::nodeFindNodeTry(ntree, sock, &node, nullptr)) {
-        path = RNA_path_resolve_from_type_to_property(ptr, prop, &RNA_Node);
-        if (path) {
-          /* we're good! */
-        }
-        else {
-          node = nullptr;
-        }
+      node = &blender::bke::node_find_node(*ntree, *sock);
+      path = RNA_path_resolve_from_type_to_property(ptr, prop, &RNA_Node);
+      if (path) {
+        /* we're good! */
+      }
+      else {
+        node = nullptr;
       }
     }
     else {
@@ -1241,7 +1241,7 @@ bool UI_context_copy_to_selected_list(bContext *C,
       lb = CTX_data_collection_get(C, "selected_nodes");
       lb.remove_if([&](const PointerRNA &link) {
         bNode *node_data = static_cast<bNode *>(link.data);
-        if (node_data->type != node->type) {
+        if (node_data->type_legacy != node->type_legacy) {
           return true;
         }
         return false;
@@ -1270,7 +1270,7 @@ bool UI_context_copy_to_selected_list(bContext *C,
         for (const PointerRNA &ob_ptr : lb) {
           Object *ob = (Object *)ob_ptr.owner_id;
           if (ID *id_data = static_cast<ID *>(ob->data)) {
-            id_data->tag |= LIB_TAG_DOIT;
+            id_data->tag |= ID_TAG_DOIT;
           }
         }
 
@@ -1278,7 +1278,7 @@ bool UI_context_copy_to_selected_list(bContext *C,
         for (const PointerRNA &link : lb) {
           Object *ob = (Object *)link.owner_id;
           ID *id_data = static_cast<ID *>(ob->data);
-          if ((id_data == nullptr) || (id_data->tag & LIB_TAG_DOIT) == 0 ||
+          if ((id_data == nullptr) || (id_data->tag & ID_TAG_DOIT) == 0 ||
               !ID_IS_EDITABLE(id_data) || (GS(id_data->name) != id_code))
           {
             continue;
@@ -1287,7 +1287,7 @@ bool UI_context_copy_to_selected_list(bContext *C,
           new_lb.append(RNA_id_pointer_create(id_data));
 
           if (id_data) {
-            id_data->tag &= ~LIB_TAG_DOIT;
+            id_data->tag &= ~ID_TAG_DOIT;
           }
         }
 
@@ -1299,18 +1299,18 @@ bool UI_context_copy_to_selected_list(bContext *C,
     }
     else if (GS(id->name) == ID_SCE) {
       /* Sequencer's ID is scene :/ */
-      /* Try to recursively find an RNA_Sequence ancestor,
+      /* Try to recursively find an RNA_Strip ancestor,
        * to handle situations like #41062... */
-      *r_path = RNA_path_resolve_from_type_to_property(ptr, prop, &RNA_Sequence);
+      *r_path = RNA_path_resolve_from_type_to_property(ptr, prop, &RNA_Strip);
       if (r_path->has_value()) {
-        /* Special case when we do this for 'Sequence.lock'.
-         * (if the sequence is locked, it won't be in "selected_editable_sequences"). */
+        /* Special case when we do this for 'Strip.lock'.
+         * (if the strip is locked, it won't be in "selected_editable_strips"). */
         const char *prop_id = RNA_property_identifier(prop);
         if (is_rna && STREQ(prop_id, "lock")) {
-          *r_lb = CTX_data_collection_get(C, "selected_sequences");
+          *r_lb = CTX_data_collection_get(C, "selected_strips");
         }
         else {
-          *r_lb = CTX_data_collection_get(C, "selected_editable_sequences");
+          *r_lb = CTX_data_collection_get(C, "selected_editable_strips");
         }
 
         if (is_rna) {
@@ -1677,7 +1677,7 @@ int paste_property_drivers(blender::Span<FCurve *> src_drivers,
      * quadratic complexity when the drivers are within the same ID, due to this
      * being inside of a loop and doing a linear scan of the drivers to find one
      * that matches.  We should be able to make this more efficient with a
-     * little cleverness .*/
+     * little cleverness. */
     if (driven) {
       FCurve *old_driver = BKE_fcurve_find(&dst_adt->drivers, dst_path->c_str(), dst_index);
       if (old_driver) {
@@ -2056,9 +2056,7 @@ static bool ui_editsource_uibut_match(uiBut *but_a, uiBut *but_b)
   return false;
 }
 
-extern "C" {
-void PyC_FileAndNum_Safe(const char **r_filename, int *r_lineno);
-}
+extern void PyC_FileAndNum_Safe(const char **r_filename, int *r_lineno);
 
 void UI_editsource_active_but_test(uiBut *but)
 {
@@ -2331,29 +2329,27 @@ void UI_drop_color_copy(bContext * /*C*/, wmDrag *drag, wmDropBox *drop)
 
   RNA_float_set_array(drop->ptr, "color", drag_info->color);
   RNA_boolean_set(drop->ptr, "gamma", drag_info->gamma_corrected);
+  RNA_boolean_set(drop->ptr, "has_alpha", drag_info->has_alpha);
 }
 
 static int drop_color_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   ARegion *region = CTX_wm_region(C);
   uiBut *but = nullptr;
-  float color[4];
-  bool gamma;
 
+  float color[4];
   RNA_float_get_array(op->ptr, "color", color);
-  gamma = RNA_boolean_get(op->ptr, "gamma");
+
+  const bool gamma = RNA_boolean_get(op->ptr, "gamma");
+  const bool has_alpha = RNA_boolean_get(op->ptr, "has_alpha");
 
   /* find button under mouse, check if it has RNA color property and
    * if it does copy the data */
   but = ui_region_find_active_but(region);
 
   if (but && but->type == UI_BTYPE_COLOR && but->rnaprop) {
-    const int color_len = RNA_property_array_length(&but->rnapoin, but->rnaprop);
-    BLI_assert(color_len <= 4);
-
-    /* keep alpha channel as-is */
-    if (color_len == 4) {
-      color[3] = RNA_property_float_get_index(&but->rnapoin, but->rnaprop, 3);
+    if (!has_alpha) {
+      color[3] = 1.0f;
     }
 
     if (RNA_property_subtype(but->rnaprop) == PROP_COLOR_GAMMA) {
@@ -2400,9 +2396,11 @@ static void UI_OT_drop_color(wmOperatorType *ot)
   ot->flag = OPTYPE_INTERNAL;
 
   RNA_def_float_color(
-      ot->srna, "color", 3, nullptr, 0.0, FLT_MAX, "Color", "Source color", 0.0, 1.0);
+      ot->srna, "color", 4, nullptr, 0.0, FLT_MAX, "Color", "Source color", 0.0, 1.0);
   RNA_def_boolean(
       ot->srna, "gamma", false, "Gamma Corrected", "The source color is gamma corrected");
+  RNA_def_boolean(
+      ot->srna, "has_alpha", false, "Has Alpha", "The source color contains an Alpha component");
 }
 
 /** \} */
@@ -2523,18 +2521,23 @@ static void UI_OT_list_start_filter(wmOperatorType *ot)
 /** \name UI View Start Filter Operator
  * \{ */
 
-static bool ui_view_focused_poll(bContext *C)
+static AbstractView *get_view_focused(bContext *C)
 {
   const wmWindow *win = CTX_wm_window(C);
   if (!(win && win->eventstate)) {
-    return false;
+    return nullptr;
   }
 
   const ARegion *region = CTX_wm_region(C);
   if (!region) {
-    return false;
+    return nullptr;
   }
-  const blender::ui::AbstractView *view = UI_region_view_find_at(region, win->eventstate->xy, 0);
+  return UI_region_view_find_at(region, win->eventstate->xy, 0);
+}
+
+static bool ui_view_focused_poll(bContext *C)
+{
+  const AbstractView *view = get_view_focused(C);
   return view != nullptr;
 }
 
@@ -2609,6 +2612,72 @@ static void UI_OT_view_drop(wmOperatorType *ot)
 
   ot->invoke = ui_view_drop_invoke;
   ot->poll = ui_view_drop_poll;
+
+  ot->flag = OPTYPE_INTERNAL;
+}
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name UI View Drop Operator
+ * \{ */
+
+static bool ui_view_scroll_poll(bContext *C)
+{
+  const AbstractView *view = get_view_focused(C);
+  if (!view) {
+    return false;
+  }
+
+  return view->supports_scrolling();
+}
+
+static int ui_view_scroll_invoke(bContext *C, wmOperator * /*op*/, const wmEvent *event)
+{
+  ARegion *region = CTX_wm_region(C);
+  int type = event->type;
+  bool invert_direction = false;
+
+  if (type == MOUSEPAN) {
+    int dummy_val;
+    ui_pan_to_scroll(event, &type, &dummy_val);
+
+    /* 'ui_pan_to_scroll' gives the absolute direction. */
+    if (event->flag & WM_EVENT_SCROLL_INVERT) {
+      invert_direction = true;
+    }
+  }
+
+  AbstractView *view = get_view_focused(C);
+  std::optional<ViewScrollDirection> direction =
+      [type, invert_direction]() -> std::optional<ViewScrollDirection> {
+    switch (type) {
+      case WHEELUPMOUSE:
+        return invert_direction ? ViewScrollDirection::DOWN : ViewScrollDirection::UP;
+      case WHEELDOWNMOUSE:
+        return invert_direction ? ViewScrollDirection::UP : ViewScrollDirection::DOWN;
+      default:
+        return std::nullopt;
+    }
+  }();
+  if (!direction) {
+    return OPERATOR_CANCELLED;
+  }
+
+  BLI_assert(view->supports_scrolling());
+  view->scroll(*direction);
+
+  ED_region_tag_redraw(region);
+  return OPERATOR_FINISHED;
+}
+
+static void UI_OT_view_scroll(wmOperatorType *ot)
+{
+  ot->name = "View Scroll";
+  ot->idname = "UI_OT_view_scroll";
+
+  ot->invoke = ui_view_scroll_invoke;
+  ot->poll = ui_view_scroll_poll;
 
   ot->flag = OPTYPE_INTERNAL;
 }
@@ -2759,6 +2828,7 @@ void ED_operatortypes_ui()
 
   WM_operatortype_append(UI_OT_view_start_filter);
   WM_operatortype_append(UI_OT_view_drop);
+  WM_operatortype_append(UI_OT_view_scroll);
   WM_operatortype_append(UI_OT_view_item_rename);
 
   WM_operatortype_append(UI_OT_override_type_set_button);
@@ -2775,7 +2845,8 @@ void ED_operatortypes_ui()
   WM_operatortype_append(UI_OT_eyedropper_id);
   WM_operatortype_append(UI_OT_eyedropper_depth);
   WM_operatortype_append(UI_OT_eyedropper_driver);
-  WM_operatortype_append(UI_OT_eyedropper_gpencil_color);
+  WM_operatortype_append(UI_OT_eyedropper_bone);
+  WM_operatortype_append(UI_OT_eyedropper_grease_pencil_color);
 }
 
 void ED_keymap_ui(wmKeyConfig *keyconf)

@@ -1,15 +1,5 @@
-bl_info = {
-    "name": "New Object",
-    "author": "Your Name Here",
-    "version": (1, 0),
-    "blender": (2, 80, 0),
-    "location": "View3D > Add > Mesh > New Object",
-    "description": "Adds a new Mesh Object",
-    "warning": "",
-    "doc_url": "",
-    "category": "Add Mesh",
-}
-
+# To make this add-on installable, create an extension with it:
+# https://docs.blender.org/manual/en/latest/advanced/extensions/getting_started.html
 
 import bpy
 from bpy.types import Operator
@@ -65,7 +55,8 @@ def add_object_button(self, context):
     self.layout.operator(
         OBJECT_OT_add_object.bl_idname,
         text="Add Object",
-        icon='PLUGIN')
+        icon='PLUGIN',
+    )
 
 
 # This allows you to right click on a button and link to documentation

@@ -14,13 +14,14 @@
 
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
+#include "BLI_rect.h"
+#include "BLI_string.h"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_armature.hh"
 #include "BKE_camera.h"
 #include "BKE_lib_id.hh"
@@ -43,6 +44,7 @@
 #include "ED_undo.hh"
 
 #include "view3d_intern.hh" /* own include */
+#include "view3d_navigate.hh"
 
 /* test for unlocked camera view in quad view */
 static bool view3d_camera_user_poll(bContext *C)
@@ -271,8 +273,8 @@ static int render_border_exec(bContext *C, wmOperator *op)
   /* calculate range */
 
   if (rv3d->persp == RV3D_CAMOB) {
-    Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
-    ED_view3d_calc_camera_border(scene, depsgraph, region, v3d, rv3d, &vb, false);
+    const Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
+    ED_view3d_calc_camera_border(scene, depsgraph, region, v3d, rv3d, false, &vb);
   }
   else {
     vb.xmin = 0;
@@ -444,6 +446,9 @@ static int view3d_zoom_1_to_1_camera_exec(bContext *C, wmOperator * /*op*/)
   /* no nullptr check is needed, poll checks */
   ED_view3d_context_user_region(C, &v3d, &region);
 
+  /* NOTE: don't call #ED_view3d_smooth_view_force_finish as the camera zoom
+   * isn't controlled by smooth-view, there is no need to "finish". */
+
   view3d_set_1_to_1_viewborder(scene, depsgraph, region, v3d);
 
   WM_event_add_notifier(C, NC_SPACE | ND_SPACE_VIEW3D, v3d);
@@ -474,12 +479,14 @@ void VIEW3D_OT_zoom_camera_1_to_1(wmOperatorType *ot)
 
 static int viewpersportho_exec(bContext *C, wmOperator * /*op*/)
 {
-  View3D *v3d_dummy;
+  View3D *v3d;
   ARegion *region;
   RegionView3D *rv3d;
 
   /* no nullptr check is needed, poll checks */
-  ED_view3d_context_user_region(C, &v3d_dummy, &region);
+  ED_view3d_context_user_region(C, &v3d, &region);
+  ED_view3d_smooth_view_force_finish(C, v3d, region);
+
   rv3d = static_cast<RegionView3D *>(region->regiondata);
 
   /* Could add a separate lock flag for locking persp. */
@@ -851,10 +858,10 @@ void ED_view3d_cursor3d_position(bContext *C,
   if (use_depth) { /* maybe this should be accessed some other way */
     Depsgraph *depsgraph = CTX_data_ensure_evaluated_depsgraph(C);
 
-    view3d_operator_needs_opengl(C);
+    view3d_operator_needs_gpu(C);
 
     /* Ensure the depth buffer is updated for #ED_view3d_autodist. */
-    ED_view3d_depth_override(depsgraph, region, v3d, nullptr, V3D_DEPTH_NO_GPENCIL, nullptr);
+    ED_view3d_depth_override(depsgraph, region, v3d, nullptr, V3D_DEPTH_ALL, false, nullptr);
 
     if (ED_view3d_autodist(region, v3d, mval, r_cursor_co, nullptr)) {
       depth_used = true;
@@ -915,7 +922,7 @@ void ED_view3d_cursor3d_position_rotation(bContext *C,
     SnapObjectParams params{};
     params.snap_target_select = SCE_SNAP_TARGET_ALL;
     params.edit_mode_type = SNAP_GEOM_FINAL;
-    params.use_occlusion_test = true;
+    params.occlusion_test = SNAP_OCCLUSION_AS_SEEM;
     if (ED_transform_snap_object_project_view3d_ex(snap_context,
                                                    CTX_data_ensure_evaluated_depsgraph(C),
                                                    region,
@@ -1002,23 +1009,23 @@ void ED_view3d_cursor3d_update(bContext *C,
   View3DCursor cursor_prev = *cursor_curr;
 
   {
-    float quat[4], quat_prev[4];
-    BKE_scene_cursor_rot_to_quat(cursor_curr, quat);
-    copy_qt_qt(quat_prev, quat);
+    blender::math::Quaternion quat, quat_prev;
+    quat = cursor_curr->rotation();
+    copy_qt_qt(&quat_prev.w, &quat.w);
     ED_view3d_cursor3d_position_rotation(
-        C, mval, use_depth, orientation, cursor_curr->location, quat);
+        C, mval, use_depth, orientation, cursor_curr->location, &quat.w);
 
-    if (!equals_v4v4(quat_prev, quat)) {
+    if (!equals_v4v4(&quat_prev.w, &quat.w)) {
       if ((cursor_curr->rotation_mode == ROT_MODE_AXISANGLE) && RV3D_VIEW_IS_AXIS(rv3d->view)) {
         float tmat[3][3], cmat[3][3];
-        quat_to_mat3(tmat, quat);
+        quat_to_mat3(tmat, &quat.w);
         negate_v3_v3(cursor_curr->rotation_axis, tmat[2]);
         axis_angle_to_mat3(cmat, cursor_curr->rotation_axis, 0.0f);
         cursor_curr->rotation_angle = angle_signed_on_axis_v3v3_v3(
             cmat[0], tmat[0], cursor_curr->rotation_axis);
       }
       else {
-        BKE_scene_cursor_quat_to_rot(cursor_curr, quat, true);
+        cursor_curr->set_rotation(quat, true);
       }
     }
   }
@@ -1054,8 +1061,9 @@ void ED_view3d_cursor3d_update(bContext *C,
 
   {
     wmMsgBus *mbus = CTX_wm_message_bus(C);
-    wmMsgParams_RNA msg_key_params = {{nullptr}};
-    msg_key_params.ptr = RNA_pointer_create(&scene->id, &RNA_View3DCursor, &scene->cursor);
+    wmMsgParams_RNA msg_key_params = {{}};
+    msg_key_params.ptr = RNA_pointer_create_discrete(
+        &scene->id, &RNA_View3DCursor, &scene->cursor);
     WM_msg_publish_rna_params(mbus, &msg_key_params);
   }
 

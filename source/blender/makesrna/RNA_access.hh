@@ -18,6 +18,7 @@
 
 #include "BLI_compiler_attrs.h"
 #include "BLI_function_ref.hh"
+#include "BLI_string_ref.hh"
 
 struct ID;
 struct IDOverrideLibrary;
@@ -45,8 +46,49 @@ extern BlenderRNA BLENDER_RNA;
  */
 
 PointerRNA RNA_main_pointer_create(Main *main);
+/**
+ * Create a PointerRNA for an ID.
+ *
+ * \note By definition, currently these are always 'discrete' (have no ancestors). See
+ * #PointerRNA::ancestors for details.
+ */
 PointerRNA RNA_id_pointer_create(ID *id);
-PointerRNA RNA_pointer_create(ID *id, StructRNA *type, void *data);
+/**
+ * Create a 'discrete', isolated PointerRNA of some data. It won't have any ancestor information
+ * available.
+ *
+ * \param id: The owner ID, may be null, in which case the PointerRNA won't have any ownership
+ * information at all.
+ */
+PointerRNA RNA_pointer_create_discrete(ID *id, StructRNA *type, void *data);
+/**
+ * Create a PointerRNA of some data, using the given `parent` as immediate ancestor.
+ *
+ * This allows the PointerRNA to know to which data it belongs, all the way up to the root owner
+ * ID.
+ */
+PointerRNA RNA_pointer_create_with_parent(const PointerRNA &parent, StructRNA *type, void *data);
+/**
+ * Create a PointerRNA of some data, with the given `id` data-block as single ancestor.
+ *
+ * This assumes that given `data` is an immediate (RNA-wise) child of the relevant RNA ID struct,
+ * and is a shortcut for:
+ *
+ *    PointerRNA id_ptr = RNA_id_pointer_create(id);
+ *    PointerRNA ptr = RNA_pointer_create_with_parent(id_ptr, &RNA_Type, data);
+ */
+PointerRNA RNA_pointer_create_id_subdata(ID &id, StructRNA *type, void *data);
+
+/**
+ * Create a PointerRNA representing the N'th ancestor of the given PointerRNA, where `0` is the
+ * root.
+ *
+ * \note: Typically, the root ancestor should be an ID. But depending on how the PointerRNA and its
+ * ancestors have been created, only part of the ancestor chain may be available, see
+ * #PointerRNA::ancestors for details.
+ */
+PointerRNA RNA_pointer_create_from_ancestor(const PointerRNA &ptr, const int ancestor_idx);
+
 bool RNA_pointer_is_null(const PointerRNA *ptr);
 
 bool RNA_path_resolved_create(PointerRNA *ptr,
@@ -226,10 +268,12 @@ void RNA_property_float_ui_range(PointerRNA *ptr,
 int RNA_property_float_clamp(PointerRNA *ptr, PropertyRNA *prop, float *value);
 int RNA_property_int_clamp(PointerRNA *ptr, PropertyRNA *prop, int *value);
 
-bool RNA_enum_identifier(const EnumPropertyItem *item, int value, const char **identifier);
-int RNA_enum_bitflag_identifiers(const EnumPropertyItem *item, int value, const char **identifier);
+bool RNA_enum_identifier(const EnumPropertyItem *item, int value, const char **r_identifier);
+int RNA_enum_bitflag_identifiers(const EnumPropertyItem *item,
+                                 int value,
+                                 const char **r_identifier);
 bool RNA_enum_name(const EnumPropertyItem *item, int value, const char **r_name);
-bool RNA_enum_description(const EnumPropertyItem *item, int value, const char **description);
+bool RNA_enum_description(const EnumPropertyItem *item, int value, const char **r_description);
 int RNA_enum_from_value(const EnumPropertyItem *item, int value);
 int RNA_enum_from_identifier(const EnumPropertyItem *item, const char *identifier);
 bool RNA_enum_value_from_identifier(const EnumPropertyItem *item,
@@ -629,7 +673,7 @@ void RNA_collection_clear(PointerRNA *ptr, const char *name);
 
 #define RNA_STRUCT_BEGIN(sptr, prop) \
   { \
-    CollectionPropertyIterator rna_macro_iter; \
+    CollectionPropertyIterator rna_macro_iter{}; \
     for (RNA_property_collection_begin( \
              sptr, RNA_struct_iterator_property((sptr)->type), &rna_macro_iter); \
          rna_macro_iter.valid; \
@@ -741,8 +785,8 @@ void RNA_parameter_list_begin(ParameterList *parms, ParameterIterator *iter);
 void RNA_parameter_list_next(ParameterIterator *iter);
 void RNA_parameter_list_end(ParameterIterator *iter);
 
-void RNA_parameter_get(ParameterList *parms, PropertyRNA *parm, void **value);
-void RNA_parameter_get_lookup(ParameterList *parms, const char *identifier, void **value);
+void RNA_parameter_get(ParameterList *parms, PropertyRNA *parm, void **r_value);
+void RNA_parameter_get_lookup(ParameterList *parms, const char *identifier, void **r_value);
 void RNA_parameter_set(ParameterList *parms, PropertyRNA *parm, const void *value);
 void RNA_parameter_set_lookup(ParameterList *parms, const char *identifier, const void *value);
 
@@ -759,7 +803,7 @@ void RNA_parameter_dynamic_length_set_data(ParameterList *parms,
 int RNA_function_call(
     bContext *C, ReportList *reports, PointerRNA *ptr, FunctionRNA *func, ParameterList *parms);
 
-const char *RNA_translate_ui_text(
+std::optional<blender::StringRefNull> RNA_translate_ui_text(
     const char *text, const char *text_ctxt, StructRNA *type, PropertyRNA *prop, int translate);
 
 /* ID */
@@ -873,7 +917,7 @@ bool RNA_struct_override_matches(Main *bmain,
                                  PointerRNA *ptr_reference,
                                  const char *root_path,
                                  size_t root_path_len,
-                                 IDOverrideLibrary *override,
+                                 IDOverrideLibrary *liboverride,
                                  eRNAOverrideMatch flags,
                                  eRNAOverrideMatchResult *r_report_flags);
 
@@ -885,7 +929,7 @@ bool RNA_struct_override_store(Main *bmain,
                                PointerRNA *ptr_local,
                                PointerRNA *ptr_reference,
                                PointerRNA *ptr_storage,
-                               IDOverrideLibrary *override);
+                               IDOverrideLibrary *liboverride);
 
 enum eRNAOverrideApplyFlag {
   RNA_OVERRIDE_APPLY_FLAG_NOP = 0,
@@ -937,7 +981,7 @@ IDOverrideLibraryPropertyOperation *RNA_property_override_property_operation_get
                                                                                  bool *r_strict,
                                                                                  bool *r_created);
 
-eRNAOverrideStatus RNA_property_override_library_status(Main *bmainm,
+eRNAOverrideStatus RNA_property_override_library_status(Main *bmain,
                                                         PointerRNA *ptr,
                                                         PropertyRNA *prop,
                                                         int index);

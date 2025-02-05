@@ -24,7 +24,7 @@
 #include "BKE_fcurve.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
-#include "BKE_nla.h"
+#include "BKE_nla.hh"
 #include "BKE_report.hh"
 
 #include "ED_anim_api.hh"
@@ -46,6 +46,9 @@
 
 #include "UI_view2d.hh"
 
+#include "ANIM_action.hh"
+#include "ANIM_action_legacy.hh"
+
 #include "nla_intern.hh"
 #include "nla_private.h"
 
@@ -63,6 +66,12 @@ void ED_nla_postop_refresh(bAnimContext *ac)
   ANIM_animdata_filter(ac, &anim_data, filter, ac->data, eAnimCont_Types(ac->datatype));
 
   LISTBASE_FOREACH (bAnimListElem *, ale, &anim_data) {
+    if (!ale->adt) {
+      continue;
+    }
+    if (ale->type != ANIMTYPE_ANIMDATA) {
+      continue;
+    }
     /* performing auto-blending, extend-mode validation, etc. */
     BKE_nla_validate_state(static_cast<AnimData *>(ale->data));
 
@@ -114,7 +123,11 @@ static int nlaedit_enable_tweakmode_exec(bContext *C, wmOperator *op)
 
   /* for each AnimData block with NLA-data, try setting it in tweak-mode */
   LISTBASE_FOREACH (bAnimListElem *, ale, &anim_data) {
+    if (ale->type != ANIMTYPE_ANIMDATA) {
+      continue;
+    }
     AnimData *adt = static_cast<AnimData *>(ale->data);
+    BLI_assert(adt);
 
     if (use_upper_stack_evaluation) {
       adt->flag |= ADT_NLA_EVAL_UPPER_TRACKS;
@@ -124,7 +137,7 @@ static int nlaedit_enable_tweakmode_exec(bContext *C, wmOperator *op)
     }
 
     /* Try entering tweak-mode if valid. */
-    ok |= BKE_nla_tweakmode_enter(adt);
+    ok |= BKE_nla_tweakmode_enter({*ale->id, *adt});
 
     /* mark the active track as being "solo"? */
     if (do_solo && adt->actstrip) {
@@ -225,7 +238,7 @@ bool nlaedit_disable_tweakmode(bAnimContext *ac, bool do_solo)
     }
 
     /* To be sure that we're doing everything right, just exit tweak-mode. */
-    BKE_nla_tweakmode_exit(adt);
+    BKE_nla_tweakmode_exit({*ale->id, *adt});
 
     ale->update |= ANIM_UPDATE_DEPS;
   }
@@ -653,7 +666,7 @@ static int nlaedit_add_actionclip_exec(bContext *C, wmOperator *op)
     // printf("Add strip - actname = '%s'\n", actname);
     return OPERATOR_CANCELLED;
   }
-  if (act->idroot == 0) {
+  if (act->idroot == 0 && blender::animrig::legacy::action_treat_as_legacy(*act)) {
     /* hopefully in this case (i.e. library of userless actions),
      * the user knows what they're doing... */
     BKE_reportf(op->reports,
@@ -695,7 +708,11 @@ static int nlaedit_add_actionclip_exec(bContext *C, wmOperator *op)
     }
 
     /* create a new strip, and offset it to start on the current frame */
-    strip = BKE_nlastrip_new(act);
+    BLI_assert(ale->id);
+    BLI_assert_msg(GS(ale->id->name) != ID_AC,
+                   "Expecting the owner of an ALE to be the animated ID, not the Action");
+    ID &animated_id = *ale->id;
+    strip = BKE_nlastrip_new(act, animated_id);
 
     strip->end += (cfra - strip->start);
     strip->start = cfra;
@@ -1276,7 +1293,7 @@ static int nlaedit_delete_exec(bContext *C, wmOperator * /*op*/)
         /* Fix for #109430. Defensively exit tweak mode before deleting
          * the active strip. */
         if (ale->adt && ale->adt->actstrip == strip) {
-          BKE_nla_tweakmode_exit(ale->adt);
+          BKE_nla_tweakmode_exit({*ale->id, *ale->adt});
         }
 
         /* if a strip either side of this was a transition, delete those too */
@@ -1604,7 +1621,7 @@ static int nlaedit_swap_exec(bContext *C, wmOperator *op)
       NlaStrip *mstrip = static_cast<NlaStrip *>(nlt->strips.first);
 
       if ((mstrip->flag & NLASTRIP_FLAG_TEMP_META) &&
-          (BLI_listbase_count_at_most(&mstrip->strips, 3) == 2))
+          BLI_listbase_count_is_equal_to(&mstrip->strips, 2))
       {
         /* remove this temp meta, so that we can see the strips inside */
         BKE_nlastrips_clear_metas(&nlt->strips, false, true);
@@ -2290,7 +2307,7 @@ static int nlaedit_clear_scale_exec(bContext *C, wmOperator * /*op*/)
       /* strip must be selected, and must be action-clip only
        * (transitions don't have scale) */
       if ((strip->flag & NLASTRIP_FLAG_SELECT) && (strip->type == NLASTRIP_TYPE_CLIP)) {
-        PointerRNA strip_ptr = RNA_pointer_create(nullptr, &RNA_NlaStrip, strip);
+        PointerRNA strip_ptr = RNA_pointer_create_discrete(nullptr, &RNA_NlaStrip, strip);
         RNA_float_set(&strip_ptr, "scale", 1.0f);
       }
     }

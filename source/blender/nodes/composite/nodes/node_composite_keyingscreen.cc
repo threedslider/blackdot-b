@@ -19,8 +19,6 @@
 #include "BKE_movieclip.h"
 #include "BKE_tracking.h"
 
-#include "GPU_texture.hh"
-
 #include "RNA_access.hh"
 #include "RNA_prototypes.hh"
 
@@ -67,30 +65,22 @@ static void node_composit_buts_keyingscreen(uiLayout *layout, bContext *C, Point
 {
   bNode *node = (bNode *)ptr->data;
 
-  uiTemplateID(layout,
-               C,
-               ptr,
-               "clip",
-               nullptr,
-               nullptr,
-               nullptr,
-               UI_TEMPLATE_ID_FILTER_ALL,
-               false,
-               nullptr);
+  uiTemplateID(layout, C, ptr, "clip", nullptr, nullptr, nullptr);
 
   if (node->id) {
     MovieClip *clip = (MovieClip *)node->id;
     uiLayout *col;
-    PointerRNA tracking_ptr = RNA_pointer_create(&clip->id, &RNA_MovieTracking, &clip->tracking);
+    PointerRNA tracking_ptr = RNA_pointer_create_discrete(
+        &clip->id, &RNA_MovieTracking, &clip->tracking);
 
     col = uiLayoutColumn(layout, true);
     uiItemPointerR(col, ptr, "tracking_object", &tracking_ptr, "objects", "", ICON_OBJECT_DATA);
   }
 
-  uiItemR(layout, ptr, "smoothness", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "smoothness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
-using namespace blender::realtime_compositor;
+using namespace blender::compositor;
 
 class KeyingScreenOperation : public NodeOperation {
  public:
@@ -105,10 +95,15 @@ class KeyingScreenOperation : public NodeOperation {
       return;
     }
 
-    KeyingScreen &cached_keying_screen = context().cache_manager().keying_screens.get(
+    Result &cached_keying_screen = context().cache_manager().keying_screens.get(
         context(), get_movie_clip(), movie_tracking_object, get_smoothness());
 
-    keying_screen.wrap_external(cached_keying_screen.texture());
+    if (!cached_keying_screen.is_allocated()) {
+      keying_screen.allocate_invalid();
+      return;
+    }
+
+    keying_screen.wrap_external(cached_keying_screen);
   }
 
   Domain compute_domain() override
@@ -173,7 +168,11 @@ void register_node_type_cmp_keyingscreen()
 
   static blender::bke::bNodeType ntype;
 
-  cmp_node_type_base(&ntype, CMP_NODE_KEYINGSCREEN, "Keying Screen", NODE_CLASS_MATTE);
+  cmp_node_type_base(&ntype, "CompositorNodeKeyingScreen", CMP_NODE_KEYINGSCREEN);
+  ntype.ui_name = "Keying Screen";
+  ntype.ui_description = "Create plates for use as a color reference for keying nodes";
+  ntype.enum_name_legacy = "KEYINGSCREEN";
+  ntype.nclass = NODE_CLASS_MATTE;
   ntype.declare = file_ns::cmp_node_keyingscreen_declare;
   ntype.draw_buttons = file_ns::node_composit_buts_keyingscreen;
   ntype.initfunc_api = file_ns::node_composit_init_keyingscreen;
@@ -181,5 +180,5 @@ void register_node_type_cmp_keyingscreen()
       &ntype, "NodeKeyingScreenData", node_free_standard_storage, node_copy_standard_storage);
   ntype.get_compositor_operation = file_ns::get_compositor_operation;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

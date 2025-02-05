@@ -10,13 +10,11 @@
 
 #pragma once
 
-#include "DNA_customdata_types.h"
 #include "DNA_listBase.h"
 
 #include "BLI_ghash.h"
 
 #include "GPU_material.hh"
-#include "GPU_shader.hh"
 
 struct GPUNode;
 struct GPUOutput;
@@ -217,8 +215,8 @@ GPUNodeGraph *gpu_material_node_graph(GPUMaterial *material);
  */
 GPUTexture **gpu_material_ramp_texture_row_set(GPUMaterial *mat,
                                                int size,
-                                               float *pixels,
-                                               float *row);
+                                               const float *pixels,
+                                               float *r_row);
 /**
  * Returns the address of the future pointer to sky_tex
  */

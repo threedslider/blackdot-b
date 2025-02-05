@@ -6,15 +6,8 @@ set(INC
   .
   ..
   ../intern
-  ../../blenkernel
-  ../../blentranslation
   ../../editors/include
-  ../../functions
-  ../../gpu
-  ../../imbuf
   ../../makesrna
-  ../../render
-  ../../windowmanager
   ../../../../intern/sky/include
   # RNA_prototypes.hh
   ${CMAKE_BINARY_DIR}/source/blender/makesrna
@@ -36,6 +29,7 @@ set(SRC
   nodes/node_shader_bsdf_glossy.cc
   nodes/node_shader_bsdf_hair.cc
   nodes/node_shader_bsdf_hair_principled.cc
+  nodes/node_shader_bsdf_metallic.cc
   nodes/node_shader_bsdf_principled.cc
   nodes/node_shader_bsdf_ray_portal.cc
   nodes/node_shader_bsdf_refraction.cc
@@ -128,14 +122,20 @@ set(SRC
 )
 
 set(LIB
+  PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
+  PRIVATE bf::blentranslation
   PRIVATE bf::depsgraph
   PRIVATE bf::dna
-  bf_functions
+  PRIVATE bf::functions
+  PRIVATE bf::gpu
+  PRIVATE bf::imbuf
   PRIVATE bf::intern::clog
   PRIVATE bf::intern::guardedalloc
   bf_intern_sky
   bf_nodes
+  PRIVATE bf::render
+  PRIVATE bf::windowmanager
 )
 
 if(WITH_MATERIALX)
@@ -143,11 +143,13 @@ if(WITH_MATERIALX)
   list(APPEND SRC
     materialx/group_nodes.cc
     materialx/material.cc
+    materialx/node_graph.cc
     materialx/node_item.cc
     materialx/node_parser.cc
 
     materialx/group_nodes.h
     materialx/material.h
+    materialx/node_graph.h
     materialx/node_item.h
     materialx/node_parser.h
   )
@@ -170,19 +172,11 @@ if(WITH_FREESTYLE)
 endif()
 
 if(WITH_TBB)
-  add_definitions(-DWITH_TBB)
   if(WIN32)
     # TBB includes Windows.h which will define min/max macros
-    # that will collide with the stl versions.
+    # that will collide with the STL versions.
     add_definitions(-DNOMINMAX)
   endif()
-  list(APPEND INC_SYS
-    ${TBB_INCLUDE_DIRS}
-  )
-
-  list(APPEND LIB
-    ${TBB_LIBRARIES}
-  )
 endif()
 
 blender_add_lib(bf_nodes_shader "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")

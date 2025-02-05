@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2009 Jrg Hermann Mller
+# SPDX-FileCopyrightText: 2009 Jörg Hermann Müller
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -7,19 +7,20 @@ remove_strict_flags()
 if(CMAKE_COMPILER_IS_GNUCC)
   remove_cc_flag("-Wunused-macros")
 endif()
-  set(INC
-    .
-  )
 
-  set(INC_SYS
-    ${AUDASPACE_C_INCLUDE_DIRS}
-    ${AUDASPACE_PY_INCLUDE_DIRS}
-  )
+set(INC
+  .
+)
 
-  set(SRC
-    intern/AUD_Set.cpp
-    intern/AUD_Set.h
-  )
+set(INC_SYS
+  ${AUDASPACE_C_INCLUDE_DIRS}
+  ${AUDASPACE_PY_INCLUDE_DIRS}
+)
+
+set(SRC
+  intern/AUD_Set.cpp
+  intern/AUD_Set.h
+)
 
 set(LIB
 )
@@ -28,11 +29,6 @@ if(NOT WITH_SYSTEM_AUDASPACE)
   list(APPEND LIB
     audaspace
   )
-  if(WITH_SDL_DYNLOAD)
-    list(APPEND LIB
-      extern_sdlew
-    )
-  endif()
 else()
   list(APPEND LIB
     ${AUDASPACE_C_LIBRARIES}
@@ -53,8 +49,8 @@ if(WITH_PYTHON AND WITH_PYTHON_NUMPY)
     intern/AUD_PyInit.h
   )
   list(APPEND LIB
-      ${PYTHON_LINKFLAGS}
-      ${PYTHON_LIBRARIES}
+    ${PYTHON_LINKFLAGS}
+    ${PYTHON_LIBRARIES}
   )
   if(NOT WITH_SYSTEM_AUDASPACE)
     list(APPEND LIB

@@ -13,8 +13,6 @@
 
 #include "BKE_unit.hh"
 
-#include "DNA_gpencil_legacy_types.h"
-
 #include "ED_screen.hh"
 
 #include "UI_interface.hh"
@@ -49,7 +47,7 @@ static void applyGPOpacity(TransInfo *t)
   if (hasNumInput(&t->num)) {
     char c[NUM_STR_REP_LEN];
 
-    outputNumInput(&(t->num), c, &t->scene->unit);
+    outputNumInput(&(t->num), c, t->scene->unit);
     SNPRINTF(str, IFACE_("Opacity: %s"), c);
   }
   else {
@@ -60,17 +58,7 @@ static void applyGPOpacity(TransInfo *t)
   FOREACH_TRANS_DATA_CONTAINER (t, tc) {
     TransData *td = tc->data;
 
-    if (t->obedit_type == OB_GPENCIL_LEGACY) {
-      bGPdata *gpd = static_cast<bGPdata *>(td->ob->data);
-      const bool is_curve_edit = bool(GPENCIL_CURVE_EDIT_SESSIONS_ON(gpd));
-      /* Only recalculate data when in curve edit mode. */
-      if (is_curve_edit) {
-        recalc = true;
-      }
-    }
-    else if (t->obedit_type == OB_GREASE_PENCIL) {
-      recalc = true;
-    }
+    recalc = true;
 
     for (i = 0; i < tc->data_len; i++, td++) {
       if (td->flag & TD_SKIP) {

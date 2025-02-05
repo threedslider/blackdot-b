@@ -61,8 +61,8 @@ static void init_dualcon_mesh(DualConInput *input, Mesh *mesh)
   input->co_stride = sizeof(blender::float3);
   input->totco = mesh->verts_num;
 
-  input->mloop = (DualConLoop)mesh->corner_verts().data();
-  input->loop_stride = sizeof(int);
+  input->corner_verts = (DualConCornerVerts)mesh->corner_verts().data();
+  input->corner_verts_stride = sizeof(int);
 
   input->corner_tris = (DualConTri)mesh->corner_tris().data();
   input->tri_stride = sizeof(blender::int3);
@@ -86,9 +86,9 @@ struct DualConOutput {
 /* allocate and initialize a DualConOutput */
 static void *dualcon_alloc_output(int totvert, int totquad)
 {
-  DualConOutput *output;
+  DualConOutput *output = MEM_cnew<DualConOutput>(__func__);
 
-  if (!(output = MEM_cnew<DualConOutput>(__func__))) {
+  if (!output) {
     return nullptr;
   }
 
@@ -127,21 +127,16 @@ static void dualcon_add_quad(void *output_v, const int vert_indices[4])
   output->curface++;
 }
 
-static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext * /*ctx*/, Mesh *mesh)
+static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
 {
   using namespace blender;
-  RemeshModifierData *rmd;
-  DualConOutput *output;
-  DualConInput input;
+  RemeshModifierData *rmd = (RemeshModifierData *)md;
   Mesh *result;
-  DualConFlags flags = DualConFlags(0);
-  DualConMode mode = DualConMode(0);
-
-  rmd = (RemeshModifierData *)md;
 
   if (rmd->mode == MOD_REMESH_VOXEL) {
     /* OpenVDB modes. */
     if (rmd->voxel_size == 0.0f) {
+      BKE_modifier_set_error(ctx->object, md, "Zero voxel size cannot be solved");
       return nullptr;
     }
     result = BKE_mesh_remesh_voxel(mesh, rmd->voxel_size, rmd->adaptivity, 0.0f);
@@ -150,6 +145,16 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext * /*ctx*/, 
     }
   }
   else {
+    if (rmd->scale == 0.0f) {
+      BKE_modifier_set_error(ctx->object, md, "Zero scale cannot be solved");
+      return nullptr;
+    }
+
+    DualConOutput *output;
+    DualConInput input;
+    DualConFlags flags = DualConFlags(0);
+    DualConMode mode = DualConMode(0);
+
     /* Dualcon modes. */
     init_dualcon_mesh(&input, mesh);
 
@@ -222,29 +227,29 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   int mode = RNA_enum_get(ptr, "mode");
 
-  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "mode", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 
   uiLayoutSetPropSep(layout, true);
 
   col = uiLayoutColumn(layout, false);
   if (mode == MOD_REMESH_VOXEL) {
-    uiItemR(col, ptr, "voxel_size", UI_ITEM_NONE, nullptr, ICON_NONE);
-    uiItemR(col, ptr, "adaptivity", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(col, ptr, "voxel_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiItemR(col, ptr, "adaptivity", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   else {
-    uiItemR(col, ptr, "octree_depth", UI_ITEM_NONE, nullptr, ICON_NONE);
-    uiItemR(col, ptr, "scale", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(col, ptr, "octree_depth", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    uiItemR(col, ptr, "scale", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
     if (mode == MOD_REMESH_SHARP_FEATURES) {
-      uiItemR(col, ptr, "sharpness", UI_ITEM_NONE, nullptr, ICON_NONE);
+      uiItemR(col, ptr, "sharpness", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
 
-    uiItemR(layout, ptr, "use_remove_disconnected", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(layout, ptr, "use_remove_disconnected", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     row = uiLayoutRow(layout, false);
     uiLayoutSetActive(row, RNA_boolean_get(ptr, "use_remove_disconnected"));
-    uiItemR(layout, ptr, "threshold", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(layout, ptr, "threshold", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
-  uiItemR(layout, ptr, "use_smooth_shade", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "use_smooth_shade", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_panel_end(layout, ptr);
 

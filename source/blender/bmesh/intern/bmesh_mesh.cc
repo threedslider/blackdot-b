@@ -15,7 +15,6 @@
 #include "BLI_listbase.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
 
 #include "BKE_customdata.hh"
 #include "BKE_mesh.hh"
@@ -243,6 +242,7 @@ void BM_mesh_data_free(BMesh *bm)
 void BM_mesh_clear(BMesh *bm)
 {
   const bool use_toolflags = bm->use_toolflags;
+  void *py_handle = bm->py_handle;
 
   /* free old mesh */
   BM_mesh_data_free(bm);
@@ -252,6 +252,8 @@ void BM_mesh_clear(BMesh *bm)
   bm_mempool_init(bm, &bm_mesh_allocsize_default, use_toolflags);
 
   bm->use_toolflags = use_toolflags;
+  bm->py_handle = py_handle;
+
   bm->toolflag_index = 0;
   bm->totflags = 0;
 
@@ -1339,6 +1341,16 @@ void BM_mesh_vert_coords_get(BMesh *bm, MutableSpan<float3> positions)
   int i;
   BM_ITER_MESH_INDEX (v, &iter, bm, BM_VERTS_OF_MESH, i) {
     positions[i] = v->co;
+  }
+}
+
+void BM_mesh_vert_normals_get(BMesh *bm, MutableSpan<float3> normals)
+{
+  BMIter iter;
+  BMVert *v;
+  int i;
+  BM_ITER_MESH_INDEX (v, &iter, bm, BM_VERTS_OF_MESH, i) {
+    normals[i] = v->no;
   }
 }
 

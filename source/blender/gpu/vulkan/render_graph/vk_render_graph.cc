@@ -7,82 +7,30 @@
  */
 
 #include "vk_render_graph.hh"
+#include "gpu_backend.hh"
+
+#include <sstream>
 
 namespace blender::gpu::render_graph {
 
-VKRenderGraph::VKRenderGraph(std::unique_ptr<VKCommandBufferInterface> command_buffer,
-                             VKResourceStateTracker &resources)
-    : command_buffer_(std::move(command_buffer)), resources_(resources)
+VKRenderGraph::VKRenderGraph(VKResourceStateTracker &resources) : resources_(resources)
 {
   submission_id.reset();
 }
 
-void VKRenderGraph::remove_nodes(Span<NodeHandle> node_handles)
+void VKRenderGraph::reset()
 {
-  UNUSED_VARS_NDEBUG(node_handles);
-  BLI_assert_msg(node_handles.size() == nodes_.size(),
-                 "Currently only supporting removing all nodes. The VKScheduler doesn't walk the "
-                 "nodes, and will use incorrect ordering when not all nodes are removed. This "
-                 "needs to be fixed when implementing a better scheduler.");
   links_.clear();
   for (VKRenderGraphNode &node : nodes_) {
-    node.free_data();
+    node.free_data(storage_);
   }
   nodes_.clear();
+  storage_.reset();
 
   debug_.node_group_map.clear();
   debug_.used_groups.clear();
-}
-
-/** \} */
-
-/* -------------------------------------------------------------------- */
-/** \name Submit graph
- * \{ */
-
-void VKRenderGraph::submit_for_present(VkImage vk_swapchain_image)
-{
-  /* Needs to be executed at forehand as `add_node` also locks the mutex. */
-  VKSynchronizationNode::CreateInfo synchronization = {};
-  synchronization.vk_image = vk_swapchain_image;
-  synchronization.vk_image_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-  synchronization.vk_image_aspect = VK_IMAGE_ASPECT_COLOR_BIT;
-  add_node<VKSynchronizationNode>(synchronization);
-
-  std::scoped_lock lock(resources_.mutex);
-  Span<NodeHandle> node_handles = scheduler_.select_nodes_for_image(*this, vk_swapchain_image);
-  command_builder_.build_nodes(*this, *command_buffer_, node_handles);
-  /* TODO: To improve performance it could be better to return a semaphore. This semaphore can be
-   * passed in the swapchain to ensure GPU synchronization. This also require a second semaphore to
-   * pause drawing until the swapchain has completed its drawing phase.
-   *
-   * Currently using CPU synchronization for safety. */
-  command_buffer_->submit_with_cpu_synchronization();
-  submission_id.next();
-  remove_nodes(node_handles);
-  command_buffer_->wait_for_cpu_synchronization();
-}
-
-void VKRenderGraph::submit_buffer_for_read(VkBuffer vk_buffer)
-{
-  std::scoped_lock lock(resources_.mutex);
-  Span<NodeHandle> node_handles = scheduler_.select_nodes_for_buffer(*this, vk_buffer);
-  command_builder_.build_nodes(*this, *command_buffer_, node_handles);
-  command_buffer_->submit_with_cpu_synchronization();
-  submission_id.next();
-  remove_nodes(node_handles);
-  command_buffer_->wait_for_cpu_synchronization();
-}
-
-void VKRenderGraph::submit()
-{
-  std::scoped_lock lock(resources_.mutex);
-  Span<NodeHandle> node_handles = scheduler_.select_nodes(*this);
-  command_builder_.build_nodes(*this, *command_buffer_, node_handles);
-  command_buffer_->submit_with_cpu_synchronization();
-  submission_id.next();
-  remove_nodes(node_handles);
-  command_buffer_->wait_for_cpu_synchronization();
+  debug_.group_stack.clear();
+  debug_.groups.clear();
 }
 
 /** \} */
@@ -91,9 +39,15 @@ void VKRenderGraph::submit()
 /** \name Debug
  * \{ */
 
-void VKRenderGraph::debug_group_begin(const char *name)
+void VKRenderGraph::debug_group_begin(const char *name, const ColorTheme4f &color)
 {
-  DebugGroupNameID name_id = debug_.group_names.index_of_or_add(std::string(name));
+  ColorTheme4f useColor = color;
+  if ((color == blender::gpu::debug::GPU_DEBUG_GROUP_COLOR_DEFAULT) &&
+      (debug_.group_stack.size() > 0))
+  {
+    useColor = debug_.groups[debug_.group_stack.last()].color;
+  }
+  DebugGroupNameID name_id = debug_.groups.index_of_or_add({std::string(name), useColor});
   debug_.group_stack.append(name_id);
   debug_.group_used = false;
 }
@@ -124,6 +78,25 @@ void VKRenderGraph::debug_print(NodeHandle node_handle) const
     link.debug_print(os, resources_);
     os << "\n";
   }
+}
+
+std::string VKRenderGraph::full_debug_group(NodeHandle node_handle) const
+{
+  if ((G.debug & G_DEBUG_GPU) == 0) {
+    return std::string();
+  }
+
+  DebugGroupID debug_group = debug_.node_group_map[node_handle];
+  if (debug_group == -1) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  for (const VKRenderGraph::DebugGroupNameID &name_id : debug_.used_groups[debug_group]) {
+    ss << "/" << debug_.groups[name_id].name;
+  }
+
+  return ss.str();
 }
 
 /** \} */

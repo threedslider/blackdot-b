@@ -10,10 +10,8 @@
 
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
-#include "DNA_view3d_types.h"
 
 #include "BLI_array.hh"
-#include "BLI_utildefines.h"
 
 #include "BKE_attribute.hh"
 #include "BKE_context.hh"
@@ -719,11 +717,14 @@ static int mesh_customdata_custom_splitnormals_add_exec(bContext *C, wmOperator 
 
   if (mesh->runtime->edit_mesh) {
     BMesh &bm = *mesh->runtime->edit_mesh->bm;
-    BM_data_layer_add(&bm, &bm.ldata, CD_CUSTOMLOOPNORMAL);
+    BM_data_layer_ensure_named(&bm, &bm.ldata, CD_PROP_INT16_2D, "custom_normal");
   }
   else {
-    CustomData_add_layer(
-        &mesh->corner_data, CD_CUSTOMLOOPNORMAL, CD_SET_DEFAULT, mesh->corners_num);
+    if (!mesh->attributes_for_write().add<short2>(
+            "custom_normal", bke::AttrDomain::Corner, bke::AttributeInitDefaultValue()))
+    {
+      return OPERATOR_CANCELLED;
+    }
   }
 
   DEG_id_tag_update(&mesh->id, 0);
@@ -753,19 +754,18 @@ static int mesh_customdata_custom_splitnormals_clear_exec(bContext *C, wmOperato
 
   if (BMEditMesh *em = mesh->runtime->edit_mesh.get()) {
     BMesh &bm = *em->bm;
-    if (!CustomData_has_layer(&bm.ldata, CD_CUSTOMLOOPNORMAL)) {
+    if (!CustomData_has_layer_named(&bm.ldata, CD_PROP_INT16_2D, "custom_normal")) {
       return OPERATOR_CANCELLED;
     }
-    BM_data_layer_free(&bm, &bm.ldata, CD_CUSTOMLOOPNORMAL);
+    BM_data_layer_free_named(&bm, &bm.ldata, "custom_normal");
     if (bm.lnor_spacearr) {
       BKE_lnor_spacearr_clear(bm.lnor_spacearr);
     }
   }
   else {
-    if (!CustomData_has_layer(&mesh->corner_data, CD_CUSTOMLOOPNORMAL)) {
+    if (!mesh->attributes_for_write().remove("custom_normal")) {
       return OPERATOR_CANCELLED;
     }
-    CustomData_free_layers(&mesh->corner_data, CD_CUSTOMLOOPNORMAL, mesh->corners_num);
   }
 
   mesh->tag_custom_normals_changed();
@@ -799,7 +799,7 @@ static void mesh_add_verts(Mesh *mesh, int len)
 
   int totvert = mesh->verts_num + len;
   CustomData vert_data;
-  CustomData_copy_layout(
+  CustomData_init_layout_from(
       &mesh->vert_data, &vert_data, CD_MASK_MESH.vmask, CD_SET_DEFAULT, totvert);
   CustomData_copy_data(&mesh->vert_data, &vert_data, 0, 0, mesh->verts_num);
 
@@ -834,7 +834,7 @@ static void mesh_add_edges(Mesh *mesh, int len)
   totedge = mesh->edges_num + len;
 
   /* Update custom-data. */
-  CustomData_copy_layout(
+  CustomData_init_layout_from(
       &mesh->edge_data, &edge_data, CD_MASK_MESH.emask, CD_SET_DEFAULT, totedge);
   CustomData_copy_data(&mesh->edge_data, &edge_data, 0, 0, mesh->edges_num);
 
@@ -869,7 +869,8 @@ static void mesh_add_loops(Mesh *mesh, int len)
   totloop = mesh->corners_num + len; /* new face count */
 
   /* update customdata */
-  CustomData_copy_layout(&mesh->corner_data, &ldata, CD_MASK_MESH.lmask, CD_SET_DEFAULT, totloop);
+  CustomData_init_layout_from(
+      &mesh->corner_data, &ldata, CD_MASK_MESH.lmask, CD_SET_DEFAULT, totloop);
   CustomData_copy_data(&mesh->corner_data, &ldata, 0, 0, mesh->corners_num);
 
   if (!CustomData_has_layer_named(&ldata, CD_PROP_INT32, ".corner_vert")) {
@@ -906,7 +907,7 @@ static void mesh_add_faces(Mesh *mesh, int len)
   faces_num = mesh->faces_num + len; /* new face count */
 
   /* update customdata */
-  CustomData_copy_layout(
+  CustomData_init_layout_from(
       &mesh->face_data, &face_data, CD_MASK_MESH.pmask, CD_SET_DEFAULT, faces_num);
   CustomData_copy_data(&mesh->face_data, &face_data, 0, 0, mesh->faces_num);
 

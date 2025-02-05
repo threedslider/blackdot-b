@@ -8,7 +8,9 @@
 
 #pragma once
 
+struct ListBase;
 struct Scene;
+struct ScrArea;
 struct TimeMarker;
 struct bAnimContext;
 struct bContext;
@@ -35,11 +37,22 @@ void ED_markers_draw(const bContext *C, int flag);
  * \{ */
 
 /**
+ * Public API for getting markers from the scene & area.
+ *
+ * \return A #TimeMarker list.
+ */
+ListBase *ED_scene_markers_get(Scene *scene, ScrArea *area);
+
+/**
  * Public API for getting markers from context.
+ *
+ * \return A #TimeMarker list.
  */
 ListBase *ED_context_get_markers(const bContext *C);
 /**
  * Public API for getting markers from "animation" context.
+ *
+ * \return A #TimeMarker list.
  */
 ListBase *ED_animcontext_get_markers(const bAnimContext *ac);
 
@@ -67,14 +80,14 @@ TimeMarker *ED_markers_find_nearest_marker(ListBase *markers, float x);
  */
 int ED_markers_find_nearest_marker_time(ListBase *markers, float x);
 
-void ED_markers_get_minmax(ListBase *markers, short sel, float *first, float *last);
+void ED_markers_get_minmax(ListBase *markers, short sel, float *r_first, float *r_last);
 
 /**
  * This function makes a list of all the markers. The only_sel
  * argument is used to specify whether only the selected markers
  * are added.
  */
-void ED_markers_make_cfra_list(ListBase *markers, ListBase *lb, short sel);
+void ED_markers_make_cfra_list(ListBase *markers, ListBase *lb, bool only_selected);
 
 void ED_markers_deselect_all(ListBase *markers, int action);
 

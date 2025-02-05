@@ -10,6 +10,7 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "DNA_modifier_types.h"
 #include "DNA_scene_types.h"
 
 #include "BLI_listbase.h"
@@ -22,12 +23,11 @@
 #include "BKE_ccg.hh"
 #include "BKE_customdata.hh"
 #include "BKE_global.hh"
-#include "BKE_image.h"
+#include "BKE_image.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.hh"
 #include "BKE_mesh_legacy_derived_mesh.hh"
 #include "BKE_mesh_tangent.hh"
-#include "BKE_modifier.hh"
 #include "BKE_multires.hh"
 #include "BKE_subsurf.hh"
 
@@ -526,14 +526,14 @@ static void do_multires_bake(MultiresBakeRender *bkr,
 
       /* Copy sharp faces and edges, for corner normals domain and tangents
        * to be computed correctly. */
-      if (sharp_edges) {
+      if (sharp_edges != nullptr) {
         bke::MutableAttributeAccessor attributes = temp_mesh->attributes_for_write();
         attributes.add<bool>("sharp_edge",
                              bke::AttrDomain::Edge,
                              bke::AttributeInitVArray(VArray<bool>::ForSpan(
                                  Span<bool>(sharp_edges, temp_mesh->edges_num))));
       }
-      if (sharp_faces) {
+      if (sharp_faces != nullptr) {
         bke::MutableAttributeAccessor attributes = temp_mesh->attributes_for_write();
         attributes.add<bool>("sharp_face",
                              bke::AttrDomain::Face,
@@ -633,7 +633,7 @@ static void do_multires_bake(MultiresBakeRender *bkr,
     BLI_threadpool_end(&threads);
   }
   else {
-    do_multires_bake_thread(&handles[0]);
+    do_multires_bake_thread(handles.data());
   }
 
   for (i = 0; i < tot_thread; i++) {
@@ -1467,18 +1467,18 @@ static void count_images(MultiresBakeRender *bkr)
   for (int i = 0; i < bkr->ob_image.len; i++) {
     Image *ima = bkr->ob_image.array[i];
     if (ima) {
-      ima->id.tag &= ~LIB_TAG_DOIT;
+      ima->id.tag &= ~ID_TAG_DOIT;
     }
   }
 
   for (int i = 0; i < bkr->ob_image.len; i++) {
     Image *ima = bkr->ob_image.array[i];
     if (ima) {
-      if ((ima->id.tag & LIB_TAG_DOIT) == 0) {
+      if ((ima->id.tag & ID_TAG_DOIT) == 0) {
         LinkData *data = BLI_genericNodeN(ima);
         BLI_addtail(&bkr->image, data);
         bkr->tot_image++;
-        ima->id.tag |= LIB_TAG_DOIT;
+        ima->id.tag |= ID_TAG_DOIT;
       }
     }
   }
@@ -1486,7 +1486,7 @@ static void count_images(MultiresBakeRender *bkr)
   for (int i = 0; i < bkr->ob_image.len; i++) {
     Image *ima = bkr->ob_image.array[i];
     if (ima) {
-      ima->id.tag &= ~LIB_TAG_DOIT;
+      ima->id.tag &= ~ID_TAG_DOIT;
     }
   }
 }
@@ -1555,7 +1555,7 @@ static void bake_images(MultiresBakeRender *bkr, MultiresBakeResult *result)
       BKE_image_release_ibuf(ima, ibuf, nullptr);
     }
 
-    ima->id.tag |= LIB_TAG_DOIT;
+    ima->id.tag |= ID_TAG_DOIT;
   }
 }
 

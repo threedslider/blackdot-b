@@ -10,10 +10,11 @@
 
 #include "DNA_armature_types.h"
 #include "DNA_constraint_types.h"
-#include "DNA_gpencil_legacy_types.h"
+#include "DNA_space_types.h"
 #include "DNA_windowmanager_types.h"
 
 #include "BLI_listbase.h"
+#include "BLI_math_base.hh"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
@@ -23,8 +24,6 @@
 #include "BKE_context.hh"
 
 #include "BLT_translation.hh"
-
-#include "ED_sequencer.hh"
 
 #include "transform.hh"
 #include "transform_convert.hh"
@@ -54,13 +53,18 @@ eTfmMode transform_mode_really_used(bContext *C, eTfmMode mode)
 
 bool transdata_check_local_center(const TransInfo *t, short around)
 {
-  return (
-      (around == V3D_AROUND_LOCAL_ORIGINS) &&
-      ((t->options & (CTX_OBJECT | CTX_POSE_BONE)) ||
-       /* Implicit: `(t->flag & T_EDIT)`. */
-       ELEM(t->obedit_type, OB_MESH, OB_CURVES_LEGACY, OB_MBALL, OB_ARMATURE, OB_GPENCIL_LEGACY) ||
-       (t->spacetype == SPACE_GRAPH) ||
-       (t->options & (CTX_MOVIECLIP | CTX_MASK | CTX_PAINT_CURVE | CTX_SEQUENCER_IMAGE))));
+  return ((around == V3D_AROUND_LOCAL_ORIGINS) &&
+          ((t->options & (CTX_OBJECT | CTX_POSE_BONE)) ||
+           /* Implicit: `(t->flag & T_EDIT)`. */
+           ELEM(t->obedit_type,
+                OB_MESH,
+                OB_CURVES_LEGACY,
+                OB_CURVES,
+                OB_GREASE_PENCIL,
+                OB_MBALL,
+                OB_ARMATURE) ||
+           (t->spacetype == SPACE_GRAPH) ||
+           (t->options & (CTX_MOVIECLIP | CTX_MASK | CTX_PAINT_CURVE | CTX_SEQUENCER_IMAGE))));
 }
 
 bool transform_mode_is_changeable(const int mode)
@@ -293,6 +297,11 @@ void constraintTransLim(const TransInfo *t, const TransDataContainer *tc, TransD
             add_v3_v3(cob.matrix[3], tc->mat[3]);
           }
         }
+        else if (con->ownspace == CONSTRAINT_SPACE_POSE) {
+          /* Bone space without considering object transformations. */
+          mul_m3_v3(td->mtx, cob.matrix[3]);
+          mul_m3_v3(tc->imat3, cob.matrix[3]);
+        }
         else if (con->ownspace != CONSTRAINT_SPACE_LOCAL) {
           /* Skip... incompatible spacetype. */
           continue;
@@ -312,6 +321,10 @@ void constraintTransLim(const TransInfo *t, const TransDataContainer *tc, TransD
           if (tc->use_local_mat) {
             sub_v3_v3(cob.matrix[3], tc->mat[3]);
           }
+          mul_m3_v3(td->smtx, cob.matrix[3]);
+        }
+        else if (con->ownspace == CONSTRAINT_SPACE_POSE) {
+          mul_m3_v3(tc->mat3, cob.matrix[3]);
           mul_m3_v3(td->smtx, cob.matrix[3]);
         }
 
@@ -536,7 +549,7 @@ void headerRotation(TransInfo *t, char *str, const int str_size, float final)
   if (hasNumInput(&t->num)) {
     char c[NUM_STR_REP_LEN];
 
-    outputNumInput(&(t->num), c, &t->scene->unit);
+    outputNumInput(&(t->num), c, t->scene->unit);
 
     ofs += BLI_snprintf_rlen(
         str + ofs, str_size - ofs, IFACE_("Rotation: %s %s %s"), &c[0], t->con.text, t->proptext);
@@ -571,17 +584,13 @@ void ElementRotation_ex(const TransInfo *t,
 
     /* Apply gpencil falloff. */
     if (t->options & CTX_GPENCIL_STROKES) {
-      if (t->obedit_type == OB_GPENCIL_LEGACY) {
-
-        bGPDstroke *gps = (bGPDstroke *)td->extra;
-        if (gps->runtime.multi_frame_falloff != 1.0f) {
+      if (t->obedit_type == OB_GREASE_PENCIL) {
+        const float *gp_falloff = static_cast<const float *>(td->extra);
+        if (gp_falloff != nullptr && *gp_falloff != 1.0f) {
           float ident_mat[3][3];
           unit_m3(ident_mat);
-          interp_m3_m3m3(smat, ident_mat, smat, gps->runtime.multi_frame_falloff);
+          interp_m3_m3m3(smat, ident_mat, smat, *gp_falloff);
         }
-      }
-      else if (t->obedit_type == OB_GREASE_PENCIL) {
-        /* Pass. */
       }
     }
 
@@ -841,7 +850,7 @@ void headerResize(TransInfo *t, const float vec[3], char *str, const int str_siz
   char tvec[NUM_STR_REP_LEN * 3];
   size_t ofs = 0;
   if (hasNumInput(&t->num)) {
-    outputNumInput(&(t->num), tvec, &t->scene->unit);
+    outputNumInput(&(t->num), tvec, t->scene->unit);
   }
   else {
     BLI_snprintf(&tvec[0], NUM_STR_REP_LEN, "%.4f", vec[0]);
@@ -1045,26 +1054,22 @@ void ElementResize(const TransInfo *t,
    *   Operating on copies as a temporary solution.
    */
   if (t->options & CTX_GPENCIL_STROKES) {
-    if (t->obedit_type == OB_GPENCIL_LEGACY) {
-      bGPDstroke *gps = (bGPDstroke *)td->extra;
-      mul_v3_fl(vec, td->factor * gps->runtime.multi_frame_falloff);
+    const float *gp_falloff_ptr = static_cast<const float *>(td->extra);
+    const float gp_falloff = gp_falloff_ptr != nullptr ? *gp_falloff_ptr : 1.0f;
+    mul_v3_fl(vec, td->factor * gp_falloff);
 
-      /* Scale stroke thickness. */
-      if (td->val) {
-        NumInput num_evil = t->num;
-        float values_final_evil[4];
-        copy_v4_v4(values_final_evil, t->values_final);
-        transform_snap_increment(t, values_final_evil);
-        applyNumInput(&num_evil, values_final_evil);
+    /* Scale stroke thickness. */
+    if (td->val) {
+      NumInput num_evil = t->num;
+      float values_final_evil[4];
+      copy_v4_v4(values_final_evil, t->values_final);
+      transform_snap_increment(t, values_final_evil);
+      applyNumInput(&num_evil, values_final_evil);
 
-        float ratio = values_final_evil[0];
-        float transformed_value = td->ival * fabs(ratio);
-        *td->val = max_ff(interpf(transformed_value, td->ival, gps->runtime.multi_frame_falloff),
-                          0.001f);
-      }
-    }
-    else if (t->obedit_type == OB_GREASE_PENCIL) {
-      mul_v3_fl(vec, td->factor);
+      float ratio = values_final_evil[0];
+      float transformed_value = td->ival * fabs(ratio);
+      *td->val = blender::math::max(
+          blender::math::interpolate(td->ival, transformed_value, gp_falloff), 0.001f);
     }
   }
   else {
@@ -1119,8 +1124,6 @@ static TransModeInfo *mode_info_get(TransInfo *t, const int mode)
       return &TransMode_curveshrinkfatten;
     case TFM_MASK_SHRINKFATTEN:
       return &TransMode_maskshrinkfatten;
-    case TFM_GPENCIL_SHRINKFATTEN:
-      return &TransMode_gpshrinkfatten;
     case TFM_TRACKBALL:
       return &TransMode_trackball;
     case TFM_PUSHPULL:
@@ -1176,10 +1179,6 @@ void transform_mode_init(TransInfo *t, wmOperator *op, const int mode)
 {
   t->mode = eTfmMode(mode);
   t->mode_info = mode_info_get(t, mode);
-
-  if (t->spacetype == SPACE_SEQ && sequencer_retiming_mode_is_active(t->context)) {
-    t->mode_info = &TransMode_translate;
-  }
 
   if (t->mode_info) {
     t->flag |= eTFlag(t->mode_info->flags);

@@ -27,13 +27,9 @@
 #include "UI_interface.hh"
 #include "UI_resources.hh"
 
-#include "MEM_guardedalloc.h"
-
 #include "MOD_ui_common.hh"
 
-#include "BLI_index_range.hh"
 #include "BLI_math_matrix_types.hh"
-#include "BLI_span.hh"
 
 #include "RNA_prototypes.hh"
 
@@ -75,21 +71,21 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
 
   uiLayoutSetPropSep(layout, true);
 
-  uiItemR(layout, ptr, "object", UI_ITEM_NONE, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "density", UI_ITEM_NONE, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "density", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   {
     uiLayout *col = uiLayoutColumn(layout, false);
-    uiItemR(col, ptr, "interior_band_width", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(col, ptr, "interior_band_width", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   {
     uiLayout *col = uiLayoutColumn(layout, false);
-    uiItemR(col, ptr, "resolution_mode", UI_ITEM_NONE, nullptr, ICON_NONE);
+    uiItemR(col, ptr, "resolution_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     if (mvmd->resolution_mode == MESH_TO_VOLUME_RESOLUTION_MODE_VOXEL_AMOUNT) {
-      uiItemR(col, ptr, "voxel_amount", UI_ITEM_NONE, nullptr, ICON_NONE);
+      uiItemR(col, ptr, "voxel_amount", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
     else {
-      uiItemR(col, ptr, "voxel_size", UI_ITEM_NONE, nullptr, ICON_NONE);
+      uiItemR(col, ptr, "voxel_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
     }
   }
 

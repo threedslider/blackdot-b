@@ -29,7 +29,7 @@
         icon_modifier="#84b8ffff"
         icon_shading="#ea7581ff"
         icon_folder="#e3c16eff"
-        icon_border_intensity="1"
+        icon_border_intensity="0.7"
         >
         <wcol_regular>
           <ThemeWidgetColors
@@ -155,7 +155,7 @@
           <ThemeWidgetColors
             outline="#4d4d4dff"
             inner="#999999ff"
-            inner_sel="#999999ff"
+            inner_sel="#b0b0b0ff"
             item="#e6e6e6ff"
             text="#1a1a1a"
             text_sel="#000000"
@@ -466,8 +466,8 @@
         </space>
         <asset_shelf>
           <ThemeAssetShelf
-            header_back="#1d1d1dff"
-            back="#303030ff"
+            header_back="#adadadff"
+            back="#999999ff"
             >
           </ThemeAssetShelf>
         </asset_shelf>
@@ -836,6 +836,8 @@
         metadatatext="#ffffff"
         preview_range="#a14d0066"
         row_alternate="#ffffff0d"
+        text_strip_cursor="#71a8ff"
+        selected_text= "#19191a4d"
         >
         <space>
           <ThemeSpaceGeneric

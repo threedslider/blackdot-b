@@ -33,11 +33,9 @@ static bool imb_is_grayscale_texture_format_compatible(const ImBuf *ibuf)
        * and can therefore be optimized. */
       return true;
     }
-    else {
-      /* TODO: Support gray-scale byte buffers.
-       * The challenge is that Blender always stores byte images as RGBA. */
-      return false;
-    }
+    /* TODO: Support gray-scale byte buffers.
+     * The challenge is that Blender always stores byte images as RGBA. */
+    return false;
   }
 
   /* Only #IMBuf's with color-space that do not modify the chrominance of the texture data relative
@@ -206,7 +204,7 @@ static void *imb_gpu_get_data(const ImBuf *ibuf,
     const float *rect_float = (is_float_rect) ? (float *)data_rect : nullptr;
 
     ImBuf *scale_ibuf = IMB_allocFromBuffer(rect, rect_float, ibuf->x, ibuf->y, 4);
-    IMB_scaleImBuf(scale_ibuf, UNPACK2(rescale_size));
+    IMB_scale(scale_ibuf, UNPACK2(rescale_size), IMBScaleFilter::Box, false);
 
     if (freedata) {
       MEM_freeN(data_rect);

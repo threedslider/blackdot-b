@@ -6,7 +6,7 @@
 
 #include "internal/evaluator/eval_output_gpu.h"
 
-#include "opensubdiv_evaluator_capi.hh"
+#include "opensubdiv_evaluator.hh"
 
 using OpenSubdiv::Osd::PatchArray;
 using OpenSubdiv::Osd::PatchArrayVector;
@@ -21,7 +21,7 @@ static void buildPatchArraysBufferFromVector(const PatchArrayVector &patch_array
   patch_arrays_buffer->device_alloc(patch_arrays_buffer, patch_arrays.size());
   patch_arrays_buffer->bind_gpu(patch_arrays_buffer);
   patch_arrays_buffer->device_update(
-      patch_arrays_buffer, 0, patch_array_byte_site, &patch_arrays[0]);
+      patch_arrays_buffer, 0, patch_array_byte_site, patch_arrays.data());
 }
 
 GpuEvalOutput::GpuEvalOutput(const StencilTable *vertex_stencils,

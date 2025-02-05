@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "BLI_math_matrix.hh"
-#include "BLI_math_rotation.h"
 
 #include "UI_interface.hh"
 #include "UI_resources.hh"
@@ -31,8 +30,8 @@ static void node_init(bNodeTree * /*tree*/, bNode *node)
 
 static void node_layout(uiLayout *layout, bContext * /*C*/, PointerRNA *ptr)
 {
-  uiItemR(layout, ptr, "primary_axis", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
-  uiItemR(layout, ptr, "secondary_axis", UI_ITEM_R_EXPAND, nullptr, ICON_NONE);
+  uiItemR(layout, ptr, "primary_axis", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  uiItemR(layout, ptr, "secondary_axis", UI_ITEM_R_EXPAND, std::nullopt, ICON_NONE);
 }
 
 static float3 get_orthogonal_of_non_zero_vector(const float3 &v)
@@ -176,14 +175,19 @@ static void node_rna(StructRNA *srna)
 static void node_register()
 {
   static blender::bke::bNodeType ntype;
-  fn_node_type_base(&ntype, FN_NODE_AXES_TO_ROTATION, "Axes to Rotation", NODE_CLASS_CONVERTER);
+  fn_node_type_base(&ntype, "FunctionNodeAxesToRotation", FN_NODE_AXES_TO_ROTATION);
+  ntype.ui_name = "Axes to Rotation";
+  ntype.ui_description =
+      "Create a rotation from a primary and (ideally orthogonal) secondary axis";
+  ntype.enum_name_legacy = "AXES_TO_ROTATION";
+  ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
   ntype.initfunc = node_init;
   ntype.build_multi_function = node_build_multi_function;
   ntype.draw_buttons = node_layout;
   ntype.get_extra_info = node_extra_info;
   node_rna(ntype.rna_ext.srna);
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }
 NOD_REGISTER_NODE(node_register)
 

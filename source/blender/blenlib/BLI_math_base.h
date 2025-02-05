@@ -50,49 +50,12 @@
 #endif
 
 #include "BLI_assert.h"
-#include "BLI_math_inline.h"
+#include "BLI_math_inline.h"  // IWYU pragma: export
 #include "BLI_sys_types.h"
-#include <math.h>
 
-#ifndef M_PI
-#  define M_PI 3.14159265358979323846 /* pi */
-#endif
-#ifndef M_PI_2
-#  define M_PI_2 1.57079632679489661923 /* pi/2 */
-#endif
-#ifndef M_PI_4
-#  define M_PI_4 0.78539816339744830962 /* pi/4 */
-#endif
-#ifndef M_SQRT2
-#  define M_SQRT2 1.41421356237309504880 /* sqrt(2) */
-#endif
-#ifndef M_SQRT1_2
-#  define M_SQRT1_2 0.70710678118654752440 /* 1/sqrt(2) */
-#endif
-#ifndef M_SQRT3
-#  define M_SQRT3 1.73205080756887729352 /* sqrt(3) */
-#endif
-#ifndef M_SQRT1_3
-#  define M_SQRT1_3 0.57735026918962576450 /* 1/sqrt(3) */
-#endif
-#ifndef M_1_PI
-#  define M_1_PI 0.318309886183790671538 /* 1/pi */
-#endif
-#ifndef M_E
-#  define M_E 2.7182818284590452354 /* e */
-#endif
-#ifndef M_LOG2E
-#  define M_LOG2E 1.4426950408889634074 /* log_2 e */
-#endif
-#ifndef M_LOG10E
-#  define M_LOG10E 0.43429448190325182765 /* log_10 e */
-#endif
-#ifndef M_LN2
-#  define M_LN2 0.69314718055994530942 /* log_e 2 */
-#endif
-#ifndef M_LN10
-#  define M_LN10 2.30258509299404568402 /* log_e 10 */
-#endif
+#include <math.h>  // IWYU pragma: export
+
+#include "BLI_math_constants.h"  // IWYU pragma: export
 
 #if defined(__GNUC__)
 #  define NAN_FLT __builtin_nanf("")
@@ -102,7 +65,7 @@ static const int NAN_INT = 0x7FC00000;
 #endif
 
 #if BLI_MATH_DO_INLINE
-#  include "intern/math_base_inline.c"
+#  include "intern/math_base_inline.c"  // IWYU pragma: export
 #endif
 
 #ifdef BLI_MATH_GCC_WARN_PRAGMA
@@ -135,32 +98,17 @@ MINLINE double interpd(double target, double origin, double t);
 MINLINE float ratiof(float min, float max, float pos);
 MINLINE double ratiod(double min, double max, double pos);
 
-/**
- * Map a normalized value, i.e. from interval [0, 1] to interval [a, b].
- */
-MINLINE float scalenorm(float a, float b, float x);
-/**
- * Map a normalized value, i.e. from interval [0, 1] to interval [a, b].
- */
-MINLINE double scalenormd(double a, double b, double x);
-
 /* NOTE: Compilers will up-cast all types smaller than int to int when performing arithmetic
  * operation. */
 
 MINLINE int square_s(short a);
-MINLINE int square_uchar(unsigned char a);
-MINLINE int cube_s(short a);
-MINLINE int cube_uchar(unsigned char a);
 
 MINLINE int square_i(int a);
 MINLINE unsigned int square_uint(unsigned int a);
 MINLINE float square_f(float a);
-MINLINE double square_d(double a);
 
 MINLINE int cube_i(int a);
-MINLINE unsigned int cube_uint(unsigned int a);
 MINLINE float cube_f(float a);
-MINLINE double cube_d(double a);
 
 MINLINE float min_ff(float a, float b);
 MINLINE float max_ff(float a, float b);
@@ -171,7 +119,6 @@ MINLINE float max_ffff(float a, float b, float c, float d);
 
 MINLINE double min_dd(double a, double b);
 MINLINE double max_dd(double a, double b);
-MINLINE double min_ddd(double a, double b, double c);
 MINLINE double max_ddd(double a, double b, double c);
 
 MINLINE int min_ii(int a, int b);
@@ -184,15 +131,8 @@ MINLINE int max_iiii(int a, int b, int c, int d);
 MINLINE uint min_uu(uint a, uint b);
 MINLINE uint max_uu(uint a, uint b);
 
-MINLINE size_t min_zz(size_t a, size_t b);
-MINLINE size_t max_zz(size_t a, size_t b);
-
-MINLINE char min_cc(char a, char b);
-MINLINE char max_cc(char a, char b);
-
 MINLINE int clamp_i(int value, int min, int max);
 MINLINE float clamp_f(float value, float min, float max);
-MINLINE size_t clamp_z(size_t value, size_t min, size_t max);
 
 /**
  * Almost-equal for IEEE floats, using absolute difference method.
@@ -268,7 +208,6 @@ MINLINE unsigned int log2_ceil_u(unsigned int x);
 MINLINE int power_of_2_max_i(int n);
 MINLINE int power_of_2_min_i(int n);
 MINLINE unsigned int power_of_2_max_u(unsigned int x);
-MINLINE unsigned int power_of_2_min_u(unsigned int x);
 
 /**
  * Integer division that rounds 0.5 up, particularly useful for color blending
@@ -313,33 +252,19 @@ MINLINE float floored_fmod(float f, float n);
  */
 MINLINE float round_to_even(float f);
 
-MINLINE signed char round_fl_to_char(float a);
 MINLINE unsigned char round_fl_to_uchar(float a);
 MINLINE short round_fl_to_short(float a);
-MINLINE unsigned short round_fl_to_ushort(float a);
 MINLINE int round_fl_to_int(float a);
 MINLINE unsigned int round_fl_to_uint(float a);
 
-MINLINE signed char round_db_to_char(double a);
-MINLINE unsigned char round_db_to_uchar(double a);
-MINLINE short round_db_to_short(double a);
-MINLINE unsigned short round_db_to_ushort(double a);
 MINLINE int round_db_to_int(double a);
-MINLINE unsigned int round_db_to_uint(double a);
 
-MINLINE signed char round_fl_to_char_clamp(float a);
 MINLINE unsigned char round_fl_to_uchar_clamp(float a);
-MINLINE short round_fl_to_short_clamp(float a);
-MINLINE unsigned short round_fl_to_ushort_clamp(float a);
 MINLINE int round_fl_to_int_clamp(float a);
-MINLINE unsigned int round_fl_to_uint_clamp(float a);
 
-MINLINE signed char round_db_to_char_clamp(double a);
 MINLINE unsigned char round_db_to_uchar_clamp(double a);
 MINLINE short round_db_to_short_clamp(double a);
-MINLINE unsigned short round_db_to_ushort_clamp(double a);
 MINLINE int round_db_to_int_clamp(double a);
-MINLINE unsigned int round_db_to_uint_clamp(double a);
 
 int pow_i(int base, int exp);
 
@@ -393,14 +318,6 @@ float ceil_power_of_10(float f);
     } \
     (void)0
 
-#  define BLI_ASSERT_UNIT_V3_DB(v) \
-    { \
-      const double _test_unit = len_squared_v3_db(v); \
-      BLI_assert(!(fabs(_test_unit - 1.0) >= BLI_ASSERT_UNIT_EPSILON_DB) || \
-                 !(fabs(_test_unit) >= BLI_ASSERT_UNIT_EPSILON_DB)); \
-    } \
-    (void)0
-
 #  define BLI_ASSERT_UNIT_V2(v) \
     { \
       const float _test_unit = len_squared_v2(v); \
@@ -438,7 +355,6 @@ float ceil_power_of_10(float f);
 #else
 #  define BLI_ASSERT_UNIT_V2(v) (void)(v)
 #  define BLI_ASSERT_UNIT_V3(v) (void)(v)
-#  define BLI_ASSERT_UNIT_V3_DB(v) (void)(v)
 #  define BLI_ASSERT_UNIT_QUAT(v) (void)(v)
 #  define BLI_ASSERT_ZERO_M3(m) (void)(m)
 #  define BLI_ASSERT_ZERO_M4(m) (void)(m)

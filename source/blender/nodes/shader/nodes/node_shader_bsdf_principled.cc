@@ -4,8 +4,6 @@
 
 #include <map>
 
-#include "BLI_string.h"
-
 #include "node_shader_util.hh"
 
 #include "UI_interface.hh"
@@ -65,7 +63,7 @@ static void node_declare(NodeDeclarationBuilder &b)
 #define SOCK_ALPHA_ID 4
   b.add_input<decl::Vector>("Normal").hide_value();
 #define SOCK_NORMAL_ID 5
-  b.add_input<decl::Float>("Weight").unavailable();
+  b.add_input<decl::Float>("Weight").available(false);
 #define SOCK_WEIGHT_ID 6
 
   /* Panel for Diffuse settings. */
@@ -81,12 +79,10 @@ static void node_declare(NodeDeclarationBuilder &b)
 #define SOCK_DIFFUSE_ROUGHNESS_ID 7
 
   /* Panel for Subsurface scattering settings. */
-  PanelDeclarationBuilder &sss =
-      b.add_panel("Subsurface")
-          .default_closed(true)
-          .draw_buttons([](uiLayout *layout, bContext * /*C*/, PointerRNA *ptr) {
-            uiItemR(layout, ptr, "subsurface_method", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
-          });
+  PanelDeclarationBuilder &sss = b.add_panel("Subsurface").default_closed(true);
+  sss.add_layout([](uiLayout *layout, bContext * /*C*/, PointerRNA *ptr) {
+    uiItemR(layout, ptr, "subsurface_method", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  });
   sss.add_input<decl::Float>("Subsurface Weight")
       .default_value(0.0f)
       .min(0.0f)
@@ -134,12 +130,10 @@ static void node_declare(NodeDeclarationBuilder &b)
 #define SOCK_SUBSURFACE_ANISOTROPY_ID 12
 
   /* Panel for Specular settings. */
-  PanelDeclarationBuilder &spec =
-      b.add_panel("Specular")
-          .default_closed(true)
-          .draw_buttons([](uiLayout *layout, bContext * /*C*/, PointerRNA *ptr) {
-            uiItemR(layout, ptr, "distribution", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
-          });
+  PanelDeclarationBuilder &spec = b.add_panel("Specular").default_closed(true);
+  spec.add_layout([](uiLayout *layout, bContext * /*C*/, PointerRNA *ptr) {
+    uiItemR(layout, ptr, "distribution", UI_ITEM_R_SPLIT_EMPTY_NAME, "", ICON_NONE);
+  });
   spec.add_input<decl::Float>("Specular IOR Level")
       .default_value(0.5f)
       .min(0.0f)
@@ -166,8 +160,7 @@ static void node_declare(NodeDeclarationBuilder &b)
       .subtype(PROP_FACTOR)
       .description(
           "Amount of anisotropy for specular reflection. "
-          "Higher values give elongated highlights along the tangent direction; "
-          "negative values give highlights shaped perpendicular to the tangent direction");
+          "Higher values give elongated highlights along the tangent direction");
 #define SOCK_ANISOTROPIC_ID 15
   spec.add_input<decl::Float>("Anisotropic Rotation")
       .default_value(0.0f)
@@ -239,19 +232,25 @@ static void node_declare(NodeDeclarationBuilder &b)
       .min(0.0f)
       .max(1.0f)
       .subtype(PROP_FACTOR)
-      .short_label("Weight");
+      .short_label("Weight")
+      .description(
+          "Intensity of the sheen layer, which simulates very small fibers on the surface");
 #define SOCK_SHEEN_WEIGHT_ID 24
   sheen.add_input<decl::Float>("Sheen Roughness")
       .default_value(0.5f)
       .min(0.0f)
       .max(1.0f)
       .subtype(PROP_FACTOR)
-      .short_label("Roughness");
+      .short_label("Roughness")
+      .description(
+          "Roughness of the sheen layer. Low and high roughness values produce fuzzy or dusty "
+          "appearance, respectively");
 #define SOCK_SHEEN_ROUGHNESS_ID 25
   sheen.add_input<decl::Color>("Sheen Tint")
       .default_value({1.0f, 1.0f, 1.0f, 1.0f})
       .translation_context(BLT_I18NCONTEXT_ID_NODETREE)
-      .short_label("Tint");
+      .short_label("Tint")
+      .description("Color of the sheen reflection");
 #define SOCK_SHEEN_TINT_ID 26
 
   /* Panel for Emission settings. */
@@ -268,7 +267,8 @@ static void node_declare(NodeDeclarationBuilder &b)
       .short_label("Strength")
       .description(
           "Strength of the emitted light. A value of 1.0 ensures "
-          "that the object in the image has the exact same color as the Emission Color");
+          "that the object in the image has the exact same color as the Emission Color")
+      .translation_context(BLT_I18NCONTEXT_AMOUNT);
 #define SOCK_EMISSION_STRENGTH_ID 28
 
   /* Panel for Thin Film settings. */
@@ -277,9 +277,14 @@ static void node_declare(NodeDeclarationBuilder &b)
       .default_value(0.0)
       .min(0.0f)
       .max(100000.0f)
-      .subtype(PROP_WAVELENGTH);
+      .subtype(PROP_WAVELENGTH)
+      .description("Thickness of the film in nanometers");
 #define SOCK_THIN_FILM_THICKNESS_ID 29
-  film.add_input<decl::Float>("Thin Film IOR").default_value(1.33f).min(1.0f).max(1000.0f);
+  film.add_input<decl::Float>("Thin Film IOR")
+      .default_value(1.33f)
+      .min(1.0f)
+      .max(1000.0f)
+      .description("Index of refraction (IOR) of the thin film");
 #define SOCK_THIN_FILM_IOR_ID 30
 }
 
@@ -344,14 +349,6 @@ static int node_shader_gpu_bsdf_principled(GPUMaterial *mat,
     flag |= GPU_MATFLAG_COAT;
   }
 
-  if (use_subsurf) {
-    bNodeSocket *socket = (bNodeSocket *)BLI_findlink(&node->runtime->original->inputs,
-                                                      SOCK_SUBSURFACE_RADIUS_ID);
-    bNodeSocketValueRGBA *socket_data = (bNodeSocketValueRGBA *)socket->default_value;
-    /* For some reason it seems that the socket value is in ARGB format. */
-    use_subsurf = GPU_material_sss_profile_create(mat, &socket_data->value[1]);
-  }
-
   float use_multi_scatter = (node->custom1 == SHD_GLOSSY_MULTI_GGX) ? 1.0f : 0.0f;
 
   GPU_material_flag_set(mat, flag);
@@ -364,12 +361,12 @@ static void node_shader_update_principled(bNodeTree *ntree, bNode *node)
 {
   const int sss_method = node->custom2;
 
-  bke::nodeSetSocketAvailability(ntree,
-                                 bke::nodeFindSocket(node, SOCK_IN, "Subsurface IOR"),
-                                 sss_method == SHD_SUBSURFACE_RANDOM_WALK_SKIN);
-  bke::nodeSetSocketAvailability(ntree,
-                                 bke::nodeFindSocket(node, SOCK_IN, "Subsurface Anisotropy"),
-                                 sss_method != SHD_SUBSURFACE_BURLEY);
+  bke::node_set_socket_availability(ntree,
+                                    bke::node_find_socket(node, SOCK_IN, "Subsurface IOR"),
+                                    sss_method == SHD_SUBSURFACE_RANDOM_WALK_SKIN);
+  bke::node_set_socket_availability(ntree,
+                                    bke::node_find_socket(node, SOCK_IN, "Subsurface Anisotropy"),
+                                    sss_method != SHD_SUBSURFACE_BURLEY);
 }
 
 NODE_SHADER_MATERIALX_BEGIN
@@ -657,7 +654,13 @@ void register_node_type_sh_bsdf_principled()
 
   static blender::bke::bNodeType ntype;
 
-  sh_node_type_base(&ntype, SH_NODE_BSDF_PRINCIPLED, "Principled BSDF", NODE_CLASS_SHADER);
+  sh_node_type_base(&ntype, "ShaderNodeBsdfPrincipled", SH_NODE_BSDF_PRINCIPLED);
+  ntype.ui_name = "Principled BSDF";
+  ntype.ui_description =
+      "Physically-based, easy-to-use shader for rendering surface materials, based on the OpenPBR "
+      "model";
+  ntype.enum_name_legacy = "BSDF_PRINCIPLED";
+  ntype.nclass = NODE_CLASS_SHADER;
   ntype.declare = file_ns::node_declare;
   ntype.add_ui_poll = object_shader_nodes_poll;
   blender::bke::node_type_size_preset(&ntype, blender::bke::eNodeSizePreset::Large);
@@ -666,5 +669,5 @@ void register_node_type_sh_bsdf_principled()
   ntype.updatefunc = file_ns::node_shader_update_principled;
   ntype.materialx_fn = file_ns::node_shader_materialx;
 
-  blender::bke::nodeRegisterType(&ntype);
+  blender::bke::node_register_type(&ntype);
 }

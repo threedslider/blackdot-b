@@ -35,10 +35,6 @@ if(WITH_CYCLES)
   add_subdirectory(cycles)
 endif()
 
-if(WITH_INTERNATIONAL)
-  add_subdirectory(locale)
-endif()
-
 if(WITH_BULLET)
   add_subdirectory(rigidbody)
 endif()
@@ -52,16 +48,16 @@ if(WITH_MOD_FLUID)
   add_subdirectory(mantaflow)
 endif()
 
+if(WITH_UV_SLIM)
+  add_subdirectory(slim)
+endif()
+
 if(WITH_OPENVDB)
   add_subdirectory(openvdb)
 endif()
 
 if(WITH_QUADRIFLOW)
   add_subdirectory(quadriflow)
-endif()
-
-if(WITH_CODEC_FFMPEG)
-  add_subdirectory(ffmpeg)
 endif()
 
 if(UNIX AND NOT APPLE)

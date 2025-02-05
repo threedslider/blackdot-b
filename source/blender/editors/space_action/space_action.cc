@@ -13,9 +13,10 @@
 #include "DNA_collection_types.h"
 #include "DNA_scene_types.h"
 
+#include "DNA_screen_types.h"
 #include "MEM_guardedalloc.h"
 
-#include "BLI_blenlib.h"
+#include "BLI_string.h"
 #include "BLI_utildefines.h"
 
 #include "BKE_context.hh"
@@ -70,14 +71,14 @@ static SpaceLink *action_create(const ScrArea *area, const Scene *scene)
                            TIME_CACHE_RIGIDBODY | TIME_CACHE_SIMULATION_NODES;
 
   /* header */
-  region = MEM_cnew<ARegion>("header for action");
+  region = BKE_area_region_new();
 
   BLI_addtail(&saction->regionbase, region);
   region->regiontype = RGN_TYPE_HEADER;
   region->alignment = (U.uiflag & USER_HEADER_BOTTOM) ? RGN_ALIGN_BOTTOM : RGN_ALIGN_TOP;
 
   /* channel list region */
-  region = MEM_cnew<ARegion>("channel region for action");
+  region = BKE_area_region_new();
   BLI_addtail(&saction->regionbase, region);
   region->regiontype = RGN_TYPE_CHANNELS;
   region->alignment = RGN_ALIGN_LEFT;
@@ -87,14 +88,14 @@ static SpaceLink *action_create(const ScrArea *area, const Scene *scene)
   region->v2d.flag = V2D_VIEWSYNC_AREA_VERTICAL;
 
   /* ui buttons */
-  region = MEM_cnew<ARegion>("buttons region for action");
+  region = BKE_area_region_new();
 
   BLI_addtail(&saction->regionbase, region);
   region->regiontype = RGN_TYPE_UI;
   region->alignment = RGN_ALIGN_RIGHT;
 
   /* main region */
-  region = MEM_cnew<ARegion>("main region for action");
+  region = BKE_area_region_new();
 
   BLI_addtail(&saction->regionbase, region);
   region->regiontype = RGN_TYPE_WINDOW;
@@ -157,9 +158,21 @@ static void action_main_region_init(wmWindowManager *wm, ARegion *region)
 
   /* own keymap */
   keymap = WM_keymap_ensure(wm->defaultconf, "Dopesheet", SPACE_ACTION, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler_v2d_mask(&region->handlers, keymap);
+  WM_event_add_keymap_handler_poll(
+      &region->runtime->handlers, keymap, WM_event_handler_region_v2d_mask_no_marker_poll);
+
   keymap = WM_keymap_ensure(wm->defaultconf, "Dopesheet Generic", SPACE_ACTION, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler(&region->handlers, keymap);
+  WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
+}
+
+static void set_v2d_height(View2D *v2d, const size_t item_count, const bool add_marker_padding)
+{
+  const int height = ANIM_UI_get_channels_total_height(v2d, item_count);
+  float pad_bottom = add_marker_padding ? UI_MARKER_MARGIN_Y : 0;
+  /* Add padding for the collapsed redo panel. */
+  pad_bottom += HEADERY;
+  v2d->tot.ymin = -(height + pad_bottom);
+  UI_view2d_curRect_clamp_y(v2d);
 }
 
 static void action_main_region_draw(const bContext *C, ARegion *region)
@@ -170,6 +183,27 @@ static void action_main_region_draw(const bContext *C, ARegion *region)
   bAnimContext ac;
   View2D *v2d = &region->v2d;
   short marker_flag = 0;
+
+  /* scrollers */
+  if (region->winy > HEADERY * UI_SCALE_FAC) {
+    region->v2d.scroll |= V2D_SCROLL_BOTTOM;
+  }
+  else {
+    region->v2d.scroll &= ~V2D_SCROLL_BOTTOM;
+  }
+
+  ListBase anim_data = {nullptr, nullptr};
+  const bool has_anim_context = ANIM_animdata_get_context(C, &ac);
+  if (has_anim_context) {
+    /* Build list of channels to draw. */
+    const eAnimFilter_Flags filter = (ANIMFILTER_DATA_VISIBLE | ANIMFILTER_LIST_VISIBLE |
+                                      ANIMFILTER_LIST_CHANNELS);
+    const size_t items = ANIM_animdata_filter(
+        &ac, &anim_data, filter, ac.data, eAnimCont_Types(ac.datatype));
+    /* The View2D's height needs to be set before calling UI_view2d_view_ortho because the latter
+     * uses the View2D's `cur` rect which might be modified when setting the height. */
+    set_v2d_height(v2d, items, !BLI_listbase_is_empty(ac.markers));
+  }
 
   UI_view2d_view_ortho(v2d);
 
@@ -195,8 +229,8 @@ static void action_main_region_draw(const bContext *C, ARegion *region)
   }
 
   /* data */
-  if (ANIM_animdata_get_context(C, &ac)) {
-    draw_channel_strips(&ac, saction, region);
+  if (has_anim_context) {
+    draw_channel_strips(&ac, saction, region, &anim_data);
   }
 
   /* markers */
@@ -221,7 +255,7 @@ static void action_main_region_draw(const bContext *C, ARegion *region)
   UI_view2d_view_restore(C);
 
   /* gizmos */
-  WM_gizmomap_draw(region->gizmo_map, C, WM_GIZMOMAP_DRAWSTEP_2D);
+  WM_gizmomap_draw(region->runtime->gizmo_map, C, WM_GIZMOMAP_DRAWSTEP_2D);
 
   /* scrubbing region */
   ED_time_scrub_draw(region, scene, saction->flag & SACTION_DRAWTIME, true);
@@ -262,18 +296,10 @@ static void action_channel_region_init(wmWindowManager *wm, ARegion *region)
 
   /* own keymap */
   keymap = WM_keymap_ensure(wm->defaultconf, "Animation Channels", SPACE_EMPTY, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler_v2d_mask(&region->handlers, keymap);
+  WM_event_add_keymap_handler_v2d_mask(&region->runtime->handlers, keymap);
 
   keymap = WM_keymap_ensure(wm->defaultconf, "Dopesheet Generic", SPACE_ACTION, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler(&region->handlers, keymap);
-}
-
-static void set_v2d_height(View2D *v2d, const size_t item_count, const bool add_marker_padding)
-{
-  const int height = ANIM_UI_get_channels_total_height(v2d, item_count);
-  const float pad_bottom = add_marker_padding ? UI_MARKER_MARGIN_Y : 0;
-  v2d->tot.ymin = -(height + pad_bottom);
-  UI_view2d_curRect_clamp_y(v2d);
+  WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
 }
 
 static void action_channel_region_draw(const bContext *C, ARegion *region)
@@ -395,7 +421,7 @@ static void saction_channel_region_message_subscribe(const wmRegionMessageSubscr
    * so just whitelist the entire structs for updates
    */
   {
-    wmMsgParams_RNA msg_key_params = {{nullptr}};
+    wmMsgParams_RNA msg_key_params = {{}};
     StructRNA *type_array[] = {
         &RNA_DopeSheet, /* dopesheet filters */
 
@@ -732,7 +758,7 @@ static void action_buttons_area_init(wmWindowManager *wm, ARegion *region)
   ED_region_panels_init(wm, region);
 
   keymap = WM_keymap_ensure(wm->defaultconf, "Dopesheet Generic", SPACE_ACTION, RGN_TYPE_WINDOW);
-  WM_event_add_keymap_handler(&region->handlers, keymap);
+  WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
 }
 
 static void action_buttons_area_draw(const bContext *C, ARegion *region)
@@ -869,7 +895,7 @@ static void action_space_subtype_item_extend(bContext * /*C*/,
 static blender::StringRefNull action_space_name_get(const ScrArea *area)
 {
   SpaceAction *sact = static_cast<SpaceAction *>(area->spacedata.first);
-  const int index = RNA_enum_from_value(rna_enum_space_action_mode_items, sact->mode);
+  const int index = max_ii(0, RNA_enum_from_value(rna_enum_space_action_mode_items, sact->mode));
   const EnumPropertyItem item = rna_enum_space_action_mode_items[index];
   return item.name;
 }
@@ -877,7 +903,7 @@ static blender::StringRefNull action_space_name_get(const ScrArea *area)
 static int action_space_icon_get(const ScrArea *area)
 {
   SpaceAction *sact = static_cast<SpaceAction *>(area->spacedata.first);
-  const int index = RNA_enum_from_value(rna_enum_space_action_mode_items, sact->mode);
+  const int index = max_ii(0, RNA_enum_from_value(rna_enum_space_action_mode_items, sact->mode));
   const EnumPropertyItem item = rna_enum_space_action_mode_items[index];
   return item.icon;
 }
@@ -961,7 +987,7 @@ void ED_spacetype_action()
   art = MEM_cnew<ARegionType>("spacetype action region");
   art->regionid = RGN_TYPE_UI;
   art->prefsizex = UI_SIDEBAR_PANEL_WIDTH;
-  art->keymapflag = ED_KEYMAP_UI;
+  art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_FRAMES;
   art->listener = action_region_listener;
   art->init = action_buttons_area_init;
   art->draw = action_buttons_area_draw;

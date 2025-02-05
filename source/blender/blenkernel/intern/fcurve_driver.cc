@@ -27,7 +27,7 @@
 
 #include "BLT_translation.hh"
 
-#include "BKE_action.h"
+#include "BKE_action.hh"
 #include "BKE_animsys.h"
 #include "BKE_armature.hh"
 #include "BKE_constraint.h"
@@ -46,9 +46,10 @@
 #include "DEG_depsgraph_query.hh"
 
 #ifdef WITH_PYTHON
-#  include "BPY_extern.h"
+#  include "BPY_extern.hh"
 #endif
 
+#include <algorithm>
 #include <cstring>
 
 #ifdef WITH_PYTHON
@@ -109,7 +110,7 @@ static bool driver_get_target_context_property(const DriverTargetContext *driver
       return true;
 
     case DTAR_CONTEXT_PROPERTY_ACTIVE_VIEW_LAYER: {
-      *r_property_ptr = RNA_pointer_create(
+      *r_property_ptr = RNA_pointer_create_discrete(
           &driver_target_context->scene->id, &RNA_ViewLayer, driver_target_context->view_layer);
       return true;
     }
@@ -120,10 +121,7 @@ static bool driver_get_target_context_property(const DriverTargetContext *driver
   /* Reset to a nullptr RNA pointer.
    * This allows to more gracefully handle issues with unsupported configuration (forward
    * compatibility. for example). */
-  /* TODO(sergey): Replace with utility null-RNA-pointer creation once that is available. */
-  r_property_ptr->data = nullptr;
-  r_property_ptr->type = nullptr;
-  r_property_ptr->owner_id = nullptr;
+  *r_property_ptr = PointerRNA_NULL;
 
   return false;
 }
@@ -472,7 +470,7 @@ static float dvar_eval_rotDiff(const AnimationEvalContext * /*anim_eval_context*
   angle = 2.0f * safe_acosf(quat[0]);
   angle = fabsf(angle);
 
-  return (angle > float(M_PI)) ? float((2.0f * float(M_PI)) - angle) : float(angle);
+  return (angle > float(M_PI)) ? ((2.0f * float(M_PI)) - angle) : angle;
 }
 
 /**
@@ -1359,15 +1357,11 @@ static void evaluate_driver_min_max(const AnimationEvalContext *anim_eval_contex
       /* Check if greater/smaller than the baseline. */
       if (driver->type == DRIVER_TYPE_MAX) {
         /* Max? */
-        if (tmp_val > value) {
-          value = tmp_val;
-        }
+        value = std::max(tmp_val, value);
       }
       else {
         /* Min? */
-        if (tmp_val < value) {
-          value = tmp_val;
-        }
+        value = std::min(tmp_val, value);
       }
     }
     else {

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2009-2016 Jörg Müller
+ * Copyright 2009-2024 Jörg Müller
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,8 +30,13 @@ extern "C" {
 
 AUD_NAMESPACE_BEGIN
 
+/* FFmpeg < 4.0 */
 #if LIBAVCODEC_VERSION_MAJOR < 58
 #define FFMPEG_OLD_CODE
+#endif
+/* FFmpeg < 5.0 */
+#if LIBAVCODEC_VERSION_MAJOR < 59
+#define FFMPEG_OLD_CH_LAYOUT
 #endif
 
 void FFMPEGWriter::encode()
@@ -77,8 +82,13 @@ void FFMPEGWriter::encode()
 
 	m_frame->nb_samples = m_input_samples;
 	m_frame->format = m_codecCtx->sample_fmt;
+#ifdef FFMPEG_OLD_CH_LAYOUT
 	m_frame->channel_layout = m_codecCtx->channel_layout;
 	m_frame->channels = m_specs.channels;
+#else
+	if(av_channel_layout_copy(&m_frame->ch_layout, &m_codecCtx->ch_layout) < 0)
+		AUD_THROW(FileException, "File couldn't be written, couldn't copy audio channel layout.");
+#endif
 
 	if(avcodec_fill_audio_frame(m_frame, m_specs.channels, m_codecCtx->sample_fmt, reinterpret_cast<data_t*>(data), m_input_buffer.getSize(), 0) < 0)
 		AUD_THROW(FileException, "File couldn't be written, filling the audio frame failed with ffmpeg.");
@@ -110,7 +120,7 @@ void FFMPEGWriter::encode()
 	while(avcodec_receive_packet(m_codecCtx, m_packet) == 0)
 	{
 		m_packet->stream_index = m_stream->index;
-
+		av_packet_rescale_ts(m_packet, m_codecCtx->time_base, m_stream->time_base);
 		if(av_write_frame(m_formatCtx, m_packet) < 0)
 			AUD_THROW(FileException, "Frame couldn't be writen to the file with ffmpeg.");
 	}
@@ -151,7 +161,7 @@ void FFMPEGWriter::close()
 	while(avcodec_receive_packet(m_codecCtx, m_packet) == 0)
 	{
 		m_packet->stream_index = m_stream->index;
-
+		av_packet_rescale_ts(m_packet, m_codecCtx->time_base, m_stream->time_base);
 		if(av_write_frame(m_formatCtx, m_packet) < 0)
 			AUD_THROW(FileException, "Frame couldn't be writen to the file with ffmpeg.");
 	}
@@ -169,7 +179,7 @@ FFMPEGWriter::FFMPEGWriter(const std::string &filename, DeviceSpecs specs, Conta
 	m_input_samples(0),
 	m_deinterleave(false)
 {
-	static const char* formats[] = { nullptr, "ac3", "flac", "matroska", "mp2", "mp3", "ogg", "wav" };
+	static const char* formats[] = { nullptr, "ac3", "flac", "matroska", "mp2", "mp3", "ogg", "wav", "adts" };
 
 	if(avformat_alloc_output_context2(&m_formatCtx, nullptr, formats[format], filename.c_str()) < 0)
 		AUD_THROW(FileException, "File couldn't be written, format couldn't be found with ffmpeg.");
@@ -405,8 +415,13 @@ FFMPEGWriter::FFMPEGWriter(const std::string &filename, DeviceSpecs specs, Conta
 
 		m_codecCtx->codec_type = AVMEDIA_TYPE_AUDIO;
 		m_codecCtx->bit_rate = bitrate;
+#ifdef FFMPEG_OLD_CH_LAYOUT
 		m_codecCtx->channel_layout = channel_layout;
 		m_codecCtx->channels = m_specs.channels;
+#else
+		av_channel_layout_uninit(&m_codecCtx->ch_layout);
+		av_channel_layout_from_mask(&m_codecCtx->ch_layout, channel_layout);
+#endif
 		m_stream->time_base.num = m_codecCtx->time_base.num = 1;
 		m_stream->time_base.den = m_codecCtx->time_base.den = m_codecCtx->sample_rate;
 

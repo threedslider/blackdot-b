@@ -11,10 +11,9 @@
 #include "DNA_modifier_types.h"
 #include "DNA_scene_types.h"
 
-#include "BLI_blenlib.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_vector.h"
-#include "BLI_utildefines.h"
+#include "BLI_string.h"
 
 #include "BKE_armature.hh"
 #include "BKE_constraint.h"
@@ -23,7 +22,6 @@
 #include "BKE_displist.h"
 #include "BKE_editmesh.hh"
 #include "BKE_gpencil_legacy.h"
-#include "BKE_gpencil_modifier_legacy.h"
 #include "BKE_grease_pencil.h"
 #include "BKE_grease_pencil.hh"
 #include "BKE_lattice.hh"
@@ -31,7 +29,6 @@
 #include "BKE_mball.hh"
 #include "BKE_mesh.hh"
 #include "BKE_object.hh"
-#include "BKE_object_types.hh"
 #include "BKE_particle.h"
 #include "BKE_pointcache.h"
 #include "BKE_pointcloud.hh"
@@ -178,12 +175,6 @@ void BKE_object_handle_data_update(Depsgraph *depsgraph, Scene *scene, Object *o
     case OB_LATTICE:
       BKE_lattice_modifiers_calc(depsgraph, scene, ob);
       break;
-    case OB_GPENCIL_LEGACY: {
-      BKE_gpencil_prepare_eval_data(depsgraph, scene, ob);
-      BKE_gpencil_modifiers_calc(depsgraph, scene, ob);
-      BKE_gpencil_update_layer_transforms(depsgraph, ob);
-      break;
-    }
     case OB_CURVES:
       BKE_curves_data_update(depsgraph, scene, ob);
       break;
@@ -289,9 +280,6 @@ void BKE_object_batch_cache_dirty_tag(Object *ob)
       }
       break;
     }
-    case OB_GPENCIL_LEGACY:
-      BKE_gpencil_batch_cache_dirty_tag((bGPdata *)ob->data);
-      break;
     case OB_CURVES:
       BKE_curves_batch_cache_dirty_tag((Curves *)ob->data, BKE_CURVES_BATCH_DIRTY_ALL);
       break;

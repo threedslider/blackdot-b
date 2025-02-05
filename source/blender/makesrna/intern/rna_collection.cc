@@ -12,8 +12,6 @@
 
 #include "DNA_collection_types.h"
 
-#include "DNA_lineart_types.h"
-
 #include "BLI_utildefines.h"
 
 #include "RNA_define.hh"
@@ -53,6 +51,8 @@ BLI_STATIC_ASSERT(ARRAY_SIZE(rna_enum_collection_color_items) - 2 == COLLECTION_
 #  include "BKE_collection.hh"
 #  include "BKE_global.hh"
 #  include "BKE_layer.hh"
+#  include "BKE_lib_id.hh"
+#  include "BKE_report.hh"
 
 #  include "BLT_translation.hh"
 
@@ -64,7 +64,7 @@ static void rna_Collection_all_objects_begin(CollectionPropertyIterator *iter, P
 {
   Collection *collection = (Collection *)ptr->data;
   ListBase collection_objects = BKE_collection_object_cache_get(collection);
-  rna_iterator_listbase_begin(iter, &collection_objects, nullptr);
+  rna_iterator_listbase_begin(iter, ptr, &collection_objects, nullptr);
 }
 
 static PointerRNA rna_Collection_all_objects_get(CollectionPropertyIterator *iter)
@@ -73,13 +73,13 @@ static PointerRNA rna_Collection_all_objects_get(CollectionPropertyIterator *ite
 
   /* we are actually iterating a ObjectBase list, so override get */
   Base *base = (Base *)internal->link;
-  return rna_pointer_inherit_refine(&iter->parent, &RNA_Object, base->object);
+  return RNA_id_pointer_create(&base->object->id);
 }
 
 static void rna_Collection_objects_begin(CollectionPropertyIterator *iter, PointerRNA *ptr)
 {
   Collection *collection = (Collection *)ptr->data;
-  rna_iterator_listbase_begin(iter, &collection->gobject, nullptr);
+  rna_iterator_listbase_begin(iter, ptr, &collection->gobject, nullptr);
 }
 
 static PointerRNA rna_Collection_objects_get(CollectionPropertyIterator *iter)
@@ -88,7 +88,7 @@ static PointerRNA rna_Collection_objects_get(CollectionPropertyIterator *iter)
 
   /* we are actually iterating a ObjectBase list, so override get */
   CollectionObject *cob = (CollectionObject *)internal->link;
-  return rna_pointer_inherit_refine(&iter->parent, &RNA_Object, cob->ob);
+  return RNA_id_pointer_create(&cob->ob->id);
 }
 
 static bool rna_collection_objects_edit_check(Collection *collection,
@@ -207,7 +207,7 @@ static bool rna_Collection_objects_override_apply(Main *bmain,
 static void rna_Collection_children_begin(CollectionPropertyIterator *iter, PointerRNA *ptr)
 {
   Collection *collection = (Collection *)ptr->data;
-  rna_iterator_listbase_begin(iter, &collection->children, nullptr);
+  rna_iterator_listbase_begin(iter, ptr, &collection->children, nullptr);
 }
 
 static PointerRNA rna_Collection_children_get(CollectionPropertyIterator *iter)
@@ -216,7 +216,7 @@ static PointerRNA rna_Collection_children_get(CollectionPropertyIterator *iter)
 
   /* we are actually iterating a CollectionChild list, so override get */
   CollectionChild *child = (CollectionChild *)internal->link;
-  return rna_pointer_inherit_refine(&iter->parent, &RNA_Collection, child->collection);
+  return RNA_id_pointer_create(&child->collection->id);
 }
 
 static bool rna_collection_children_edit_check(Collection *collection,
@@ -450,29 +450,10 @@ static void rna_CollectionLightLinking_update(Main *bmain, Scene * /*scene*/, Po
   DEG_relations_tag_update(bmain);
 }
 
-static void rna_CollectionExport_friendly_name(const CollectionExport *data, char *value)
+static void rna_CollectionExport_name_set(PointerRNA *ptr, const char *value)
 {
-  blender::bke::FileHandlerType *fh = blender::bke::file_handler_find(data->fh_idname);
-  if (!fh) {
-    BLI_strncpy(value, DATA_("Undefined"), OP_MAX_TYPENAME);
-  }
-  else {
-    BLI_strncpy(value, fh->label, OP_MAX_TYPENAME);
-  }
-}
-
-void rna_CollectionExport_name_get(PointerRNA *ptr, char *value)
-{
-  const CollectionExport *data = reinterpret_cast<CollectionExport *>(ptr->data);
-  rna_CollectionExport_friendly_name(data, value);
-}
-
-int rna_CollectionExport_name_length(PointerRNA *ptr)
-{
-  const CollectionExport *data = reinterpret_cast<CollectionExport *>(ptr->data);
-  char value[OP_MAX_TYPENAME];
-  rna_CollectionExport_friendly_name(data, value);
-  return strlen(value);
+  CollectionExport *data = reinterpret_cast<CollectionExport *>(ptr->data);
+  BKE_collection_exporter_name_set(nullptr, data, value);
 }
 
 static PointerRNA rna_CollectionExport_export_properties_get(PointerRNA *ptr)
@@ -483,15 +464,17 @@ static PointerRNA rna_CollectionExport_export_properties_get(PointerRNA *ptr)
    * as generic ID properties. */
   blender::bke::FileHandlerType *fh = blender::bke::file_handler_find(data->fh_idname);
   if (!fh) {
-    return RNA_pointer_create(ptr->owner_id, &RNA_IDPropertyWrapPtr, data->export_properties);
+    return RNA_pointer_create_discrete(
+        ptr->owner_id, &RNA_IDPropertyWrapPtr, data->export_properties);
   }
 
   wmOperatorType *ot = WM_operatortype_find(fh->export_operator, false);
   if (!ot) {
-    return RNA_pointer_create(ptr->owner_id, &RNA_IDPropertyWrapPtr, data->export_properties);
+    return RNA_pointer_create_discrete(
+        ptr->owner_id, &RNA_IDPropertyWrapPtr, data->export_properties);
   }
 
-  return RNA_pointer_create(ptr->owner_id, ot->srna, data->export_properties);
+  return RNA_pointer_create_discrete(ptr->owner_id, ot->srna, data->export_properties);
 }
 
 #else
@@ -626,9 +609,7 @@ static void rna_def_collection_exporter_data(BlenderRNA *brna)
   prop = RNA_def_property(srna, "name", PROP_STRING, PROP_NONE);
   RNA_def_struct_ui_text(srna, "Name", "");
   RNA_def_struct_name_property(srna, prop);
-  RNA_def_property_string_funcs(
-      prop, "rna_CollectionExport_name_get", "rna_CollectionExport_name_length", nullptr);
-  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_string_funcs(prop, nullptr, nullptr, "rna_CollectionExport_name_set");
 
   prop = RNA_def_property(srna, "is_open", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_sdna(prop, nullptr, "flag", IO_HANDLER_PANEL_OPEN);
@@ -810,8 +791,8 @@ void RNA_def_collections(BlenderRNA *brna)
   RNA_def_property_update(prop, NC_SCENE, nullptr);
 
   prop = RNA_def_property(srna, "lineart_intersection_mask", PROP_BOOLEAN, PROP_NONE);
-  RNA_def_property_boolean_sdna(prop, nullptr, "lineart_intersection_mask", 1);
-  RNA_def_property_array(prop, 8);
+  RNA_def_property_boolean_bitset_array_sdna(
+      prop, nullptr, "lineart_intersection_mask", 1 << 0, 8);
   RNA_def_property_ui_text(
       prop, "Masks", "Intersection generated by this collection will have this mask value");
   RNA_def_property_update(prop, NC_SCENE, nullptr);

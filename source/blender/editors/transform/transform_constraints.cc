@@ -7,11 +7,9 @@
  */
 
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-#include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
 #include "DNA_space_types.h"
@@ -21,18 +19,16 @@
 #include "GPU_matrix.hh"
 #include "GPU_state.hh"
 
+#include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
 #include "BLI_rect.h"
 #include "BLI_string.h"
 #include "BLI_utildefines.h"
 
-#include "ED_view3d.hh"
-
 #include "BLT_translation.hh"
 
 #include "UI_resources.hh"
-#include "UI_view2d.hh"
 
 #include "transform.hh"
 #include "transform_gizmo.hh"
@@ -785,7 +781,7 @@ static void drawLine(
   else {
     UI_GetThemeColor3ubv(TH_GRID, col);
   }
-  UI_make_axis_color(col, col2, axis);
+  UI_make_axis_color(col, axis, col2);
 
   uint pos = GPU_vertformat_attr_add(immVertexFormat(), "pos", GPU_COMP_F32, 3, GPU_FETCH_FLOAT);
 

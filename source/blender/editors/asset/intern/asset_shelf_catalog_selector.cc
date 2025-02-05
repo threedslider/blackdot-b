@@ -141,7 +141,7 @@ class AssetCatalogSelectorTree : public ui::AbstractTreeView {
 
       uiLayout *subrow = uiLayoutRow(&row, false);
       uiLayoutSetActive(subrow, catalog_path_enabled_);
-      uiItemL(subrow, catalog_item_.get_name().c_str(), ICON_NONE);
+      uiItemL(subrow, catalog_item_.get_name(), ICON_NONE);
       UI_block_layout_set_current(block, &row);
 
       uiBut *toggle_but = uiDefButC(block,
@@ -152,7 +152,7 @@ class AssetCatalogSelectorTree : public ui::AbstractTreeView {
                                     0,
                                     UI_UNIT_X,
                                     UI_UNIT_Y,
-                                    (char *)&catalog_path_enabled_,
+                                    &catalog_path_enabled_,
                                     0,
                                     0,
                                     TIP_("Toggle catalog visibility in the asset shelf"));
@@ -183,7 +183,8 @@ void library_selector_draw(const bContext *C, uiLayout *layout, AssetShelf &shel
 {
   uiLayoutSetOperatorContext(layout, WM_OP_INVOKE_DEFAULT);
 
-  PointerRNA shelf_ptr = RNA_pointer_create(&CTX_wm_screen(C)->id, &RNA_AssetShelf, &shelf);
+  PointerRNA shelf_ptr = RNA_pointer_create_discrete(
+      &CTX_wm_screen(C)->id, &RNA_AssetShelf, &shelf);
 
   uiLayout *row = uiLayoutRow(layout, true);
   uiItemR(row, &shelf_ptr, "asset_library_reference", UI_ITEM_NONE, "", ICON_NONE);
@@ -215,7 +216,7 @@ static void catalog_selector_panel_draw(const bContext *C, Panel *panel)
       "asset catalog tree view",
       std::make_unique<AssetCatalogSelectorTree>(*library, *shelf));
   tree_view->set_context_menu_title("Catalog");
-  ui::TreeViewBuilder::build_tree_view(*tree_view, *layout);
+  ui::TreeViewBuilder::build_tree_view(*C, *tree_view, *layout);
 }
 
 void catalog_selector_panel_register(ARegionType *region_type)
